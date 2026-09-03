@@ -17,6 +17,18 @@ struct CreateUserBody: Codable, Equatable, Sendable {
     let role: String
 }
 
+protocol CatalogRequest {
+    var featureName: String { get }
+}
+
+extension CatalogRequest where Self: APIDefinition {
+    var headers: HTTPHeaders {
+        var headers = HTTPHeaders.default
+        headers[HTTPHeaderName<SingleValueHeader>("X-Feature")] = featureName
+        return headers
+    }
+}
+
 @APIDefinition(method: .get, path: "/users/{id}", auth: .anonymous)
 struct GetUser {
     typealias APIResponse = User
@@ -30,6 +42,13 @@ struct CreateUser {
     typealias APIResponse = User
 
     let body: CreateUserBody
+}
+
+@APIDefinition(method: .get, path: "/users", auth: .anonymous)
+struct ListUsers: CatalogRequest {
+    typealias APIResponse = [User]
+
+    var featureName: String { "Directory" }
 }
 
 enum SmokeFailure: Error {
@@ -60,6 +79,12 @@ session.setScriptedResponses([
         headers: ["Content-Type": "application/json"],
         url: baseURL
     ),
+    .http(
+        statusCode: 200,
+        data: try encoder.encode([fetchedUser, createdUser]),
+        headers: ["Content-Type": "application/json"],
+        url: baseURL
+    ),
 ])
 
 let refreshPolicy = RefreshTokenPolicy(
@@ -82,12 +107,14 @@ let fetched = try await client.request(
 )
 let createBody = CreateUserBody(name: "Ada", role: "admin")
 let created = try await client.request(CreateUser(body: createBody))
+let listed = try await client.request(ListUsers())
 
 precondition(fetched == fetchedUser)
 precondition(created == createdUser)
+precondition(listed == [fetchedUser, createdUser])
 
 let requests = session.capturedRequestsInOrder
-guard requests.count == 2 else {
+guard requests.count == 3 else {
     throw SmokeFailure.unexpectedRequestCount(requests.count)
 }
 
@@ -118,5 +145,9 @@ guard let postBody = postRequest.httpBody else {
 }
 let decodedPostBody = try JSONDecoder().decode(CreateUserBody.self, from: postBody)
 precondition(decodedPostBody == createBody)
+
+let listRequest = requests[2]
+precondition(listRequest.url?.absoluteString == "https://api.example.com/v1/users")
+precondition(listRequest.value(forHTTPHeaderField: "X-Feature") == "Directory")
 
 print("MacroAdopterSmoke OK")

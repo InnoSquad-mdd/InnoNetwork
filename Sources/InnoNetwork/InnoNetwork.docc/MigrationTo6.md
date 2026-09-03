@@ -69,6 +69,15 @@ The 5.x `InnoNetworkNext` product no longer exists. Remove that product from
 the package dependency and replace `import InnoNetworkNext` with
 `import InnoNetwork`. The source names of its preview types are unchanged.
 
+## Stable macro-first endpoint contract
+
+``APIDefinition(method:path:auth:)`` is Stable in 6.0. Existing annotated
+endpoint declarations require no source migration. The default-enabled
+`Macros` trait and explicit `traits: []` opt-out are Stable as well, while
+manual ``APIDefinition`` conformance remains the supported non-macro fallback.
+Existing accepted declarations retain their generated method, percent-encoded
+path, authentication, conformance, and payload-witness meaning throughout 6.x.
+
 ## Move HLS product ownership to InnoStream
 
 The HLS product and module names remain unchanged, but their SwiftPM package

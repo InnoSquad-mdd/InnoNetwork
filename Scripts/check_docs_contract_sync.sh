@@ -108,6 +108,7 @@ fi
 
 expected_stable=(
 '`APIDefinition`'
+'`@APIDefinition(method:path:auth:)` and the default-enabled `Macros` package trait (promoted to Stable in 6.0.0; `traits: []` remains the supported opt-out)'
 '`CancellationTag`'
 '`Endpoint`'
 '`MultipartAPIDefinition`'
@@ -203,7 +204,6 @@ expected_provisionally=(
 '`InnoNetworkUpload` companion product and its public file-upload, progress, restoration, bounded response, event, and error symbols'
 'operation-first `NetworkClientConfiguration`, `OperationNetworkClient`,'
 'bounded companion transport contracts: `BoundedNetworkTransfer`,'
-'`@APIDefinition(method:path:auth:)` and the default-enabled `Macros` package trait'
 '`PersistentResponseCache` statistics and telemetry surfaces'
 '`WebSocketError.unsupportedProtocolFeature`'
 '`WebSocketProtocolFeature`'
@@ -703,6 +703,11 @@ validate_macro_surface() {
   require_contains '`@APIDefinition(method:path:auth:)`' "$api_stability"
   require_contains '`SessionAuthentication`' "$api_stability"
   require_contains '`Macros` package trait' "$api_stability"
+  require_contains '### Root Macro Surface (Stable in 6.0)' "$api_stability"
+  require_contains '## Stability contract' \
+    "$repo_root/Sources/InnoNetwork/InnoNetwork.docc/Articles/UsingMacros.md"
+  require_contains 'protocol-composed endpoint metadata matching production catalog usage' \
+    "$repo_root/Examples/MacroAdopterSmoke/README.md"
 
   local legacy_macro_pattern='#endpoint|public[[:space:]]+macro[[:space:]]+endpoint'
   if has_rg; then
@@ -1355,6 +1360,10 @@ for symbol in "${expected_stable[@]}"; do
       pattern='public protocol APIDefinition'
       target="$repo_root/Sources/InnoNetwork/APIDefinition.swift"
       ;;
+    '`@APIDefinition(method:path:auth:)` and the default-enabled `Macros` package trait (promoted to Stable in 6.0.0; `traits: []` remains the supported opt-out)')
+      validate_macro_surface
+      continue
+      ;;
     '`CancellationTag`')
       pattern='public struct CancellationTag'
       target="$repo_root/Sources/InnoNetwork/CancellationTag.swift"
@@ -1677,10 +1686,6 @@ for symbol in "${expected_provisionally[@]}"; do
         "$repo_root/Sources/InnoNetwork/NetworkURLValidator.swift"
       require_contains 'public enum NetworkURLValidator' \
         "$repo_root/Sources/InnoNetwork/NetworkURLValidator.swift"
-      continue
-      ;;
-    '`@APIDefinition(method:path:auth:)` and the default-enabled `Macros` package trait')
-      validate_macro_surface
       continue
       ;;
     '`PersistentResponseCache` statistics and telemetry surfaces')

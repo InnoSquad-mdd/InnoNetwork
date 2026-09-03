@@ -841,6 +841,8 @@ for await event in await manager.events(for: task) {
 
 ### Macro Support
 
+- Stable in 6.0: existing accepted declarations and generated endpoint meaning
+  remain source-compatible throughout 6.x
 - default-enabled `@APIDefinition(method:path:auth:)` from `import InnoNetwork`
 - explicit endpoint structs remain the source of truth
 - `APIResponse` and authentication intent stay mandatory and visible

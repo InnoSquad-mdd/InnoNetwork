@@ -11,6 +11,7 @@ sends them through `DefaultNetworkClient` backed by the public
 - path placeholder and GET query encoding;
 - POST JSON body inference and response decoding;
 - explicit anonymous and required authentication policies;
+- protocol-composed endpoint metadata matching production catalog usage;
 - bearer-token application before the required-auth transport attempt.
 
 Run it from the repository root:

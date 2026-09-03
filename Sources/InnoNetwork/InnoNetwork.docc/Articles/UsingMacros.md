@@ -22,6 +22,19 @@ The macro is part of the root `InnoNetwork` product. The package's default
 `Macros` trait enables it, so macro users need neither another package nor
 another import.
 
+## Stability contract
+
+`@APIDefinition(method:path:auth:)`, the default-enabled `Macros` trait, and
+the explicit `traits: []` opt-out are Stable in InnoNetwork 6. Existing
+accepted declarations keep their generated method, percent-encoded path,
+authentication, conformance, and payload-witness meaning throughout 6.x. New
+macro arguments may be added only with defaults. Manual ``APIDefinition``
+conformance remains the supported non-macro fallback.
+
+Exact generated-source formatting, diagnostic prose, and Fix-It wording may
+improve in a minor release. The accepted-source boundary and fail-closed
+diagnostic categories remain protected.
+
 ## What the macro owns
 
 The macro adds ``APIDefinition`` conformance and derives:

@@ -1,6 +1,7 @@
-# Match rules for the proposed 5.x Stable ledger in API_STABILITY.md.
+# Match rules for the planned 6.0 Stable ledger in API_STABILITY.md.
 # `exact` matches one declaration path; `prefix` also includes its members.
 prefix	InnoNetwork	APIDefinition
+exact	InnoNetwork	APIDefinition(method:path:auth:)
 prefix	InnoNetwork	CancellationTag
 prefix	InnoNetwork	Endpoint
 prefix	InnoNetwork	MultipartAPIDefinition

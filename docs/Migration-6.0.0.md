@@ -59,6 +59,19 @@ Apply the same package-owner change to `InnoNetworkHLSLive`,
 their existing module names. Replace `import InnoNetworkNext` with
 `import InnoNetwork`.
 
+## Stable macro-first endpoint contract
+
+`@APIDefinition(method:path:auth:)` is Stable in 6.0. Existing macro-first
+endpoint declarations require no source migration. The default-enabled
+`Macros` trait and the explicit `traits: []` core-only opt-out are also Stable;
+manual `APIDefinition` conformance remains the supported fallback when a
+consumer does not want compiler plug-in compilation.
+
+For 6.x, existing accepted declarations retain their generated method,
+percent-encoded path, authentication, conformance, and payload-witness meaning.
+Future optional macro arguments must have defaults. Diagnostic wording and
+Fix-It formatting may improve without constituting a source-breaking change.
+
 ## Operation recovery contract
 
 `OperationNetworkClient.start(_:)` infers replay safety from the HTTP method.

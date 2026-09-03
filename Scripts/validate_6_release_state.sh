@@ -116,6 +116,9 @@ require_line "# Migrating to InnoNetwork 6" "$docc_migration"
 require_contains '.product(name: "InnoNetworkHLS", package: "InnoStream")' "$migration"
 require_contains '.upToNextMajor(from: "1.0.0")' "$migration"
 require_contains '.product(name: "InnoNetworkHLS", package: "InnoStream")' "$docc_migration"
+require_contains '## Stable macro-first endpoint contract' "$migration"
+require_contains '## Stable macro-first endpoint contract' "$docc_migration"
+require_contains '### Root Macro Surface (Stable in 6.0)' "$api"
 require_contains '<strong>9 Products</strong>' "$site"
 
 if [[ "$state" == "draft" ]]; then

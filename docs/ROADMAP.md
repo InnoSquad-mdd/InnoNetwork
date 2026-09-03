@@ -8,6 +8,11 @@ moves into `InnoNetwork`, HLS moves to InnoStream, and recovery decisions gain
 explicit HTTP, authentication, and replay-safety context. No item in the 6.1
 candidate list below is a blocker for that release.
 
+The root `@APIDefinition(method:path:auth:)` macro, default-enabled `Macros`
+trait, and `traits: []` opt-out are Stable in this 6.0 boundary. Their 5.x
+adoption and permanent macro, diagnostic, and consumer gates satisfy the
+promotion criteria; they are not deferred to 6.1.
+
 The 6.0 exit gate is evidence, not another feature pass: the API allowlists,
 package preflight, non-HLS consumers, InnoStream local integration, companion
 packages, and finally clean remote-tag consumers must all agree with the
@@ -28,11 +33,11 @@ value, not by implementation convenience.
    merge a `304` response through the same bounded, authenticated, and
    observable path as `If-None-Match`. Cover malformed dates, dual validators,
    unsafe methods, coalesced reads, and persistent-cache reopen behavior.
-2. **Promote only proven provisional surfaces.** Use Capto, the known main-app
-   consumers, and companion-package migrations to identify which 6.0
-   provisional declarations are used without wrappers or SPI. Promotion is a
-   compatibility promise, not a declaration-count target; unused or awkward
-   surfaces stay provisional until there is independent adopter evidence.
+2. **Promote only proven remaining provisional surfaces.** Use each surface's
+   relevant app and companion-package consumers to identify declarations used
+   without wrappers or SPI. `@APIDefinition` is the deliberate 6.0 promotion;
+   other surfaces remain evidence-gated. Promotion is a compatibility promise,
+   not a declaration-count target.
 
 ### Priority 1 — explicit opt-in capabilities
 
@@ -223,7 +228,7 @@ chunk-signing remain explicitly deferred to protocol-specific transports.
 | `InnoNetworkAuthAWS` | Provisionally Stable | 5.x minor after field validation | AWS SigV4 vector tests, README/DocC reference-signer scope, and one adopter migration note. |
 | `PersistentResponseCache` telemetry/statistics | Provisionally Stable | 5.x minor | Reentrancy invariant documented, persistent cache tests cover key rotation and stats. |
 | `ResponseCachePolicy.rfc9111Compliant(wrapping:)` | Provisionally Stable | 5.x minor | Directive subset is documented as RFC 9111-aware, not full compliance, with cache policy tests. |
-| Root `@APIDefinition` macro | Provisionally Stable | No automatic promotion | Explicit structs remain the source of truth; diagnostics, body/query inference, and the core-only trait opt-out sustain adopter validation. |
+| Root `@APIDefinition` macro | Provisionally Stable in 5.x | Promoted to Stable in 6.0.0 | Explicit structs remain the source of truth; InnoSample and Mulbyul adoption plus diagnostics, body/query inference, macro smoke, and the core-only trait opt-out satisfy the promotion gate. |
 
 ## Post-5.0 RFC Parking Lot
 

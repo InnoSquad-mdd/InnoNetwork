@@ -36,6 +36,11 @@ These changes form the unreleased `6.0.0` draft and have not been tagged.
 
 ### Changed
 
+- `@APIDefinition(method:path:auth:)`, the default-enabled `Macros` package
+  trait, and the `traits: []` opt-out are promoted to Stable. Existing accepted
+  endpoint declarations and their generated method, path, authentication,
+  conformance, and payload-witness meaning are protected throughout 6.x;
+  diagnostic prose and generated-source formatting remain non-contractual.
 - The `InnoNetworkNext` preview product was removed after its declarations
   were promoted into the root module. Existing type names remain unchanged.
 - The HLS products (`InnoNetworkHLS`, `InnoNetworkHLSLive`,

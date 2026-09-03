@@ -40,8 +40,8 @@ currently tagged 5.x line; this table tracks the planned 6.0 boundary with
 
 | Compatibility tier | Public declarations |
 |---|---:|
-| Stable consumer API | 305 |
-| Provisionally Stable consumer API | 1,069 |
+| Stable consumer API | 306 |
+| Provisionally Stable consumer API | 1,068 |
 | `@_spi(GeneratedClientSupport)` | 33 |
 | **Total** | **1,407** |
 

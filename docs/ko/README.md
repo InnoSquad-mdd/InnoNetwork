@@ -95,6 +95,8 @@ macro 를 사용해도 struct 가 endpoint 계약의 단일 기준입니다. `AP
 custom header/interceptor/transport/decoder 는 struct 에 명시적으로 남고, attribute 는
 `method`, `path`, `auth` 를 한눈에 보여 줍니다. `auth:` 는 `.anonymous`, `.optional`,
 `.required` 중 하나를 반드시 선택해야 하며 자동 추론하지 않습니다.
+`@APIDefinition(method:path:auth:)`, 기본 `Macros` trait, `traits: []` opt-out 은
+InnoNetwork 6부터 Stable 계약입니다.
 
 - GET/HEAD 의 저장 `query` 프로퍼티는 `Parameter` / `parameters` 로 생성됩니다.
 - POST/PUT/PATCH/DELETE 의 저장 `body` 프로퍼티도 같은 방식으로 생성됩니다.

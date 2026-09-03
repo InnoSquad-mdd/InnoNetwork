@@ -47,6 +47,7 @@ and own application reducer types in their feature or architecture layer.
 ## Stable
 
 - `APIDefinition`
+- `@APIDefinition(method:path:auth:)` and the default-enabled `Macros` package trait (promoted to Stable in 6.0.0; `traits: []` remains the supported opt-out)
 - `CancellationTag`
 - `Endpoint`
 - `MultipartAPIDefinition`
@@ -126,7 +127,7 @@ because these examples are copyable public-contract code, not narrative-only
 documentation.
 
 - `Examples/BasicRequest` — request/response fundamentals across HTTP verbs
-  and content types.
+  and content types, including the Stable macro-first endpoint shape.
 - `Examples/Auth` — `RefreshTokenPolicy` wiring with a Keychain-backed
   token store and single-flight refresh.
 - `Examples/ErrorHandling` — `NetworkError` taxonomy and the
@@ -138,6 +139,12 @@ Provisionally Stable: structure may evolve across future minors and they are
 intentionally **not** enforced by the gate above. README/DocC examples
 continue to track the stable APIs they illustrate; their wording is not
 part of the compatibility contract.
+
+The independent `Examples/MacroAdopterSmoke` package is an additional release
+gate for runtime macro expansion, authentication, payload inference, and
+protocol-composed endpoint metadata. Its directory layout is operational, but
+the accepted endpoint source shapes it exercises are protected by the Stable
+macro contract.
 
 ## Provisionally Stable
 
@@ -166,7 +173,6 @@ acquiring a 5.x compatibility promise.
   `NetworkFailure` root-module contracts
 - bounded companion transport contracts: `BoundedNetworkTransfer`,
   `NetworkRetryExecutor`, `NetworkURLPolicy`, and `NetworkURLValidator`
-- `@APIDefinition(method:path:auth:)` and the default-enabled `Macros` package trait
 - `PersistentResponseCache` statistics and telemetry surfaces
 - `WebSocketError.unsupportedProtocolFeature`
 - `WebSocketProtocolFeature`
@@ -211,7 +217,7 @@ Promotion from Provisionally Stable to Stable requires all of the following:
 | `InnoNetworkAuthAWS` | 5.x minor after adopter validation | AWS SigV4 vector tests, product README/DocC scope, and explicit "reference signer, not AWS SDK replacement" wording. |
 | `PersistentResponseCache` statistics and telemetry | 5.x minor | Reentrancy invariant docs plus persistent cache key-rotation/statistics tests. |
 | `ResponseCachePolicy.rfc9111Compliant(wrapping:)` | 5.x minor | The subset is documented as RFC 9111-aware, with directive tests for the supported rules. |
-| Root `@APIDefinition` macro | No automatic promotion | Promote only after the explicit-struct expansion, diagnostics, and trait opt-out have sustained adopter validation. |
+| Root `@APIDefinition` macro | Stable in 6.0.0 | InnoSample and Mulbyul adoption, expansion and diagnostic fixtures, the independent macro smoke, and the `traits: []` build prove the explicit-struct and opt-out contracts. |
 
 - `default` aliases — may add new defaults; never removed within 5.x.
 - Benchmark runner CLI flags and JSON keys — may evolve to reflect new
@@ -348,8 +354,6 @@ Promotion from Provisionally Stable to Stable requires all of the following:
 - `WebSocketError.unsupportedProtocolFeature` and `WebSocketProtocolFeature`
   — feature cases may grow as optional transports add or reject more protocol
   extensions.
-- `@APIDefinition(method:path:auth:)` — the signature may add optional
-  arguments, but `APIResponse` and authentication intent remain explicit.
 - `DecodingInterceptor` — protocol may grow new optional hooks with
   default implementations as additional decode-boundary use cases
   surface.
@@ -446,7 +450,7 @@ below keeps the high-level compatibility classification readable. Historical
 the current machine-checked inventory.
 
 The machine-checked snapshot currently partitions all 1,407 declarations into
-305 Stable consumer declarations, 1,069 Provisionally Stable consumer
+306 Stable consumer declarations, 1,068 Provisionally Stable consumer
 declarations, and 33 opt-in SPI declarations. The three sets are disjoint and
 exhaustive. `Scripts/symbols/stable-rules.tsv` maps the Stable ledger to symbol
 paths, while the compiler-authored SPI flag is snapshotted in
@@ -817,14 +821,13 @@ Stable.
   `VCRRedactionPolicy`, `VCRRequest`, `VCRResponse`, `VCRURLSession`, and
   `WebSocketEventRecorder`.
 
-### Root Macro Surface (Provisionally Stable)
+### Root Macro Surface (Stable in 6.0)
 
 - `APIDefinition(method:path:auth:)` attached macro.
 - The default-enabled `Macros` package trait and `traits: []` opt-out.
 
-The macro's `auth:` argument consumes the Stable `SessionAuthentication`
-values. Their compatibility tier does not inherit the macro surface's
-Provisionally Stable status.
+The macro's `auth:` argument and the consumed `SessionAuthentication` values
+are both Stable in 6.0.
 
 The root `InnoNetwork` product exports the macro declaration when `Macros` is
 enabled; no separate package or import is required. Expansion is
@@ -852,6 +855,15 @@ the consumer target graph and compilation. SwiftPM still resolves package-level
 manifest dependencies and may resolve or fetch `swift-syntax`. Traits are
 unified per package across a resolved graph, so another dependency enabling
 the default `Macros` trait re-enables it for the shared package instance.
+
+For the 6.x line, existing accepted declarations must keep compiling with the
+same generated method, percent-encoded path, authentication, conformance, and
+payload-witness meaning. New macro arguments may be added only with defaults,
+and the default-enabled trait plus the explicit `traits: []` opt-out remain
+supported package contracts. Manual `APIDefinition` conformance remains the
+non-macro fallback. Exact expansion formatting, diagnostic prose, and Fix-It
+wording are not SemVer contracts, but accepted source cannot become an error
+and the fail-closed diagnostic categories cannot silently become acceptance.
 
 ### SPI
 
@@ -899,7 +911,7 @@ does not require a major version bump.
 
 **2. The root macro does not bridge the generated-client SPI.**
 
-`@APIDefinition` derives only stable/provisional endpoint protocol witnesses
+`@APIDefinition` derives only public endpoint protocol witnesses
 and does not import `@_spi(GeneratedClientSupport)`. SPI changes therefore do
 not require a corresponding macro expansion migration. Third-party generators
 (custom OpenAPI adapters, in-house DSLs, hand-written `@_spi` imports) must
@@ -1000,10 +1012,6 @@ requires `@_spi` import.
   Retry scheduling, auth refresh replay, response-cache substitution,
   coalescing, and circuit-breaker state remain owned by built-in pipeline
   stages that may evolve internally.
-- The root `@APIDefinition` macro is default-enabled by the `Macros` package
-  trait. Core-only consumers can request `traits: []` consistently across the
-  graph to exclude the macro declaration and compiler plug-in compilation;
-  SwiftPM may still resolve or fetch manifest-level `swift-syntax` sources.
 - Persistence and telemetry formats are not external storage contracts.
 - Benchmark guard thresholds, guarded benchmark selection, and baseline
   contents are operational policy rather than public compatibility surface.
