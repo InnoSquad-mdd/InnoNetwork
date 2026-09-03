@@ -28,6 +28,7 @@ InnoNetwork	swift.enum	NetworkErrorCode
 InnoNetwork	swift.enum	NetworkEvent
 InnoNetwork	swift.enum	NetworkInterfaceType
 InnoNetwork	swift.enum	NetworkReachabilityStatus
+InnoNetwork	swift.enum	NetworkUnsatisfiedReason
 InnoNetwork	swift.enum	RFC3986Encoding
 InnoNetwork	swift.enum	ReachabilityCheckExecutionPolicy.Mode
 InnoNetwork	swift.enum	ReachabilityReason
@@ -139,6 +140,12 @@ InnoNetwork	swift.enum.case	NetworkInterfaceType.wiredEthernet
 InnoNetwork	swift.enum.case	NetworkReachabilityStatus.requiresConnection
 InnoNetwork	swift.enum.case	NetworkReachabilityStatus.satisfied
 InnoNetwork	swift.enum.case	NetworkReachabilityStatus.unsatisfied
+InnoNetwork	swift.enum.case	NetworkUnsatisfiedReason.cellularDenied
+InnoNetwork	swift.enum.case	NetworkUnsatisfiedReason.localNetworkDenied
+InnoNetwork	swift.enum.case	NetworkUnsatisfiedReason.notAvailable
+InnoNetwork	swift.enum.case	NetworkUnsatisfiedReason.unknown
+InnoNetwork	swift.enum.case	NetworkUnsatisfiedReason.vpnInactive
+InnoNetwork	swift.enum.case	NetworkUnsatisfiedReason.wifiDenied
 InnoNetwork	swift.enum.case	ReachabilityCheckExecutionPolicy.Mode.requireOnline
 InnoNetwork	swift.enum.case	ReachabilityCheckExecutionPolicy.Mode.warnOnly
 InnoNetwork	swift.enum.case	ReachabilityReason.cannotFindHost
@@ -256,6 +263,8 @@ InnoNetwork	swift.init	NetworkLoggingOptions.init(includeRequestBody:includeResp
 InnoNetwork	swift.init	NetworkMonitor.init()
 InnoNetwork	swift.init	NetworkRequestContext.init(requestID:retryIndex:metricsReporter:trustPolicy:eventObservers:redirectPolicy:)
 InnoNetwork	swift.init	NetworkSnapshot.init(status:interfaceTypes:)
+InnoNetwork	swift.init	NetworkSnapshot.init(status:interfaceTypes:isExpensive:isConstrained:supportsDNS:supportsIPv4:supportsIPv6:unsatisfiedReason:)
+InnoNetwork	swift.init	NetworkUnsatisfiedReason.init(rawValue:)
 InnoNetwork	swift.init	OSLogNetworkEventObserver.init()
 InnoNetwork	swift.init	ObservabilityPack.init(eventObservers:eventDeliveryPolicy:eventMetricsReporter:networkMonitor:metricsReporter:)
 InnoNetwork	swift.init	ReachabilityCheckExecutionPolicy.init(monitor:mode:suspensionWaitTimeout:)
@@ -356,10 +365,12 @@ InnoNetwork	swift.method	NetworkLogger.log(request:)
 InnoNetwork	swift.method	NetworkLogger.log(response:isError:)
 InnoNetwork	swift.method	NetworkMetricsReporting.report(metrics:for:response:)
 InnoNetwork	swift.method	NetworkMonitor.currentSnapshot()
+InnoNetwork	swift.method	NetworkMonitor.snapshots()
 InnoNetwork	swift.method	NetworkMonitor.start()
 InnoNetwork	swift.method	NetworkMonitor.stop()
 InnoNetwork	swift.method	NetworkMonitor.waitForChange(from:timeout:)
 InnoNetwork	swift.method	NetworkMonitoring.currentSnapshot()
+InnoNetwork	swift.method	NetworkMonitoring.snapshots()
 InnoNetwork	swift.method	NetworkMonitoring.waitForChange(from:timeout:)
 InnoNetwork	swift.method	OSLogNetworkEventObserver.handle(_:)
 InnoNetwork	swift.method	ReachabilityCheckExecutionPolicy.execute(input:context:next:)
@@ -524,7 +535,13 @@ InnoNetwork	swift.property	NetworkRequestContext.requestID
 InnoNetwork	swift.property	NetworkRequestContext.retryIndex
 InnoNetwork	swift.property	NetworkRequestContext.trustPolicy
 InnoNetwork	swift.property	NetworkSnapshot.interfaceTypes
+InnoNetwork	swift.property	NetworkSnapshot.isConstrained
+InnoNetwork	swift.property	NetworkSnapshot.isExpensive
 InnoNetwork	swift.property	NetworkSnapshot.status
+InnoNetwork	swift.property	NetworkSnapshot.supportsDNS
+InnoNetwork	swift.property	NetworkSnapshot.supportsIPv4
+InnoNetwork	swift.property	NetworkSnapshot.supportsIPv6
+InnoNetwork	swift.property	NetworkSnapshot.unsatisfiedReason
 InnoNetwork	swift.property	ReachabilityCheckExecutionPolicy.mode
 InnoNetwork	swift.property	ReachabilityCheckExecutionPolicy.monitor
 InnoNetwork	swift.property	ReachabilityCheckExecutionPolicy.suspensionWaitTimeout

@@ -19,11 +19,11 @@ are snapshotted separately; every remaining consumer declaration defaults to
 Provisionally Stable. A new public symbol therefore cannot silently inherit a
 Stable compatibility promise.
 
-## Current sizes (5.0.0 release baseline)
+## Current sizes (5.0.0 release baseline plus Unreleased additions)
 
 | Product | Public declarations |
 |---|---:|
-| `InnoNetwork` (core) | 786 |
+| `InnoNetwork` (core) | 803 |
 | `InnoNetworkWebSocket` | 130 |
 | `InnoNetworkDownload` | 94 |
 | `InnoNetworkHLS` | 797 |
@@ -35,18 +35,18 @@ Stable compatibility promise.
 | `InnoNetworkOpenAPI` | 36 |
 | `InnoNetworkTrust` | 17 |
 | `InnoNetworkAuthAWS` | 10 |
-| **Total** | **3,075** |
+| **Total** | **3,092** |
 
 | Compatibility tier | Public declarations |
 |---|---:|
 | Stable consumer API | 305 |
-| Provisionally Stable consumer API | 2,737 |
+| Provisionally Stable consumer API | 2,754 |
 | `@_spi(GeneratedClientSupport)` | 33 |
-| **Total** | **3,075** |
+| **Total** | **3,092** |
 
 ## Why this matters
 
-For a single-maintainer client-side Swift networking library, 3,075 public
+For a single-maintainer client-side Swift networking library, 3,092 public
 declarations is unusually large — roughly 4× `Get`'s surface and ~10× the
 `URLSession`-only "two functions and a `Decoder`" baseline.
 

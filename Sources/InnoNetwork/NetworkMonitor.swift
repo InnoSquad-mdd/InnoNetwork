@@ -25,17 +25,81 @@ public enum NetworkReachabilityStatus: Sendable {
     case requiresConnection
 }
 
+/// The system-provided reason a network path is currently unsatisfied.
+public enum NetworkUnsatisfiedReason: String, Sendable, Equatable {
+    /// No usable network path is currently available.
+    case notAvailable
+    /// Cellular access is denied for the application.
+    case cellularDenied
+    /// Wi-Fi access is denied for the application.
+    case wifiDenied
+    /// Local-network access is denied for the application.
+    case localNetworkDenied
+    /// The selected VPN path is inactive.
+    case vpnInactive
+    /// The SDK reported a reason that this version of InnoNetwork does not recognize.
+    case unknown
+}
+
 /// A snapshot representing the network state at a specific point in time.
 public struct NetworkSnapshot: Sendable, Equatable {
     /// The reachability status.
     public let status: NetworkReachabilityStatus
     /// The set of interface types currently in use.
     public let interfaceTypes: Set<NetworkInterfaceType>
+    /// Whether the path uses a potentially expensive interface, such as cellular or a personal hotspot.
+    public let isExpensive: Bool
+    /// Whether the path is constrained by the user's Low Data Mode preference.
+    public let isConstrained: Bool
+    /// Whether the path has a DNS server configured.
+    public let supportsDNS: Bool
+    /// Whether the path can route IPv4 traffic.
+    public let supportsIPv4: Bool
+    /// Whether the path can route IPv6 traffic.
+    public let supportsIPv6: Bool
+    /// The system-provided reason for an unsatisfied path, when available.
+    public let unsatisfiedReason: NetworkUnsatisfiedReason?
 
-    /// Creates a snapshot with the specified status and interface types.
-    public init(status: NetworkReachabilityStatus, interfaceTypes: Set<NetworkInterfaceType>) {
+    /// Creates a snapshot with reachability and interface state.
+    ///
+    /// Capability values use conservative defaults. Use
+    /// ``init(status:interfaceTypes:isExpensive:isConstrained:supportsDNS:supportsIPv4:supportsIPv6:unsatisfiedReason:)``
+    /// when a test double or another monitor can provide the richer path state.
+    public init(
+        status: NetworkReachabilityStatus,
+        interfaceTypes: Set<NetworkInterfaceType>
+    ) {
+        self.init(
+            status: status,
+            interfaceTypes: interfaceTypes,
+            isExpensive: false,
+            isConstrained: false,
+            supportsDNS: false,
+            supportsIPv4: false,
+            supportsIPv6: false,
+            unsatisfiedReason: nil
+        )
+    }
+
+    /// Creates a snapshot with the complete path state.
+    public init(
+        status: NetworkReachabilityStatus,
+        interfaceTypes: Set<NetworkInterfaceType>,
+        isExpensive: Bool,
+        isConstrained: Bool = false,
+        supportsDNS: Bool = false,
+        supportsIPv4: Bool = false,
+        supportsIPv6: Bool = false,
+        unsatisfiedReason: NetworkUnsatisfiedReason? = nil
+    ) {
         self.status = status
         self.interfaceTypes = interfaceTypes
+        self.isExpensive = isExpensive
+        self.isConstrained = isConstrained
+        self.supportsDNS = supportsDNS
+        self.supportsIPv4 = supportsIPv4
+        self.supportsIPv6 = supportsIPv6
+        self.unsatisfiedReason = unsatisfiedReason
     }
 
     init(path: NWPath) {
@@ -57,6 +121,32 @@ public struct NetworkSnapshot: Sendable, Equatable {
         if path.usesInterfaceType(.loopback) { types.insert(.loopback) }
         if types.isEmpty { types.insert(.other) }
         interfaceTypes = types
+        isExpensive = path.isExpensive
+        isConstrained = path.isConstrained
+        supportsDNS = path.supportsDNS
+        supportsIPv4 = path.supportsIPv4
+        supportsIPv6 = path.supportsIPv6
+
+        guard status == .unsatisfied else {
+            unsatisfiedReason = nil
+            return
+        }
+        switch path.unsatisfiedReason {
+        case .notAvailable:
+            unsatisfiedReason = .notAvailable
+        case .cellularDenied:
+            unsatisfiedReason = .cellularDenied
+        case .wifiDenied:
+            unsatisfiedReason = .wifiDenied
+        case .localNetworkDenied:
+            unsatisfiedReason = .localNetworkDenied
+        #if compiler(>=6.4)
+        case .vpnInactive:
+            unsatisfiedReason = .vpnInactive
+        #endif
+        @unknown default:
+            unsatisfiedReason = .unknown
+        }
     }
 }
 
@@ -73,6 +163,36 @@ public protocol NetworkMonitoring: Sendable {
     ///   - timeout: If `nil`, waits indefinitely until a change occurs. If set, returns `nil` if no change within the timeout.
     /// - Returns: A new snapshot if a change is detected, or `nil` on timeout.
     func waitForChange(from snapshot: NetworkSnapshot?, timeout: TimeInterval?) async -> NetworkSnapshot?
+    /// Returns a state stream that emits the current snapshot, when available,
+    /// followed by later changes.
+    ///
+    /// The stream keeps only the newest pending snapshot for a slow consumer.
+    func snapshots() async -> AsyncStream<NetworkSnapshot>
+}
+
+extension NetworkMonitoring {
+    public func snapshots() async -> AsyncStream<NetworkSnapshot> {
+        AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+            let observation = Task {
+                var previous = await currentSnapshot()
+                if let previous {
+                    continuation.yield(previous)
+                }
+
+                while !Task.isCancelled {
+                    guard let next = await waitForChange(from: previous, timeout: nil) else {
+                        break
+                    }
+                    continuation.yield(next)
+                    previous = next
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { @Sendable _ in
+                observation.cancel()
+            }
+        }
+    }
 }
 
 /// A network monitor based on `NWPathMonitor`.
@@ -136,7 +256,7 @@ public actor NetworkMonitor: NetworkMonitoring {
             return current
         }
 
-        let stream = updates()
+        let stream = makeSnapshotStream(replayCurrent: false)
         return await withTaskGroup(of: NetworkSnapshot?.self) { group in
             group.addTask {
                 for await update in stream where update != snapshot {
@@ -157,13 +277,23 @@ public actor NetworkMonitor: NetworkMonitoring {
         }
     }
 
-    private func updates() -> AsyncStream<NetworkSnapshot> {
+    /// Returns a state stream that immediately replays the current snapshot,
+    /// when available, and then emits later path changes.
+    public func snapshots() -> AsyncStream<NetworkSnapshot> {
+        startMonitoringIfNeeded()
+        return makeSnapshotStream(replayCurrent: true)
+    }
+
+    private func makeSnapshotStream(replayCurrent: Bool) -> AsyncStream<NetworkSnapshot> {
         // Snapshots are state observations: a slow consumer should only ever
         // see the most recent path state, never a backlog. `.bufferingNewest`
         // keeps the latest snapshots and discards older ones under pressure.
-        AsyncStream(bufferingPolicy: .bufferingNewest(16)) { continuation in
+        AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
             let id = UUID()
             continuations[id] = continuation
+            if replayCurrent, let current {
+                continuation.yield(current)
+            }
             continuation.onTermination = { @Sendable [weak self] _ in
                 guard let self else { return }
                 Task { [self] in await self.removeContinuation(id) }

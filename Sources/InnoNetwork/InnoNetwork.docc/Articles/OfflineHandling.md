@@ -156,6 +156,24 @@ guard snapshot.interfaceTypes.contains(.wifi) else {
 try await downloader.startLargeMediaDownload()
 ```
 
+For an ongoing policy, observe ``NetworkMonitoring/snapshots()``. New
+subscribers receive the current snapshot when one is available, followed by
+later changes. The stream keeps only the newest pending state for slow
+consumers:
+
+```swift
+let snapshots = await monitor.snapshots()
+for await snapshot in snapshots {
+    let shouldDeferLargeTransfer = snapshot.isConstrained || snapshot.isExpensive
+    updateTransferPolicy(shouldDeferLargeTransfer)
+}
+```
+
+Snapshots produced by ``NetworkMonitor`` also report DNS, IPv4, and IPv6
+capabilities plus a typed ``NetworkUnsatisfiedReason`` for unsatisfied paths.
+Capability values on manually constructed snapshots use conservative defaults
+unless supplied explicitly.
+
 This pairs naturally with the `allowsCellularAccess` inputs on
 ``TransportPack`` and the optional `DownloadTransferPack` type from
 `InnoNetworkDownload`.
@@ -165,6 +183,7 @@ This pairs naturally with the `allowsCellularAccess` inputs on
 - ``NetworkMonitoring``
 - ``NetworkSnapshot``
 - ``NetworkReachabilityStatus``
+- ``NetworkUnsatisfiedReason``
 - ``NetworkInterfaceType``
 - <doc:RetryDecisions>
 - [HTTP/3 opt-in](../../../../docs/HTTP3.md) for transport tuning

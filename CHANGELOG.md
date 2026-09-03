@@ -7,6 +7,13 @@ Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- `NetworkSnapshot` now reports Low Data Mode, expensive-path, DNS, IPv4,
+  IPv6, and typed unsatisfied-reason state. `NetworkMonitoring.snapshots()`
+  provides a latest-state stream that replays the current snapshot when one is
+  available.
+
 ## [5.1.0] - 2026-09-03
 
 ### Fixed

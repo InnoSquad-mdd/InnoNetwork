@@ -304,11 +304,59 @@ struct NetworkMetricsTests {
 @Suite("Network Monitor Tests")
 struct NetworkMonitorTests {
 
-    @Test("NetworkSnapshot init sets status and interface types")
+    @Test("NetworkSnapshot init sets path status, interfaces, and capabilities")
     func snapshotInit() {
-        let snapshot = NetworkSnapshot(status: .satisfied, interfaceTypes: [.wifi, .cellular])
-        #expect(snapshot.status == .satisfied)
+        let snapshot = NetworkSnapshot(
+            status: .unsatisfied,
+            interfaceTypes: [.wifi, .cellular],
+            isExpensive: true,
+            isConstrained: true,
+            supportsDNS: true,
+            supportsIPv4: true,
+            supportsIPv6: false,
+            unsatisfiedReason: .wifiDenied
+        )
+        #expect(snapshot.status == .unsatisfied)
         #expect(snapshot.interfaceTypes == [.wifi, .cellular])
+        #expect(snapshot.isExpensive)
+        #expect(snapshot.isConstrained)
+        #expect(snapshot.supportsDNS)
+        #expect(snapshot.supportsIPv4)
+        #expect(!snapshot.supportsIPv6)
+        #expect(snapshot.unsatisfiedReason == .wifiDenied)
+    }
+
+    @Test("Legacy NetworkSnapshot init keeps conservative capability defaults")
+    func snapshotLegacyDefaults() {
+        let snapshot = NetworkSnapshot(status: .satisfied, interfaceTypes: [.wifi])
+
+        #expect(!snapshot.isExpensive)
+        #expect(!snapshot.isConstrained)
+        #expect(!snapshot.supportsDNS)
+        #expect(!snapshot.supportsIPv4)
+        #expect(!snapshot.supportsIPv6)
+        #expect(snapshot.unsatisfiedReason == nil)
+    }
+
+    @Test("NetworkMonitoring default snapshot stream replays current state and later changes")
+    func defaultSnapshotStream() async {
+        let initial = NetworkSnapshot(status: .requiresConnection, interfaceTypes: [.wifi])
+        let connected = NetworkSnapshot(
+            status: .satisfied,
+            interfaceTypes: [.cellular],
+            isExpensive: true,
+            supportsDNS: true,
+            supportsIPv4: true
+        )
+        let monitor = SnapshotSequenceMonitor(initial: initial, changes: [connected])
+        let stream = await monitor.snapshots()
+
+        var received: [NetworkSnapshot] = []
+        for await snapshot in stream {
+            received.append(snapshot)
+        }
+
+        #expect(received == [initial, connected])
     }
 
     @Test("waitForChange returns nil on timeout when no network change occurs")
@@ -338,6 +386,30 @@ struct NetworkMonitorTests {
         if let result {
             #expect(result != snapshot)
         }
+    }
+}
+
+private actor SnapshotSequenceMonitor: NetworkMonitoring {
+    private let initial: NetworkSnapshot?
+    private var changes: [NetworkSnapshot]
+
+    init(initial: NetworkSnapshot?, changes: [NetworkSnapshot]) {
+        self.initial = initial
+        self.changes = changes
+    }
+
+    func currentSnapshot() async -> NetworkSnapshot? {
+        initial
+    }
+
+    func waitForChange(
+        from snapshot: NetworkSnapshot?,
+        timeout: TimeInterval?
+    ) async -> NetworkSnapshot? {
+        _ = snapshot
+        _ = timeout
+        guard !changes.isEmpty else { return nil }
+        return changes.removeFirst()
     }
 }
 
