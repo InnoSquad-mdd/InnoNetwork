@@ -11,6 +11,8 @@ final class StubUploadURLTask: UploadURLTask, @unchecked Sendable {
         var state: URLSessionTask.State
         var bytesSent: Int64
         var expectedBytes: Int64
+        var resumeCount: Int
+        var cancelCount: Int
     }
 
     let taskIdentifier: Int
@@ -36,7 +38,9 @@ final class StubUploadURLTask: UploadURLTask, @unchecked Sendable {
                 response: response,
                 state: state,
                 bytesSent: bytesSent,
-                expectedBytes: expectedBytes
+                expectedBytes: expectedBytes,
+                resumeCount: 0,
+                cancelCount: 0
             )
         )
     }
@@ -50,13 +54,21 @@ final class StubUploadURLTask: UploadURLTask, @unchecked Sendable {
     var state: URLSessionTask.State { storage.withLock { $0.state } }
     var countOfBytesSent: Int64 { storage.withLock { $0.bytesSent } }
     var countOfBytesExpectedToSend: Int64 { storage.withLock { $0.expectedBytes } }
+    var resumeCount: Int { storage.withLock { $0.resumeCount } }
+    var cancelCount: Int { storage.withLock { $0.cancelCount } }
 
     func resume() {
-        storage.withLock { $0.state = .running }
+        storage.withLock {
+            $0.resumeCount += 1
+            $0.state = .running
+        }
     }
 
     func cancel() {
-        storage.withLock { $0.state = .canceling }
+        storage.withLock {
+            $0.cancelCount += 1
+            $0.state = .canceling
+        }
     }
 }
 
@@ -64,20 +76,35 @@ final class StubUploadURLSession: UploadURLSession, @unchecked Sendable {
     private struct Storage {
         var tasks: [StubUploadURLTask]
         var nextIdentifier: Int
+        var invalidationCallCount: Int
     }
 
     private let storage: OSAllocatedUnfairLock<Storage>
     private let channel: UploadDelegateEventChannel
+    private let emitsInvalidationEvent: Bool
 
-    init(channel: UploadDelegateEventChannel, tasks: [StubUploadURLTask] = []) {
+    init(
+        channel: UploadDelegateEventChannel,
+        tasks: [StubUploadURLTask] = [],
+        emitsInvalidationEvent: Bool = true
+    ) {
         self.channel = channel
+        self.emitsInvalidationEvent = emitsInvalidationEvent
         self.storage = OSAllocatedUnfairLock(
-            initialState: Storage(tasks: tasks, nextIdentifier: (tasks.map(\.taskIdentifier).max() ?? 0) + 1)
+            initialState: Storage(
+                tasks: tasks,
+                nextIdentifier: (tasks.map(\.taskIdentifier).max() ?? 0) + 1,
+                invalidationCallCount: 0
+            )
         )
     }
 
     var latestTask: StubUploadURLTask? {
         storage.withLock { $0.tasks.last }
+    }
+
+    var invalidationCallCount: Int {
+        storage.withLock { $0.invalidationCallCount }
     }
 
     func makeUploadTask(with request: URLRequest, fromFile fileURL: URL) -> any UploadURLTask {
@@ -94,19 +121,35 @@ final class StubUploadURLSession: UploadURLSession, @unchecked Sendable {
     }
 
     func invalidateAndCancel() {
-        let tasks = storage.withLock { $0.tasks }
+        let tasks = storage.withLock { storage in
+            storage.invalidationCallCount += 1
+            return storage.tasks
+        }
         tasks.forEach { $0.cancel() }
-        channel.send(.invalidated)
+        if emitsInvalidationEvent {
+            channel.send(.invalidated)
+        }
     }
 }
 
 func makeUploadHarness(
     configuration: UploadConfiguration = .safeDefaults(),
-    tasks: [StubUploadURLTask] = []
+    tasks: [StubUploadURLTask] = [],
+    emitsInvalidationEvent: Bool = true,
+    invalidationTimeout: Duration = .seconds(5)
 ) -> (UploadManager, StubUploadURLSession, UploadDelegateEventChannel) {
     let channel = UploadDelegateEventChannel()
-    let session = StubUploadURLSession(channel: channel, tasks: tasks)
-    let manager = UploadManager(configuration: configuration, session: session, channel: channel)
+    let session = StubUploadURLSession(
+        channel: channel,
+        tasks: tasks,
+        emitsInvalidationEvent: emitsInvalidationEvent
+    )
+    let manager = UploadManager(
+        configuration: configuration,
+        session: session,
+        channel: channel,
+        invalidationTimeout: invalidationTimeout
+    )
     return (manager, session, channel)
 }
 

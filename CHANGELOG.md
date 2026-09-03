@@ -34,6 +34,14 @@ These changes form the unreleased `6.0.0` draft and have not been tagged.
   value-only failure taxonomy, secure configuration façade, bounded companion
   transfer, retry execution, and URL-validation contracts.
 
+### Fixed
+
+- Restored background uploads that are still suspended now resume only after
+  URL and sensitive-header admission succeeds. Upload shutdown also stops
+  waiting after a bounded internal invalidation deadline if Foundation does
+  not deliver its session-invalidated callback; repeated shutdown remains
+  idempotent.
+
 ### Changed
 
 - `@APIDefinition(method:path:auth:)`, the default-enabled `Macros` package

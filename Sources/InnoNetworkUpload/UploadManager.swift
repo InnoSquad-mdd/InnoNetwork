@@ -19,6 +19,7 @@ public actor UploadManager {
     private let backgroundCompletionStore: UploadBackgroundCompletionStore
     private let eventHub: TaskEventHub<UploadEvent>
     private let invalidationBarrier = UploadInvalidationBarrier()
+    private let invalidationTimeout: Duration
     private nonisolated let consumerTask =
         OSAllocatedUnfairLock<Task<Void, Never>?>(initialState: nil)
 
@@ -52,6 +53,7 @@ public actor UploadManager {
         self.delegate = delegate
         self.channel = channel
         self.backgroundCompletionStore = UploadBackgroundCompletionStore()
+        self.invalidationTimeout = .seconds(5)
         self.eventHub = TaskEventHub(
             policy: configuration.eventDeliveryPolicy,
             metricsReporter: configuration.eventMetricsReporter,
@@ -72,13 +74,15 @@ public actor UploadManager {
         configuration: UploadConfiguration,
         session: any UploadURLSession,
         channel: UploadDelegateEventChannel,
-        backgroundCompletionStore: UploadBackgroundCompletionStore = UploadBackgroundCompletionStore()
+        backgroundCompletionStore: UploadBackgroundCompletionStore = UploadBackgroundCompletionStore(),
+        invalidationTimeout: Duration = .seconds(5)
     ) {
         self.configuration = configuration
         self.session = session
         self.delegate = nil
         self.channel = channel
         self.backgroundCompletionStore = backgroundCompletionStore
+        self.invalidationTimeout = invalidationTimeout
         self.eventHub = TaskEventHub(
             policy: configuration.eventDeliveryPolicy,
             metricsReporter: configuration.eventMetricsReporter,
@@ -208,6 +212,13 @@ public actor UploadManager {
             for event in pending {
                 await process(event)
             }
+
+            guard !(await task.state.isTerminal) else { continue }
+            if urlTask.state == .suspended {
+                await task.begin()
+                await eventHub.publish(.stateChanged(.uploading), for: id)
+                urlTask.resume()
+            }
         }
 
         restorationCompleted = true
@@ -269,7 +280,7 @@ public actor UploadManager {
     /// Cancels active uploads and tears down the owned URLSession.
     public func shutdown() async {
         guard !isShutdown else {
-            await invalidationBarrier.wait()
+            _ = await invalidationBarrier.wait(timeout: invalidationTimeout)
             return
         }
         isShutdown = true
@@ -284,7 +295,10 @@ public actor UploadManager {
         responseBodies.removeAll()
         forcedFailures.removeAll()
         session.invalidateAndCancel()
-        await invalidationBarrier.wait()
+        let invalidated = await invalidationBarrier.wait(timeout: invalidationTimeout)
+        if !invalidated {
+            Self.logger.fault("upload URLSession invalidation exceeded the shutdown deadline")
+        }
         channel.finish()
         let consumer = consumerTask.withLock { value -> Task<Void, Never>? in
             let result = value
@@ -549,19 +563,57 @@ public actor UploadManager {
 }
 
 package actor UploadInvalidationBarrier {
-    private var isComplete = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var result: Bool?
+    private var waiters: [UUID: CheckedContinuation<Bool, Never>] = [:]
+    private var timeoutTasks: [UUID: Task<Void, Never>] = [:]
 
-    package func wait() async {
-        guard !isComplete else { return }
-        await withCheckedContinuation { waiters.append($0) }
+    /// Waits for URLSession invalidation until the bounded shutdown deadline.
+    ///
+    /// The first timeout opens the barrier for every concurrent and future
+    /// waiter so repeated shutdown calls cannot start another unbounded wait.
+    package func wait(timeout: Duration) async -> Bool {
+        if let result { return result }
+        guard timeout > .zero else {
+            resolve(with: false)
+            return false
+        }
+
+        let id = UUID()
+        return await withCheckedContinuation { continuation in
+            if let result {
+                continuation.resume(returning: result)
+                return
+            }
+            waiters[id] = continuation
+            timeoutTasks[id] = Task { [weak self] in
+                do {
+                    try await Task.sleep(for: timeout)
+                } catch {
+                    return
+                }
+                await self?.timeout()
+            }
+        }
     }
 
     package func complete() {
-        guard !isComplete else { return }
-        isComplete = true
-        let pending = waiters
-        waiters.removeAll()
-        for waiter in pending { waiter.resume() }
+        resolve(with: true)
+    }
+
+    private func timeout() {
+        resolve(with: false)
+    }
+
+    private func resolve(with result: Bool) {
+        guard self.result == nil else { return }
+        self.result = result
+        let continuations = waiters.values
+        waiters.removeAll(keepingCapacity: false)
+        let tasks = timeoutTasks.values
+        timeoutTasks.removeAll(keepingCapacity: false)
+        for task in tasks { task.cancel() }
+        for continuation in continuations {
+            continuation.resume(returning: result)
+        }
     }
 }

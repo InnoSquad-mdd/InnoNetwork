@@ -64,6 +64,9 @@ Create only one live manager for a background session identifier. Call
 starting a new background upload performs this restoration automatically.
 Foundation owns the transfer bytes, while `taskDescription` carries the opaque
 logical task identifier used for reattachment.
+An admitted restored task that is still suspended is resumed after its request
+passes the same URL and sensitive-header checks. Invalid restored tasks fail
+closed and are never resumed.
 
 Forward the application delegate's background-session completion exactly once:
 
@@ -88,6 +91,9 @@ container available to every participating process.
 - Automatic cookie and URL credential storage is disabled for upload sessions.
 - Final response URLs are revalidated, although this cannot undo a redirect
   already followed by the system background daemon.
+- ``UploadManager/shutdown()`` cancels active work and waits for URLSession
+  invalidation up to the package's bounded internal shutdown deadline. A
+  missing callback is logged without leaving shutdown suspended forever.
 
 ## Topics
 
