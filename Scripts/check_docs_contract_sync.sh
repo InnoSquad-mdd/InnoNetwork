@@ -58,6 +58,7 @@ required_feature_docs=(
   "$repo_root/Sources/InnoNetworkOpenAPI/InnoNetworkOpenAPI.docc/InnoNetworkOpenAPI.md"
   "$repo_root/Sources/InnoNetworkDownload/InnoNetworkDownload.docc/Articles/BackgroundDownloads.md"
   "$repo_root/Sources/InnoNetworkDownload/InnoNetworkDownload.docc/Articles/Persistence.md"
+  "$repo_root/Sources/InnoNetworkUpload/InnoNetworkUpload.docc/InnoNetworkUpload.md"
   "$repo_root/Sources/InnoNetworkHLS/InnoNetworkHLS.docc/InnoNetworkHLS.md"
   "$repo_root/Sources/InnoNetworkHLSLive/InnoNetworkHLSLive.docc/InnoNetworkHLSLive.md"
   "$repo_root/Sources/InnoNetworkHLSAVFoundation/InnoNetworkHLSAVFoundation.docc/InnoNetworkHLSAVFoundation.md"
@@ -187,6 +188,7 @@ expected_provisionally=(
 '`MultipartResponseDecoder` buffered multipart response parsing surface'
 '`MultipartStreamingResponseDecoder` streaming multipart response parsing surface'
 '`InnoNetworkOpenAPI` companion product'
+'`InnoNetworkUpload` companion product and its public file-upload, progress, restoration, bounded response, event, and error symbols'
 '`InnoNetworkHLS` companion product and its public playlist, variant selection, single-file download, offline package, event, and error symbols'
 '`InnoNetworkHLSLive` companion product and its public live reload, bounded DVR recording, snapshot, configuration, and error symbols'
 '`InnoNetworkHLSAVFoundation` companion product and its public download, offline readiness, playback configuration, timed metadata, playback metrics, playback health, interstitial and integrated-timeline observation, and FairPlay symbols'
@@ -394,6 +396,15 @@ expected_shipping_public_declarations=(
   URLQueryKeyEncodingStrategy
   URLQueryArrayEncodingStrategy
   W3CTraceContext
+  UploadConfiguration
+  UploadError
+  UploadEvent
+  UploadManager
+  UploadOperation
+  UploadProgress
+  UploadReceipt
+  UploadState
+  UploadTask
   JSONWebSocketMessageCodec
   WebSocketCloseCode
   WebSocketCloseDisposition
@@ -999,6 +1010,7 @@ validate_public_surface_snapshot() {
     'core.allowlist|`InnoNetwork` (core)'
     'websocket.allowlist|`InnoNetworkWebSocket`'
     'download.allowlist|`InnoNetworkDownload`'
+    'upload.allowlist|`InnoNetworkUpload`'
     'hls.allowlist|`InnoNetworkHLS`'
     'hls-live.allowlist|`InnoNetworkHLSLive`'
     'hls-avfoundation.allowlist|`InnoNetworkHLSAVFoundation`'
@@ -1679,6 +1691,17 @@ for symbol in "${expected_provisionally[@]}"; do
       ;;
     '`InnoNetworkOpenAPI` companion product')
       validate_openapi_companion_product
+      continue
+      ;;
+    '`InnoNetworkUpload` companion product and its public file-upload, progress, restoration, bounded response, event, and error symbols')
+      require_contains 'name: "InnoNetworkUpload"' "$repo_root/Package.swift"
+      require_contains 'targets: ["InnoNetworkUpload"]' "$repo_root/Package.swift"
+      require_contains 'public actor UploadManager' \
+        "$repo_root/Sources/InnoNetworkUpload/UploadManager.swift"
+      require_contains 'public struct UploadReceipt: Sendable' \
+        "$repo_root/Sources/InnoNetworkUpload/UploadModels.swift"
+      require_contains 'Background requests containing `Authorization`' \
+        "$repo_root/Sources/InnoNetworkUpload/UploadConfiguration.swift"
       continue
       ;;
     '`InnoNetworkHLS` companion product and its public playlist, variant selection, single-file download, offline package, event, and error symbols')

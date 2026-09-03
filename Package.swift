@@ -47,6 +47,10 @@ let package = Package(
             targets: ["InnoNetworkDownload"]
         ),
         .library(
+            name: "InnoNetworkUpload",
+            targets: ["InnoNetworkUpload"]
+        ),
+        .library(
             name: "InnoNetworkHLS",
             targets: ["InnoNetworkHLS"]
         ),
@@ -194,6 +198,12 @@ let package = Package(
             // File Timestamp Required Reason API used by
             // `DownloadTaskPersistence.attributesOfItem(...)`.
             resources: [.process("Resources")],
+            swiftSettings: strictSettings
+        ),
+        .target(
+            name: "InnoNetworkUpload",
+            dependencies: ["InnoNetwork"],
+            path: "Sources/InnoNetworkUpload",
             swiftSettings: strictSettings
         ),
         .target(
@@ -401,6 +411,12 @@ let package = Package(
             name: "InnoNetworkDownloadTests",
             dependencies: ["InnoNetworkDownload", "InnoNetworkTestSupport"],
             path: "Tests/InnoNetworkDownloadTests",
+            swiftSettings: strictSettings
+        ),
+        .testTarget(
+            name: "InnoNetworkUploadTests",
+            dependencies: ["InnoNetwork", "InnoNetworkUpload", "InnoNetworkTestSupport"],
+            path: "Tests/InnoNetworkUploadTests",
             swiftSettings: strictSettings
         ),
         .testTarget(

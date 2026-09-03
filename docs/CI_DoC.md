@@ -249,6 +249,7 @@ rg -n "@unchecked Sendable" \
   Sources/InnoNetwork \
   Sources/InnoNetworkMacros \
   Sources/InnoNetworkDownload \
+  Sources/InnoNetworkUpload \
   Sources/InnoNetworkPersistentCache \
   Sources/InnoNetworkWebSocket
 bash Scripts/check_production_force_unwraps.sh

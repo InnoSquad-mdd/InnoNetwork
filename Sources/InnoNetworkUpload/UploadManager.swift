@@ -1,0 +1,561 @@
+import Foundation
+import InnoNetwork
+import OSLog
+import os
+
+/// Manages file-backed foreground and background upload tasks.
+public actor UploadManager {
+    private static let logger = Logger(
+        subsystem: "com.innosquad.innonetwork",
+        category: "upload-manager"
+    )
+    private static let activeBackgroundSessionIdentifiers =
+        OSAllocatedUnfairLock<Set<String>>(initialState: [])
+
+    private let configuration: UploadConfiguration
+    private let session: any UploadURLSession
+    private let delegate: UploadSessionDelegate?
+    private let channel: UploadDelegateEventChannel
+    private let backgroundCompletionStore: UploadBackgroundCompletionStore
+    private let eventHub: TaskEventHub<UploadEvent>
+    private let invalidationBarrier = UploadInvalidationBarrier()
+    private nonisolated let consumerTask =
+        OSAllocatedUnfairLock<Task<Void, Never>?>(initialState: nil)
+
+    private var tasks: [String: UploadTask] = [:]
+    private var uploadTasks: [String: any UploadURLTask] = [:]
+    private var logicalIDsBySystemIdentifier: [Int: String] = [:]
+    private var responseBodies: [Int: Data] = [:]
+    private var forcedFailures: [Int: UploadError] = [:]
+    private var pendingDelegateEvents: [Int: [UploadDelegateEvent]] = [:]
+    private var restorationCompleted = false
+    private var isRestoring = false
+    private var restorationWaiters: [CheckedContinuation<[UploadTask], Never>] = []
+    private var restoredTaskIDs: Set<String> = []
+    private var isShutdown = false
+    private let ownsBackgroundSessionIdentifier: Bool
+
+    /// Creates a manager for the supplied upload domain.
+    public init(configuration: UploadConfiguration = .safeDefaults()) throws(UploadError) {
+        let ownsIdentifier = try Self.claimBackgroundSessionIdentifier(for: configuration)
+        let channel = UploadDelegateEventChannel()
+        let delegate = UploadSessionDelegate(channel: channel)
+        let sessionConfiguration = configuration.makeURLSessionConfiguration()
+        let session = URLSession(
+            configuration: sessionConfiguration,
+            delegate: delegate,
+            delegateQueue: nil
+        )
+
+        self.configuration = configuration
+        self.session = session
+        self.delegate = delegate
+        self.channel = channel
+        self.backgroundCompletionStore = UploadBackgroundCompletionStore()
+        self.eventHub = TaskEventHub(
+            policy: configuration.eventDeliveryPolicy,
+            metricsReporter: configuration.eventMetricsReporter,
+            hubKind: .genericTask
+        )
+        self.ownsBackgroundSessionIdentifier = ownsIdentifier
+
+        let task = Task { [weak self] in
+            for await event in channel.stream {
+                guard let self else { return }
+                await self.process(event)
+            }
+        }
+        consumerTask.withLock { $0 = task }
+    }
+
+    package init(
+        configuration: UploadConfiguration,
+        session: any UploadURLSession,
+        channel: UploadDelegateEventChannel,
+        backgroundCompletionStore: UploadBackgroundCompletionStore = UploadBackgroundCompletionStore()
+    ) {
+        self.configuration = configuration
+        self.session = session
+        self.delegate = nil
+        self.channel = channel
+        self.backgroundCompletionStore = backgroundCompletionStore
+        self.eventHub = TaskEventHub(
+            policy: configuration.eventDeliveryPolicy,
+            metricsReporter: configuration.eventMetricsReporter,
+            hubKind: .genericTask
+        )
+        self.ownsBackgroundSessionIdentifier = false
+
+        let task = Task { [weak self] in
+            for await event in channel.stream {
+                guard let self else { return }
+                await self.process(event)
+            }
+        }
+        consumerTask.withLock { $0 = task }
+    }
+
+    deinit {
+        channel.finish()
+        consumerTask.withLock { $0?.cancel() }
+        if ownsBackgroundSessionIdentifier,
+            let identifier = configuration.sessionIdentifier
+        {
+            Self.releaseBackgroundSessionIdentifier(identifier)
+        }
+        if !isShutdown {
+            session.invalidateAndCancel()
+        }
+        _ = delegate
+    }
+
+    /// Starts a file-backed upload and returns a pre-registered event stream.
+    ///
+    /// The source file must remain available and unchanged until a background
+    /// transfer reaches a terminal state.
+    public func upload(
+        _ request: URLRequest,
+        fromFile fileURL: URL
+    ) async throws(UploadError) -> UploadOperation {
+        guard !isShutdown else { throw .managerShutdown }
+        if configuration.sessionMode == .background, !restorationCompleted {
+            _ = await restoreTasks()
+        }
+        try Self.validate(request: request, fileURL: fileURL, configuration: configuration)
+
+        guard let url = request.url else {
+            throw .invalidRequest("Upload request URL disappeared after validation")
+        }
+        let method = request.httpMethod ?? "POST"
+        let task = UploadTask(requestURL: url, method: method)
+        let stream = await eventHub.stream(for: task.id)
+        let urlTask = session.makeUploadTask(with: request, fromFile: fileURL)
+        urlTask.taskDescription = task.id
+
+        tasks[task.id] = task
+        uploadTasks[task.id] = urlTask
+        logicalIDsBySystemIdentifier[urlTask.taskIdentifier] = task.id
+        responseBodies[urlTask.taskIdentifier] = Data()
+
+        await task.begin()
+        await eventHub.publish(.stateChanged(.uploading), for: task.id)
+        urlTask.resume()
+        return UploadOperation(task: task, events: stream)
+    }
+
+    /// Reattaches logical tasks to uploads owned by the configured background
+    /// URLSession. Repeated calls return the same restored task set.
+    public func restoreTasks() async -> [UploadTask] {
+        guard !isShutdown, configuration.sessionMode == .background else { return [] }
+        if restorationCompleted {
+            return restoredTasksSnapshot()
+        }
+        if isRestoring {
+            return await withCheckedContinuation { continuation in
+                restorationWaiters.append(continuation)
+            }
+        }
+        isRestoring = true
+
+        let systemTasks = await session.allUploadTasks()
+        for urlTask in systemTasks {
+            guard let request = urlTask.currentRequest ?? urlTask.originalRequest,
+                let url = request.url
+            else {
+                urlTask.cancel()
+                continue
+            }
+
+            let id = uniqueTaskID(urlTask.taskDescription)
+            urlTask.taskDescription = id
+            let progress = UploadProgress(
+                bytesSent: 0,
+                totalBytesSent: urlTask.countOfBytesSent,
+                totalBytesExpectedToSend: urlTask.countOfBytesExpectedToSend
+            )
+            let state: UploadState = urlTask.state == .suspended ? .waiting : .uploading
+            let task = tasks[id] ?? UploadTask(
+                id: id,
+                requestURL: url,
+                method: request.httpMethod ?? "POST",
+                state: state,
+                progress: progress
+            )
+
+            do {
+                try Self.validateRestored(request: request, configuration: configuration)
+            } catch {
+                urlTask.cancel()
+                await task.fail(with: error)
+            }
+
+            tasks[id] = task
+            uploadTasks[id] = urlTask
+            logicalIDsBySystemIdentifier[urlTask.taskIdentifier] = id
+            responseBodies[urlTask.taskIdentifier] = responseBodies[urlTask.taskIdentifier] ?? Data()
+            restoredTaskIDs.insert(id)
+
+            if await task.state.isTerminal {
+                await eventHub.publishTerminalAndFinish(.failed((await task.error) ?? .cancelled), for: id)
+                pendingDelegateEvents.removeValue(forKey: urlTask.taskIdentifier)
+                removeRuntime(for: id)
+                continue
+            }
+
+            let pending = pendingDelegateEvents.removeValue(forKey: urlTask.taskIdentifier) ?? []
+            for event in pending {
+                await process(event)
+            }
+        }
+
+        restorationCompleted = true
+        isRestoring = false
+        let waiters = restorationWaiters
+        restorationWaiters.removeAll()
+        let snapshot = restoredTasksSnapshot()
+        for waiter in waiters { waiter.resume(returning: snapshot) }
+        return snapshot
+    }
+
+    /// Returns all tasks known to this manager, including terminal tasks.
+    public func allTasks() -> [UploadTask] {
+        tasks.values.sorted { $0.id < $1.id }
+    }
+
+    /// Returns the logical task with the supplied identifier.
+    public func task(withId id: String) -> UploadTask? {
+        tasks[id]
+    }
+
+    /// Creates an event stream for an existing or restored task and replays
+    /// its current observable state.
+    public func events(for task: UploadTask) async -> AsyncStream<UploadEvent> {
+        guard tasks[task.id] === task else {
+            return AsyncStream { $0.finish() }
+        }
+        let stream = await eventHub.stream(for: task.id)
+        if let terminal = await task.terminalEvent() {
+            await eventHub.publishTerminalAndFinish(terminal, for: task.id)
+        } else {
+            await eventHub.publish(.stateChanged(await task.state), for: task.id)
+            let progress = await task.progress
+            if progress != .zero {
+                await eventHub.publish(.progress(progress), for: task.id)
+            }
+        }
+        return stream
+    }
+
+    /// Cancels an active upload. The terminal cancellation event is published
+    /// before this method returns.
+    public func cancel(_ task: UploadTask) async {
+        guard tasks[task.id] === task, !(await task.state.isTerminal) else { return }
+        uploadTasks[task.id]?.cancel()
+        await task.fail(with: .cancelled)
+        await eventHub.publishTerminalAndFinish(.failed(.cancelled), for: task.id)
+        removeRuntime(for: task.id)
+    }
+
+    /// Installs the one-shot completion supplied by the application delegate
+    /// for this background session.
+    public nonisolated func handleBackgroundEvents(
+        completion: @escaping @Sendable () -> Void
+    ) {
+        backgroundCompletionStore.set(completion)?()
+    }
+
+    /// Cancels active uploads and tears down the owned URLSession.
+    public func shutdown() async {
+        guard !isShutdown else {
+            await invalidationBarrier.wait()
+            return
+        }
+        isShutdown = true
+        let active = Array(uploadTasks.values)
+        for urlTask in active { urlTask.cancel() }
+        for task in tasks.values where !(await task.state.isTerminal) {
+            await task.fail(with: .managerShutdown)
+            await eventHub.publishTerminalAndFinish(.failed(.managerShutdown), for: task.id)
+        }
+        uploadTasks.removeAll()
+        logicalIDsBySystemIdentifier.removeAll()
+        responseBodies.removeAll()
+        forcedFailures.removeAll()
+        session.invalidateAndCancel()
+        await invalidationBarrier.wait()
+        channel.finish()
+        let consumer = consumerTask.withLock { value -> Task<Void, Never>? in
+            let result = value
+            value = nil
+            return result
+        }
+        await consumer?.value
+        await eventHub.shutdown()
+        releaseClaimedIdentifierIfNeeded()
+    }
+
+    private func process(_ event: UploadDelegateEvent) async {
+        switch event {
+        case .invalidated:
+            await invalidationBarrier.complete()
+        case .backgroundEventsFinished:
+            backgroundCompletionStore.markEventsFinished()?()
+        case .progress(let identifier, let bytesSent, let totalBytesSent, let expected):
+            guard let task = task(forSystemIdentifier: identifier) else {
+                pendingDelegateEvents[identifier, default: []].append(event)
+                return
+            }
+            guard !(await task.state.isTerminal) else { return }
+            let progress = UploadProgress(
+                bytesSent: bytesSent,
+                totalBytesSent: totalBytesSent,
+                totalBytesExpectedToSend: expected
+            )
+            await task.update(progress: progress)
+            await eventHub.publish(.progress(progress), for: task.id)
+        case .data(let identifier, let data):
+            guard logicalIDsBySystemIdentifier[identifier] != nil else {
+                pendingDelegateEvents[identifier, default: []].append(event)
+                return
+            }
+            if let task = task(forSystemIdentifier: identifier), await task.state.isTerminal {
+                return
+            }
+            var body = responseBodies[identifier] ?? Data()
+            guard data.count <= configuration.maximumResponseBytes - body.count else {
+                forcedFailures[identifier] = .responseTooLarge(limit: configuration.maximumResponseBytes)
+                task(forSystemIdentifier: identifier).flatMap { uploadTasks[$0.id] }?.cancel()
+                return
+            }
+            body.append(data)
+            responseBodies[identifier] = body
+        case .completed(
+            let identifier,
+            let taskDescription,
+            let originalRequest,
+            let currentRequest,
+            let response,
+            let underlying
+        ):
+            if task(forSystemIdentifier: identifier) == nil {
+                guard configuration.sessionMode == .background,
+                    let request = currentRequest ?? originalRequest,
+                    let url = request.url
+                else {
+                    pendingDelegateEvents[identifier, default: []].append(event)
+                    return
+                }
+                let id = uniqueTaskID(taskDescription)
+                let adopted = UploadTask(
+                    id: id,
+                    requestURL: url,
+                    method: request.httpMethod ?? "POST",
+                    state: .uploading
+                )
+                tasks[id] = adopted
+                logicalIDsBySystemIdentifier[identifier] = id
+                responseBodies[identifier] = responseBodies[identifier] ?? Data()
+                restoredTaskIDs.insert(id)
+                do {
+                    try Self.validateRestored(request: request, configuration: configuration)
+                } catch {
+                    pendingDelegateEvents.removeValue(forKey: identifier)
+                    await fail(adopted, with: error)
+                    return
+                }
+                let pending = pendingDelegateEvents.removeValue(forKey: identifier) ?? []
+                for pendingEvent in pending {
+                    await process(pendingEvent)
+                }
+            }
+            guard let task = task(forSystemIdentifier: identifier) else { return }
+            guard !(await task.state.isTerminal) else {
+                removeRuntime(for: task.id)
+                return
+            }
+
+            let body = responseBodies[identifier] ?? Data()
+            let failure = forcedFailures.removeValue(forKey: identifier)
+            if let failure {
+                await fail(task, with: failure)
+                return
+            }
+            if let underlying {
+                let error: UploadError = (underlying.domain == NSURLErrorDomain
+                    && underlying.code == NSURLErrorCancelled) ? .cancelled : .network(underlying)
+                await fail(task, with: error)
+                return
+            }
+            guard let response else {
+                await fail(task, with: .invalidResponse)
+                return
+            }
+            guard let finalURL = currentRequest?.url ?? response.url else {
+                await fail(task, with: .invalidResponse)
+                return
+            }
+            do {
+                try NetworkURLAdmission.validate(
+                    finalURL,
+                    policy: .http(allowsInsecure: false)
+                )
+            } catch {
+                await fail(task, with: .invalidRequest("Final response URL failed HTTPS admission"))
+                return
+            }
+
+            let coreResponse = Response(
+                statusCode: response.statusCode,
+                data: body,
+                request: nil,
+                response: response
+            )
+            let receipt = UploadReceipt(response: coreResponse)
+            guard configuration.acceptableStatusCodes.contains(response.statusCode) else {
+                await task.fail(with: .unacceptableStatusCode(response.statusCode), receipt: receipt)
+                await eventHub.publishTerminalAndFinish(
+                    .failed(.unacceptableStatusCode(response.statusCode)),
+                    for: task.id
+                )
+                removeRuntime(for: task.id)
+                return
+            }
+
+            await task.complete(with: receipt)
+            await eventHub.publishTerminalAndFinish(.completed(receipt), for: task.id)
+            removeRuntime(for: task.id)
+        }
+    }
+
+    private func fail(_ task: UploadTask, with error: UploadError) async {
+        await task.fail(with: error)
+        await eventHub.publishTerminalAndFinish(.failed(error), for: task.id)
+        removeRuntime(for: task.id)
+    }
+
+    private func task(forSystemIdentifier identifier: Int) -> UploadTask? {
+        logicalIDsBySystemIdentifier[identifier].flatMap { tasks[$0] }
+    }
+
+    private func removeRuntime(for logicalID: String) {
+        let urlTask = uploadTasks.removeValue(forKey: logicalID)
+        let identifier = urlTask?.taskIdentifier
+            ?? logicalIDsBySystemIdentifier.first(where: { $0.value == logicalID })?.key
+        guard let identifier else { return }
+        logicalIDsBySystemIdentifier.removeValue(forKey: identifier)
+        responseBodies.removeValue(forKey: identifier)
+        forcedFailures.removeValue(forKey: identifier)
+    }
+
+    private func normalizedTaskID(_ value: String?) -> String {
+        guard let value,
+            !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            value.utf8.count <= 256
+        else {
+            return UUID().uuidString
+        }
+        return value
+    }
+
+    private func uniqueTaskID(_ value: String?) -> String {
+        let candidate = normalizedTaskID(value)
+        return tasks[candidate] == nil ? candidate : UUID().uuidString
+    }
+
+    private func restoredTasksSnapshot() -> [UploadTask] {
+        restoredTaskIDs.compactMap { tasks[$0] }.sorted { $0.id < $1.id }
+    }
+
+    private static func validate(
+        request: URLRequest,
+        fileURL: URL,
+        configuration: UploadConfiguration
+    ) throws(UploadError) {
+        do {
+            try NetworkURLAdmission.validate(request, policy: .http(allowsInsecure: false))
+        } catch {
+            throw .invalidRequest("Only absolute HTTPS URLs without credentials, fragments, or dot segments are allowed")
+        }
+        guard request.httpBody == nil, request.httpBodyStream == nil else {
+            throw .invalidRequest("The request body is supplied by fromFile and must not also be set on URLRequest")
+        }
+        let method = (request.httpMethod ?? "POST").uppercased()
+        guard method != "GET", method != "HEAD" else {
+            throw .invalidRequest("GET and HEAD cannot be used for file uploads")
+        }
+        guard isReadableRegularFile(fileURL) else { throw .unreadableFile }
+        try validateRestored(request: request, configuration: configuration)
+    }
+
+    private static func validateRestored(
+        request: URLRequest,
+        configuration: UploadConfiguration
+    ) throws(UploadError) {
+        do {
+            try NetworkURLAdmission.validate(request, policy: .http(allowsInsecure: false))
+        } catch {
+            throw .invalidRequest("Only absolute HTTPS URLs without credentials, fragments, or dot segments are allowed")
+        }
+        guard configuration.sessionMode == .background else { return }
+        let sensitive = Set(["authorization", "cookie", "proxy-authorization"])
+        let present = (request.allHTTPHeaderFields ?? [:]).keys
+            .filter { sensitive.contains($0.lowercased()) }
+            .sorted()
+        guard present.isEmpty else { throw .sensitiveHeadersRequireForeground(present) }
+    }
+
+    private static func isReadableRegularFile(_ url: URL) -> Bool {
+        guard url.isFileURL, FileManager.default.isReadableFile(atPath: url.path) else { return false }
+        do {
+            return try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true
+        } catch {
+            return false
+        }
+    }
+
+    private static func claimBackgroundSessionIdentifier(
+        for configuration: UploadConfiguration
+    ) throws(UploadError) -> Bool {
+        guard configuration.sessionMode == .background,
+            let identifier = configuration.sessionIdentifier,
+            !identifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            if configuration.sessionMode == .background {
+                throw .invalidRequest("Background sessionIdentifier must not be empty")
+            }
+            return false
+        }
+        let inserted = activeBackgroundSessionIdentifiers.withLock { $0.insert(identifier).inserted }
+        guard inserted else { throw .duplicateSessionIdentifier(identifier) }
+        return true
+    }
+
+    private static func releaseBackgroundSessionIdentifier(_ identifier: String) {
+        _ = activeBackgroundSessionIdentifiers.withLock { $0.remove(identifier) }
+    }
+
+    private func releaseClaimedIdentifierIfNeeded() {
+        guard ownsBackgroundSessionIdentifier,
+            let identifier = configuration.sessionIdentifier
+        else { return }
+        Self.releaseBackgroundSessionIdentifier(identifier)
+    }
+}
+
+package actor UploadInvalidationBarrier {
+    private var isComplete = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    package func wait() async {
+        guard !isComplete else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    package func complete() {
+        guard !isComplete else { return }
+        isComplete = true
+        let pending = waiters
+        waiters.removeAll()
+        for waiter in pending { waiter.resume() }
+    }
+}

@@ -19,7 +19,7 @@ concepts:
 2. `@APIDefinition` to derive and validate repetitive protocol witnesses
 3. `DefaultNetworkClient.request(_:)` to execute the typed request
 
-Everything else—including Download, raw or system-managed HLS, WebSocket,
+Everything else—including Download, Upload, raw or system-managed HLS, WebSocket,
 persistent cache, OpenAPI, AWS signing, pinning, and test support—is an
 optional product selected only when that capability is required.
 
@@ -34,6 +34,7 @@ optional product selected only when that capability is required.
 | `InnoNetwork` | Start here for named typed HTTP endpoints and the async request pipeline. Advanced policy remains opt-in. |
 | `InnoNetworkAuthAWS` | You need the optional AWS SigV4 reference signer. It is a single-shot signer, not an AWS SDK replacement. |
 | `InnoNetworkDownload` | You need foreground/background download lifecycle management with pause, resume, retry, persistence, and event streams. |
+| `InnoNetworkUpload` | You need file-backed foreground/background uploads with progress, restoration, bounded responses, and typed decoding. |
 | `InnoNetworkHLS` | You need bounded HLS playlist resolution, deterministic variant selection, browser-free non-DRM VOD assembly, or typed retry and recovery diagnostics. |
 | `InnoNetworkHLSLive` | You need blocking reloads, delta-window reconstruction, bounded snapshots, or atomic live DVR capture. |
 | `InnoNetworkHLSAVFoundation` | You need AVFoundation-managed background HLS persistence, media selections, a value-only integrated interstitial timeline, playback health, an app-owned FairPlay content-key setup, or system-download lifecycle diagnostics. |
@@ -56,7 +57,7 @@ Start with only the `InnoNetwork` product and
 `DefaultNetworkClient(baseURL:)`. A named endpoint struct plus
 `@APIDefinition` needs no configuration pack or optional product. Add an
 advanced pack only when a concrete retry, auth, cache, transport, or
-observability requirement appears; add Download, WebSocket, persistent cache,
+observability requirement appears; add Download, Upload, WebSocket, persistent cache,
 the HLS assembler, AVFoundation HLS, OpenAPI, AWS auth, or pinning products only
 for the capability named in the table above. If the application has only one
 or two uncomplicated requests and no shared policy, direct `URLSession` is
@@ -409,6 +410,15 @@ for await event in await manager.events(for: task) {
 - pause, resume, retry, and listener retention across retries
 - append-log persistence for durable task restoration
 - `AsyncStream` and listener-based event delivery
+
+### `InnoNetworkUpload`
+
+- file-backed foreground and background `URLSessionUploadTask` orchestration
+- pre-registered progress and terminal event streams
+- background system-task restoration through opaque logical identifiers
+- bounded response capture with `AnyResponseDecoder` integration
+- HTTPS-only admission, foreground redirect checks, and background rejection
+  of redirect-sensitive authorization or cookie headers
 
 ### `InnoNetworkHLS`
 

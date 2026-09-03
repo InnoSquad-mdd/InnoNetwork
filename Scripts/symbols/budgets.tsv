@@ -10,5 +10,6 @@ hls-audio.allowlist	65
 openapi.allowlist	36
 testsupport.allowlist	84
 trust.allowlist	17
+upload.allowlist	59
 websocket.allowlist	164
-TOTAL	3126
+TOTAL	3185

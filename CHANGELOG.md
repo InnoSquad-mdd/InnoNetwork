@@ -16,6 +16,11 @@ Versioning.
 - `WebSocketMessageCodec`, `JSONWebSocketMessageCodec`, and the lazy
   `WebSocketDecodedMessages` sequence add typed application-message send and
   receive paths without introducing another relay task or message buffer.
+- The new `InnoNetworkUpload` product adds file-backed foreground and
+  background uploads with pre-registered progress streams, system-task
+  restoration, bounded response capture, and `AnyResponseDecoder` integration.
+  Background requests reject redirect-sensitive authorization and cookie
+  headers because Foundation cannot expose every background redirect hop.
 
 ## [5.1.0] - 2026-09-03
 

@@ -24,6 +24,7 @@ production_paths=(
     "$repo_root/Sources/InnoNetwork"
     "$repo_root/Sources/InnoNetworkMacros"
     "$repo_root/Sources/InnoNetworkDownload"
+    "$repo_root/Sources/InnoNetworkUpload"
     "$repo_root/Sources/InnoNetworkPersistentCache"
     "$repo_root/Sources/InnoNetworkWebSocket"
 )

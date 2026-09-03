@@ -157,6 +157,7 @@ acquiring a 5.x compatibility promise.
 - `MultipartResponseDecoder` buffered multipart response parsing surface
 - `MultipartStreamingResponseDecoder` streaming multipart response parsing surface
 - `InnoNetworkOpenAPI` companion product
+- `InnoNetworkUpload` companion product and its public file-upload, progress, restoration, bounded response, event, and error symbols
 - `InnoNetworkHLS` companion product and its public playlist, variant selection, single-file download, offline package, event, and error symbols
 - `InnoNetworkHLSLive` companion product and its public live reload, bounded DVR recording, snapshot, configuration, and error symbols
 - `InnoNetworkHLSAVFoundation` companion product and its public download, offline readiness, playback configuration, timed metadata, playback metrics, playback health, interstitial and integrated-timeline observation, and FairPlay symbols
@@ -407,8 +408,8 @@ types and members in addition to top-level declarations. The grouped ledger
 below keeps the high-level compatibility classification readable for the
 5.x release line.
 
-The machine-checked snapshot currently partitions all 3,126 declarations into
-305 Stable consumer declarations, 2,788 Provisionally Stable consumer
+The machine-checked snapshot currently partitions all 3,185 declarations into
+305 Stable consumer declarations, 2,847 Provisionally Stable consumer
 declarations, and 33 opt-in SPI declarations. The three sets are disjoint and
 exhaustive. `Scripts/symbols/stable-rules.tsv` maps the Stable ledger to symbol
 paths, while the compiler-authored SPI flag is snapshotted in
@@ -472,6 +473,12 @@ Stable.
 - `DownloadConfiguration`, `DownloadError`, `DownloadEvent`,
   `DownloadManager`, `DownloadManagerError`,
   `DownloadProgress`, `DownloadState`, and `DownloadTask`.
+
+### InnoNetworkUpload
+
+- `UploadConfiguration`, `UploadError`, `UploadEvent`, `UploadManager`,
+  `UploadOperation`, `UploadProgress`, `UploadReceipt`, `UploadState`, and
+  `UploadTask`.
 
 ### InnoNetworkHLS
 

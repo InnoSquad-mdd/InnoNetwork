@@ -120,7 +120,7 @@ swift test --list-tests
 
 ## Architecture
 
-전체 12개 product. 신규 기여 시 진입 파일과 책임만 빠르게 파악하세요.
+전체 13개 product. 신규 기여 시 진입 파일과 책임만 빠르게 파악하세요.
 
 ### Sources/InnoNetwork (Core)
 - `APIDefinition.swift` / `APIDefinition+Macro.swift` — endpoint 선언 프로토콜 + `@APIDefinition` 매크로
@@ -152,6 +152,11 @@ swift test --list-tests
 - `DownloadSessionDelegate.swift` — `URLSessionDelegate` bridge
 - `DownloadRuntimeRegistry.swift` — in-memory task ↔ identifier 매핑
 - `DownloadConfiguration.swift` / `DownloadState.swift`
+
+### Sources/InnoNetworkUpload
+- `UploadManager.swift` — 파일 기반 foreground/background 업로드와 시스템 task 복원
+- `UploadModels.swift` — 진행률, lifecycle event, bounded response receipt
+- `UploadSessionDelegate.swift` — 진행률·응답·redirect delegate bridge
 
 ### Sources/InnoNetworkHLS
 - `PlaylistResolver.swift` — bounded UTF-8 playlist fetch + parser

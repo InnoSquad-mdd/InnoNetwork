@@ -25,6 +25,7 @@ def main() -> None:
         "InnoNetwork",
         "InnoNetworkAuthAWS",
         "InnoNetworkDownload",
+        "InnoNetworkUpload",
         "InnoNetworkHLS",
         "InnoNetworkHLSLive",
         "InnoNetworkHLSAVFoundation",

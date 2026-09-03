@@ -10,6 +10,7 @@ products=(
   InnoNetwork
   InnoNetworkAuthAWS
   InnoNetworkDownload
+  InnoNetworkUpload
   InnoNetworkHLS
   InnoNetworkHLSLive
   InnoNetworkHLSAVFoundation
