@@ -25,6 +25,7 @@ InnoNetwork	swift.enum	NetworkEvent
 InnoNetwork	swift.enum	NetworkFailureKind
 InnoNetwork	swift.enum	NetworkInterfaceType
 InnoNetwork	swift.enum	NetworkOperationEvent
+InnoNetwork	swift.enum	NetworkOperationReplaySafety
 InnoNetwork	swift.enum	NetworkReachabilityStatus
 InnoNetwork	swift.enum	NetworkRecoveryDisposition
 InnoNetwork	swift.enum	NetworkURLPolicy
@@ -150,12 +151,15 @@ InnoNetwork	swift.enum.case	NetworkInterfaceType.wiredEthernet
 InnoNetwork	swift.enum.case	NetworkOperationEvent.failed(id:failure:)
 InnoNetwork	swift.enum.case	NetworkOperationEvent.started(id:)
 InnoNetwork	swift.enum.case	NetworkOperationEvent.succeeded(id:)
+InnoNetwork	swift.enum.case	NetworkOperationReplaySafety.methodDefault
+InnoNetwork	swift.enum.case	NetworkOperationReplaySafety.never
+InnoNetwork	swift.enum.case	NetworkOperationReplaySafety.stableIdempotencyKey
 InnoNetwork	swift.enum.case	NetworkReachabilityStatus.requiresConnection
 InnoNetwork	swift.enum.case	NetworkReachabilityStatus.satisfied
 InnoNetwork	swift.enum.case	NetworkReachabilityStatus.unsatisfied
 InnoNetwork	swift.enum.case	NetworkRecoveryDisposition.doNotRetry
 InnoNetwork	swift.enum.case	NetworkRecoveryDisposition.none
-InnoNetwork	swift.enum.case	NetworkRecoveryDisposition.refreshCredentials
+InnoNetwork	swift.enum.case	NetworkRecoveryDisposition.reauthenticate
 InnoNetwork	swift.enum.case	NetworkRecoveryDisposition.retry
 InnoNetwork	swift.enum.case	NetworkRecoveryDisposition.waitForConnectivity
 InnoNetwork	swift.enum.case	NetworkURLPolicy.http(allowsInsecure:)
@@ -288,6 +292,7 @@ InnoNetwork	swift.init	NetworkFailure.init(kind:code:statusCode:recovery:)
 InnoNetwork	swift.init	NetworkFailure.init(migratingV5:)
 InnoNetwork	swift.init	NetworkFailureKind.init(rawValue:)
 InnoNetwork	swift.init	NetworkInterfaceType.init(rawValue:)
+InnoNetwork	swift.init	NetworkOperationReplaySafety.init(rawValue:)
 InnoNetwork	swift.init	NetworkLoggingOptions.init(includeRequestBody:includeResponseBody:includeCookies:redactSensitiveData:releaseLogging:)
 InnoNetwork	swift.init	NetworkMonitor.init()
 InnoNetwork	swift.init	NetworkRecoveryDisposition.init(rawValue:)
@@ -417,6 +422,7 @@ InnoNetwork	swift.method	NetworkRetryExecutor.execute(retryPolicy:networkMonitor
 InnoNetwork	swift.method	OSLogNetworkEventObserver.handle(_:)
 InnoNetwork	swift.method	OperationNetworkClient.shutdown()
 InnoNetwork	swift.method	OperationNetworkClient.start(_:)
+InnoNetwork	swift.method	OperationNetworkClient.start(_:replaySafety:)
 InnoNetwork	swift.method	RateLimitExecutionPolicy.execute(input:context:next:)
 InnoNetwork	swift.method	ReachabilityCheckExecutionPolicy.execute(input:context:next:)
 InnoNetwork	swift.method	RedirectPolicy.redirect(request:response:originalRequest:)

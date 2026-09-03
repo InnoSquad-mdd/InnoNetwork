@@ -53,6 +53,7 @@ retain those values.
 - ``NetworkClientConfiguration``
 - ``OperationNetworkClient``
 - ``NetworkOperation``
+- ``NetworkOperationReplaySafety``
 - ``NetworkFailure``
 - ``DefaultNetworkClient``
 - ``APIDefinition``

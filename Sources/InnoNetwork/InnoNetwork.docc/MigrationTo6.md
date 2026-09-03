@@ -32,7 +32,9 @@ do {
     switch error.recovery {
     case .retry: scheduleRetry()
     case .waitForConnectivity: showOfflineState()
-    default: showFailure()
+    case .reauthenticate: presentSignIn()
+    case .doNotRetry, .none: showFailure()
+    @unknown default: showFailure()
     }
 }
 ```
@@ -42,6 +44,26 @@ bodies, headers, URLs, or arbitrary underlying error descriptions. Use
 ``NetworkOperation/events`` for a bounded operation-local start/terminal
 lifecycle, and retain the existing `NetworkEventObserving` integration for
 attempt-level production telemetry.
+
+Recovery is contextual. `OperationNetworkClient` recommends `.retry` for
+GET, HEAD, OPTIONS, and TRACE by default. Unsafe methods such as POST remain
+`.doNotRetry` even for transient status codes and timeouts because the server
+may already have applied their side effect. Opt in only when the application
+owns a stable idempotency key and reuses it across operation restarts:
+
+```swift
+let operation = client.start(
+    CreateOrder(idempotencyKey: orderAttemptID),
+    replaySafety: .stableIdempotencyKey
+)
+```
+
+The automatic `IdempotencyKeyPolicy` uses the logical request identifier. A
+new `NetworkOperation` receives a new identifier, so that policy alone does
+not prove that an application-level restart is safe. A 401 maps to
+`.reauthenticate` only for `.optional` or `.required` session-authenticated
+endpoints; 403 is an authorization failure and stays terminal. Reauthentication
+does not authorize automatic replay of the failed operation.
 
 The 5.x `InnoNetworkNext` product no longer exists. Remove that product from
 the package dependency and replace `import InnoNetworkNext` with

@@ -159,7 +159,8 @@ acquiring a 5.x compatibility promise.
 - `InnoNetworkOpenAPI` companion product
 - `InnoNetworkUpload` companion product and its public file-upload, progress, restoration, bounded response, event, and error symbols
 - operation-first `NetworkClientConfiguration`, `OperationNetworkClient`,
-  `NetworkOperation`, and value-only `NetworkFailure` root-module contracts
+  `NetworkOperation`, `NetworkOperationReplaySafety`, and value-only
+  `NetworkFailure` root-module contracts
 - bounded companion transport contracts: `BoundedNetworkTransfer`,
   `NetworkRetryExecutor`, `NetworkURLPolicy`, and `NetworkURLValidator`
 - `@APIDefinition(method:path:auth:)` and the default-enabled `Macros` package trait
@@ -434,8 +435,8 @@ below keeps the high-level compatibility classification readable. Historical
 5.x HLS sections document the migration source but are no longer included in
 the current machine-checked inventory.
 
-The machine-checked snapshot currently partitions all 1,401 declarations into
-305 Stable consumer declarations, 1,063 Provisionally Stable consumer
+The machine-checked snapshot currently partitions all 1,407 declarations into
+305 Stable consumer declarations, 1,069 Provisionally Stable consumer
 declarations, and 33 opt-in SPI declarations. The three sets are disjoint and
 exhaustive. `Scripts/symbols/stable-rules.tsv` maps the Stable ledger to symbol
 paths, while the compiler-authored SPI flag is snapshotted in
@@ -510,8 +511,8 @@ Stable.
 ### InnoNetwork 6 operation contract
 
 - `NetworkClientConfiguration`, `NetworkFailure`, `NetworkFailureKind`,
-  `NetworkOperation`, `NetworkOperationEvent`, `NetworkRecoveryDisposition`,
-  and `OperationNetworkClient`.
+  `NetworkOperation`, `NetworkOperationEvent`, `NetworkOperationReplaySafety`,
+  `NetworkRecoveryDisposition`, and `OperationNetworkClient`.
 - These declarations now belong to the root InnoNetwork module. The 5.x
   InnoNetworkNext product has been removed.
 
