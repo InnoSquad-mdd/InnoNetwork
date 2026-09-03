@@ -19,7 +19,7 @@ concepts:
 2. `@APIDefinition` to derive and validate repetitive protocol witnesses
 3. `DefaultNetworkClient.request(_:)` to execute the typed request
 
-Everything else—including the 6.0 contract preview, Download, Upload, raw or system-managed HLS, WebSocket,
+Everything else—including Download, Upload, WebSocket,
 persistent cache, OpenAPI, AWS signing, pinning, and test support—is an
 optional product selected only when that capability is required.
 
@@ -32,14 +32,9 @@ optional product selected only when that capability is required.
 | Product | Use When |
 | --- | --- |
 | `InnoNetwork` | Start here for named typed HTTP endpoints and the async request pipeline. Advanced policy remains opt-in. |
-| `InnoNetworkNext` | Preview the 6.0 operation, failure, and configuration contracts while reusing existing 5.x endpoints and clients. |
 | `InnoNetworkAuthAWS` | You need the optional AWS SigV4 reference signer. It is a single-shot signer, not an AWS SDK replacement. |
 | `InnoNetworkDownload` | You need foreground/background download lifecycle management with pause, resume, retry, persistence, and event streams. |
 | `InnoNetworkUpload` | You need file-backed foreground/background uploads with progress, restoration, bounded responses, and typed decoding. |
-| `InnoNetworkHLS` | You need bounded HLS playlist resolution, deterministic variant selection, browser-free non-DRM VOD assembly, or typed retry and recovery diagnostics. |
-| `InnoNetworkHLSLive` | You need blocking reloads, delta-window reconstruction, bounded snapshots, or atomic live DVR capture. |
-| `InnoNetworkHLSAVFoundation` | You need AVFoundation-managed background HLS persistence, media selections, a value-only integrated interstitial timeline, playback health, an app-owned FairPlay content-key setup, or system-download lifecycle diagnostics. |
-| `InnoNetworkHLSAudio` | You need demand-driven decoded PCM or in-place full-mix processing from an HLS player item on supported version 27 platforms. This product requires Xcode 27 and Swift 6.4. |
 | `InnoNetworkWebSocket` | You need long-lived bidirectional connections with heartbeat, reconnect, close taxonomy, and event delivery. |
 | `InnoNetworkPersistentCache` | You want `ResponseCache` backed by disk with conservative RFC-aware storage guards and data protection. |
 | `InnoNetworkOpenAPI` | Use `OpenAPIRequest` when generated or hand-written operations should run through the full `DefaultNetworkClient` pipeline. Use `InnoNetworkClientTransport` when an OpenAPI Runtime client needs a thin URLSession-backed transport and the full pipeline is not required. |
@@ -58,8 +53,8 @@ Start with only the `InnoNetwork` product and
 `DefaultNetworkClient(baseURL:)`. A named endpoint struct plus
 `@APIDefinition` needs no configuration pack or optional product. Add an
 advanced pack only when a concrete retry, auth, cache, transport, or
-observability requirement appears; add the 6.0 preview, Download, Upload, WebSocket, persistent cache,
-the HLS assembler, AVFoundation HLS, OpenAPI, AWS auth, or pinning products only
+observability requirement appears; add Download, Upload, WebSocket, persistent cache,
+OpenAPI, AWS auth, or pinning products only
 for the capability named in the table above. If the application has only one
 or two uncomplicated requests and no shared policy, direct `URLSession` is
 intentionally the smaller choice.
@@ -71,6 +66,18 @@ second runtime API.
 The packages are built around Swift Concurrency, explicit transport
 policies, and operational visibility that can scale from app prototypes
 to production clients.
+
+### InnoNetwork 6 migration
+
+The operation-first `OperationNetworkClient`, configuration, operation handle,
+and value-only failure types previously previewed by `InnoNetworkNext` now ship
+in the root `InnoNetwork` module. Remove the preview product and replace
+`import InnoNetworkNext` with `import InnoNetwork`.
+
+The four HLS products moved to the independently versioned
+[InnoStream](https://github.com/InnoSquadCorp/InnoStream) package. Their product
+and module names are unchanged, so migration consists of changing the SwiftPM
+package dependency while keeping existing imports.
 
 ## Why InnoNetwork
 
@@ -426,7 +433,7 @@ for await event in await manager.events(for: task) {
 - HTTPS-only admission, foreground redirect checks, and background rejection
   of redirect-sensitive authorization or cookie headers
 
-### `InnoNetworkHLS`
+### InnoStream: `InnoNetworkHLS`
 
 - bounded UTF-8 HLS playlist fetch and parsing through the shared transport
   policy
@@ -518,12 +525,13 @@ for await event in await manager.events(for: task) {
 - deterministic parser mutations, sub-quadratic large-playlist scaling,
   concurrent live-stream isolation, and AVFoundation event terminal-race
   gates, plus an actual loopback HTTP `AVPlayer` decoded-PCM smoke on macOS 27
-  or newer; run them independently with
+  or newer; run them independently from an InnoStream checkout with
   `bash Scripts/run_hls_quality_gates.sh`. Older hosts report the runtime smoke
   as `NOT RUN`
 - opt-in Apple Media Stream Validator and HLS Report validation for the pinned
   MPEG-TS, video fragmented-MP4, and audio fragmented-MP4 fixtures. Install
-  Apple's separate HTTP Live Streaming Tools download, then run
+  Apple's separate HTTP Live Streaming Tools download, then run from the
+  InnoStream checkout
   `bash Scripts/run_hls_quality_gates.sh --require-apple-tools`; ordinary runs
   print `NOT RUN` when the tools are absent, while the full local release
   preflight requires both Apple conformance and the supported runtime smoke
@@ -557,7 +565,7 @@ for await event in await manager.events(for: task) {
   unsupported, while system-managed downloads remain available for native
   background persistence
 
-### `InnoNetworkHLSLive`
+### InnoStream: `InnoNetworkHLSLive`
 
 - direct media or multivariant live entry with deterministic variant
   selection, selected-pathway/rendition metadata, one-shot snapshots, and a
@@ -665,7 +673,7 @@ for await event in await manager.events(for: task) {
 - local DVR receipts expose the same typed, loopback-only playback bridge as
   offline-package receipts without claiming direct `file://` playback
 
-### `InnoNetworkHLSAVFoundation`
+### InnoStream: `InnoNetworkHLSAVFoundation`
 
 - a main-actor local-playback owner that serves validated raw offline and DVR
   packages over a random, loopback-only HTTP endpoint; reachable playlists are
@@ -754,7 +762,7 @@ for await event in await manager.events(for: task) {
 - available on iOS, macOS, watchOS, and visionOS where
   `AVAssetDownloadURLSession` is supported; unavailable on tvOS
 
-### `InnoNetworkHLSAudio`
+### InnoStream: `InnoNetworkHLSAudio`
 
 - a version 27-only HLS-audio companion isolated from the core network,
   raw HLS, live reload, and broader AVFoundation playback products

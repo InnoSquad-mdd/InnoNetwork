@@ -220,9 +220,8 @@ jobs:
             runner: macos-15
             path: /Applications/Xcode_26.0.1.app
             required: true
-          # Xcode 27 owns the SDK-only HLS decoded-audio and full-mix APIs.
-          # Keep it blocking alongside the Swift 6.2 canonical toolchain so
-          # compatibility guards cannot hide regressions in the real surface.
+          # Keep the newest supported SDK blocking alongside the Swift 6.2
+          # canonical toolchain so forward-compatibility regressions surface.
           - label: "27.0"
             runner: xcode-27
             path: /Applications/Xcode.app
@@ -326,10 +325,6 @@ jobs:
           # polling tests do not starve under runner load.
           xcrun swift test --no-parallel --enable-code-coverage
           echo "✅ Tests completed successfully!"
-
-      - name: Repeat deterministic HLS quality gates
-        if: matrix.xcode.required == true && steps.toolchain-compatibility.outputs.compatible == 'true'
-        run: bash Scripts/run_hls_quality_gates.sh --skip-build
 
       - name: Generate runtime coverage report
         if: steps.toolchain-compatibility.outputs.compatible == 'true'
@@ -527,8 +522,6 @@ jobs:
       - name: Verify local release preflight contract
         run: |
           bash Scripts/tests/test_run_local_release_preflight.sh
-          bash Scripts/tests/test_validate_hls_with_apple_tools.sh
-          bash Scripts/tests/test_run_fairplay_acceptance.sh
 
       - name: Verify release workflow contract
         run: |
@@ -558,9 +551,6 @@ jobs:
 
       - name: Verify provisionally stable enum case ledger
         run: bash Scripts/check_provisional_enum_cases.sh
-
-      - name: Test Xcode 27 HLS audio surface
-        run: xcrun swift test --filter InnoNetworkHLSAudioTests
 
       - name: Build documentation smoke target
         run: xcrun swift build --target InnoNetworkDocSmoke

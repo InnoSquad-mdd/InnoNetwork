@@ -57,7 +57,6 @@ fast_gates=(
 )
 
 full_only_gates=(
-  "apple-hls-conformance"
   "runtime-coverage"
   "macro-coverage"
   "guarded-benchmarks"
@@ -179,8 +178,6 @@ run_release_script_fixtures() {
   python3 Scripts/tests/test_check_example_platform_floors.py
   python3 Scripts/tests/test_check_apple_platform_build_contract.py
   bash Scripts/tests/test_check_docc_archives.sh
-  bash Scripts/tests/test_validate_hls_with_apple_tools.sh
-  bash Scripts/tests/test_run_fairplay_acceptance.sh
   python3 Scripts/check_release_workflow_contract.py
   python3 Scripts/tests/test_check_release_workflow_contract.py
 }
@@ -229,14 +226,6 @@ run_openapi_generator() {
 
 run_bounded_tests() {
   bash Scripts/run_bounded_parallel_tests.sh
-}
-
-run_hls_conformance() {
-  bash Scripts/run_hls_quality_gates.sh \
-    --skip-build \
-    --require-runtime-smoke \
-    --require-apple-tools \
-    --apple-report-root "$artifacts_dir"
 }
 
 run_runtime_coverage() {
@@ -325,7 +314,6 @@ run_gate() {
     consumer-examples) run_consumer_examples ;;
     openapi-generator) run_openapi_generator ;;
     bounded-tests) run_bounded_tests ;;
-    apple-hls-conformance) run_hls_conformance ;;
     runtime-coverage) run_runtime_coverage ;;
     macro-coverage) run_macro_coverage ;;
     guarded-benchmarks) run_guarded_benchmarks ;;

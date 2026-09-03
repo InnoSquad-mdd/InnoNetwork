@@ -9,22 +9,16 @@ DocC documentation is built and deployed to GitHub Pages via:
 The workflow builds and publishes DocC archives for all public products:
 
 1. `InnoNetwork`
-2. `InnoNetworkNext`
-3. `InnoNetworkAuthAWS`
-4. `InnoNetworkDownload`
-5. `InnoNetworkUpload`
-6. `InnoNetworkHLS`
-7. `InnoNetworkHLSLive`
-8. `InnoNetworkHLSAVFoundation`
-9. `InnoNetworkHLSAudio`
-10. `InnoNetworkWebSocket`
-11. `InnoNetworkPersistentCache`
-12. `InnoNetworkOpenAPI`
-13. `InnoNetworkTrust`
-14. `InnoNetworkTestSupport`
+2. `InnoNetworkAuthAWS`
+3. `InnoNetworkDownload`
+4. `InnoNetworkUpload`
+5. `InnoNetworkWebSocket`
+6. `InnoNetworkPersistentCache`
+7. `InnoNetworkOpenAPI`
+8. `InnoNetworkTrust`
+9. `InnoNetworkTestSupport`
 
-The build uses GitHub's `xcode-27` image because the HLS-audio catalog links
-SDK declarations that do not exist in Xcode 26.
+The build uses the repository's required Xcode toolchain matrix.
 
 Each public product owns a same-named DocC catalog. This keeps the generated
 module landing page and curated topic groups from depending on DocC's
@@ -40,14 +34,9 @@ symbol-only fallback behavior.
 The workflow deploys a static site to GitHub Pages with module-specific entry points:
 
 - `/<repo>/InnoNetwork/documentation/innonetwork`
-- `/<repo>/InnoNetworkNext/documentation/innonetworknext`
 - `/<repo>/InnoNetworkAuthAWS/documentation/innonetworkauthaws`
 - `/<repo>/InnoNetworkDownload/documentation/innonetworkdownload`
 - `/<repo>/InnoNetworkUpload/documentation/innonetworkupload`
-- `/<repo>/InnoNetworkHLS/documentation/innonetworkhls`
-- `/<repo>/InnoNetworkHLSLive/documentation/innonetworkhlslive`
-- `/<repo>/InnoNetworkHLSAVFoundation/documentation/innonetworkhlsavfoundation`
-- `/<repo>/InnoNetworkHLSAudio/documentation/innonetworkhlsaudio`
 - `/<repo>/InnoNetworkWebSocket/documentation/innonetworkwebsocket`
 - `/<repo>/InnoNetworkPersistentCache/documentation/innonetworkpersistentcache`
 - `/<repo>/InnoNetworkOpenAPI/documentation/innonetworkopenapi`
@@ -56,7 +45,7 @@ The workflow deploys a static site to GitHub Pages with module-specific entry po
 
 It also publishes a root index page linking to every module. Before upload, the
 workflow requires each module's transformed landing HTML and render-node JSON
-to exist and requires the root index to link to all fourteen routes. After Pages
+to exist and requires the root index to link to all nine routes. After Pages
 deployment, it requests the root and every module URL with bounded retries so a
 bad hosting base path or missing route fails the deployment job.
 

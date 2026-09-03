@@ -51,7 +51,7 @@ jobs:
           git fetch origin "${{ github.base_ref }}" --depth=1
           changed="$(git diff --name-only "origin/${{ github.base_ref }}"...HEAD)"
 
-          pattern='^(Sources/InnoNetwork/(Auth|RequestCoalescing|TaskEventHub|EventDeliveryChain|InFlightRegistry|DefaultNetworkClient|StreamingExecutor)|Sources/InnoNetworkNext/|Sources/InnoNetworkDownload/|Sources/InnoNetworkUpload/|Sources/InnoNetworkHLSAudio/|Sources/InnoNetworkWebSocket/|Tests/InnoNetworkTests/(.*(Auth|Coalesc|EventHub|InFlight|Streaming|Lifecycle).*)|Tests/InnoNetworkNextTests/|Tests/InnoNetworkDownloadTests/|Tests/InnoNetworkUploadTests/|Tests/InnoNetworkHLSAudioTests/|Tests/InnoNetworkWebSocketTests/).*\.swift$'
+          pattern='^(Sources/InnoNetwork/(Auth|RequestCoalescing|TaskEventHub|EventDeliveryChain|InFlightRegistry|DefaultNetworkClient|StreamingExecutor|V6)|Sources/InnoNetworkDownload/|Sources/InnoNetworkUpload/|Sources/InnoNetworkWebSocket/|Tests/InnoNetworkTests/(.*(Auth|Coalesc|EventHub|InFlight|Streaming|Lifecycle).*|V6/.*)|Tests/InnoNetworkDownloadTests/|Tests/InnoNetworkUploadTests/|Tests/InnoNetworkWebSocketTests/).*\.swift$'
           if printf '%s\n' "$changed" | grep -E "$pattern" > /dev/null; then
             echo "should-run=true" >> "$GITHUB_OUTPUT"
           else

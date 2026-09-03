@@ -1,12 +1,7 @@
 InnoNetwork
-InnoNetworkNext
 InnoNetworkAuthAWS
 InnoNetworkDownload
 InnoNetworkUpload
-InnoNetworkHLS
-InnoNetworkHLSLive
-InnoNetworkHLSAVFoundation
-InnoNetworkHLSAudio
 InnoNetworkWebSocket
 InnoNetworkPersistentCache
 InnoNetworkOpenAPI

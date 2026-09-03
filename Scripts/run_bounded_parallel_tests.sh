@@ -34,7 +34,7 @@ shard_modules=(
   "InnoNetworkTests"
   "InnoNetworkWebSocketTests"
   "InnoNetworkDownloadTests"
-  "InnoNetworkAuthAWSTests InnoNetworkPersistentCacheTests InnoNetworkUploadTests InnoNetworkNextTests InnoNetworkLiveTests InnoNetworkMacroTests InnoNetworkHLSTests InnoNetworkHLSLiveTests InnoNetworkHLSAVFoundationTests InnoNetworkHLSAudioTests"
+  "InnoNetworkAuthAWSTests InnoNetworkPersistentCacheTests InnoNetworkUploadTests InnoNetworkLiveTests InnoNetworkMacroTests"
 )
 
 echo "Building the root test suite..."

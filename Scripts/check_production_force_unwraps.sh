@@ -6,15 +6,10 @@ cd "$repo_root"
 
 production_paths=(
   Sources/InnoNetwork
-  Sources/InnoNetworkNext
   Sources/InnoNetworkMacros
   Sources/InnoNetworkAuthAWS
   Sources/InnoNetworkDownload
   Sources/InnoNetworkUpload
-  Sources/InnoNetworkHLS
-  Sources/InnoNetworkHLSLive
-  Sources/InnoNetworkHLSAVFoundation
-  Sources/InnoNetworkHLSAudio
   Sources/InnoNetworkOpenAPI
   Sources/InnoNetworkPersistentCache
   Sources/InnoNetworkTrust

@@ -19,38 +19,37 @@ are snapshotted separately; every remaining consumer declaration defaults to
 Provisionally Stable. A new public symbol therefore cannot silently inherit a
 Stable compatibility promise.
 
-## Current sizes (5.0.0 release baseline plus Unreleased additions)
+## Current sizes (InnoNetwork 6 development baseline)
+
+The 5.0.0 release baseline remains the compatibility reference for the
+currently tagged 5.x line; this table tracks the planned 6.0 boundary with
+1,401 public declarations in the root package.
 
 | Product | Public declarations |
 |---|---:|
-| `InnoNetwork` (core) | 827 |
-| `InnoNetworkNext` | 45 |
+| `InnoNetwork` (core) | 886 |
 | `InnoNetworkWebSocket` | 164 |
 | `InnoNetworkDownload` | 94 |
 | `InnoNetworkUpload` | 59 |
-| `InnoNetworkHLS` | 797 |
-| `InnoNetworkHLSLive` | 300 |
-| `InnoNetworkHLSAVFoundation` | 705 |
-| `InnoNetworkHLSAudio` | 65 |
 | `InnoNetworkTestSupport` | 84 |
 | `InnoNetworkPersistentCache` | 51 |
 | `InnoNetworkOpenAPI` | 36 |
 | `InnoNetworkTrust` | 17 |
 | `InnoNetworkAuthAWS` | 10 |
-| **Total** | **3,254** |
+| **Total** | **1,401** |
 
 | Compatibility tier | Public declarations |
 |---|---:|
 | Stable consumer API | 305 |
-| Provisionally Stable consumer API | 2,916 |
+| Provisionally Stable consumer API | 1,063 |
 | `@_spi(GeneratedClientSupport)` | 33 |
-| **Total** | **3,254** |
+| **Total** | **1,401** |
 
 ## Why this matters
 
-For a single-maintainer client-side Swift networking library, 3,254 public
-declarations is unusually large — roughly 4× `Get`'s surface and ~10× the
-`URLSession`-only "two functions and a `Decoder`" baseline.
+The 6.0 split reduced this repository's machine-checked surface from 3,254 to
+1,401 declarations by moving the four HLS modules to InnoStream and folding
+the temporary `InnoNetworkNext` module into the root product.
 
 At release, every public symbol becomes:
 

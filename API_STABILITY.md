@@ -158,12 +158,10 @@ acquiring a 5.x compatibility promise.
 - `MultipartStreamingResponseDecoder` streaming multipart response parsing surface
 - `InnoNetworkOpenAPI` companion product
 - `InnoNetworkUpload` companion product and its public file-upload, progress, restoration, bounded response, event, and error symbols
-- `InnoNetworkNext` preview product and its operation-first client, value-only
-  failure taxonomy, configuration façade, and 5.x migration bridges
-- `InnoNetworkHLS` companion product and its public playlist, variant selection, single-file download, offline package, event, and error symbols
-- `InnoNetworkHLSLive` companion product and its public live reload, bounded DVR recording, snapshot, configuration, and error symbols
-- `InnoNetworkHLSAVFoundation` companion product and its public download, offline readiness, playback configuration, timed metadata, playback metrics, playback health, interstitial and integrated-timeline observation, and FairPlay symbols
-- `InnoNetworkHLSAudio` companion product and its Xcode 27 / Swift 6.4 public decoded PCM plus full-mix processing configuration, callback, lifecycle, pacing, sample, and error symbols
+- operation-first `NetworkClientConfiguration`, `OperationNetworkClient`,
+  `NetworkOperation`, and value-only `NetworkFailure` root-module contracts
+- bounded companion transport contracts: `BoundedNetworkTransfer`,
+  `NetworkRetryExecutor`, `NetworkURLPolicy`, and `NetworkURLValidator`
 - `@APIDefinition(method:path:auth:)` and the default-enabled `Macros` package trait
 - `PersistentResponseCache` statistics and telemetry surfaces
 - `WebSocketError.unsupportedProtocolFeature`
@@ -399,6 +397,17 @@ Promotion from Provisionally Stable to Stable requires all of the following:
   so applications can inject bundle or locale ownership without relying on a
   process-start snapshot.
 
+## InnoNetwork 6 Boundaries
+
+- `InnoNetworkNext` is removed; its source-compatible type names are promoted
+  into the root module.
+- HLS products are removed from this package and continue in InnoStream with
+  their existing product and module names.
+- `BoundedNetworkTransfer`, `NetworkRetryExecutor`, and
+  `NetworkURLValidator` form the public companion boundary. Package-internal
+  URLSession delegates, event hubs, clocks, and retry coordinators remain
+  implementation details.
+
 ## Version Pinning Guidance
 
 Applications using only Stable API may consume the tagged 5.x line:
@@ -421,11 +430,12 @@ any dependency update.
 The docs-contract gate extracts public symbols from Swift symbol graphs and
 compares them with `Scripts/symbols/*.allowlist`. That catches nested public
 types and members in addition to top-level declarations. The grouped ledger
-below keeps the high-level compatibility classification readable for the
-5.x release line.
+below keeps the high-level compatibility classification readable. Historical
+5.x HLS sections document the migration source but are no longer included in
+the current machine-checked inventory.
 
-The machine-checked snapshot currently partitions all 3,254 declarations into
-305 Stable consumer declarations, 2,916 Provisionally Stable consumer
+The machine-checked snapshot currently partitions all 1,401 declarations into
+305 Stable consumer declarations, 1,063 Provisionally Stable consumer
 declarations, and 33 opt-in SPI declarations. The three sets are disjoint and
 exhaustive. `Scripts/symbols/stable-rules.tsv` maps the Stable ledger to symbol
 paths, while the compiler-authored SPI flag is snapshotted in
@@ -497,17 +507,15 @@ Stable.
   `UploadOperation`, `UploadProgress`, `UploadReceipt`, `UploadState`, and
   `UploadTask`.
 
-### InnoNetworkNext
+### InnoNetwork 6 operation contract
 
 - `NetworkClientConfiguration`, `NetworkFailure`, `NetworkFailureKind`,
   `NetworkOperation`, `NetworkOperationEvent`, `NetworkRecoveryDisposition`,
   and `OperationNetworkClient`.
-- This entire product is Provisionally Stable during 5.5. Its source module
-  may be folded into the root product at the 6.0 major-version boundary; the
-  migration factories and failure classification remain the compatibility
-  bridge for that transition.
+- These declarations now belong to the root InnoNetwork module. The 5.x
+  InnoNetworkNext product has been removed.
 
-### InnoNetworkHLS
+### Historical 5.x InnoNetworkHLS
 
 - Playlist and inspection: `HLSByteRange`, `HLSClosedCaptionReference`,
   `HLSDateRange`, `HLSDateRangeCue`, `HLSDateRangePreload`,
@@ -583,7 +591,7 @@ Stable.
   `HLSOfflinePackageTrackKind`,
   `HLSOfflineRenditionPack`, and `HLSOfflineRenditionSelectionPolicy`.
 
-### InnoNetworkHLSAVFoundation
+### Historical 5.x InnoNetworkHLSAVFoundation
 
 - `HLSAssetDownload`, `HLSAssetDownloadContentPack`,
   `HLSAssetDownloadEvent`, `HLSAssetDownloadEvictionPriority`,
@@ -697,12 +705,12 @@ Stable.
   primary and interstitial ranges while the application owns playback,
   seeking, scheduling, and navigation policy.
 
-### InnoNetworkHLSAudio
+### Historical 5.x InnoNetworkHLSAudio
 
-- The product remains present in the Swift 6.2 package graph so older
-  toolchains can validate the rest of InnoNetwork, but its public declarations
-  require the Xcode 27 SDK and Swift 6.4 compiler. Xcode 26 builds only the
-  empty compatibility module and exposes no HLS-audio symbols.
+- In the 5.x package graph, the product remained present under Swift 6.2 so
+  older toolchains could validate the rest of InnoNetwork, while its public
+  declarations required the Xcode 27 SDK and Swift 6.4 compiler. Xcode 26
+  built only the empty compatibility module and exposed no HLS-audio symbols.
 - `HLSDecodedAudioConfiguration`, `HLSDecodedAudioError`,
   `HLSDecodedAudioOutput`, `HLSDecodedAudioSample`,
   `HLSDecodedAudioPacingConfiguration`, and
@@ -720,7 +728,7 @@ Stable.
   safety and protected-content policy; FairPlay audio is unavailable to the
   system tap.
 
-### InnoNetworkHLSLive
+### Historical 5.x InnoNetworkHLSLive
 
 - `HLSLiveCDNTuneInPack`, `HLSLiveConfiguration`,
   `HLSLiveEncryptionKeyPreloading`, `HLSLiveError`,

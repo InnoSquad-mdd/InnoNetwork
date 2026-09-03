@@ -15,7 +15,7 @@ one-off or runtime-composed requests.
 Use this module when you need:
 
 - typed request definitions with ``APIDefinition``
-- a single async request entry point through ``DefaultNetworkClient``
+- an operation-first request lifecycle through ``OperationNetworkClient``
 - request encoding choices that stay explicit
 - trust policy, retry policy, and observability that can be tuned when production needs it
 
@@ -49,6 +49,11 @@ retain those values.
 ### Essentials
 
 - <doc:GettingStarted>
+- <doc:MigrationTo6>
+- ``NetworkClientConfiguration``
+- ``OperationNetworkClient``
+- ``NetworkOperation``
+- ``NetworkFailure``
 - ``DefaultNetworkClient``
 - ``APIDefinition``
 - <doc:UsingMacros>
@@ -60,6 +65,9 @@ retain those values.
 - ``UploadNetworkClient``
 - ``EndpointBuilder``
 - ``MultipartAPIDefinition``
+- ``BoundedNetworkTransfer``
+- ``NetworkRetryExecutor``
+- ``NetworkURLValidator``
 
 ### Configuration
 

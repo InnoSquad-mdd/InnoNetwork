@@ -18,12 +18,8 @@ support and no plan to add one in 5.x.
 ## Toolchain support
 
 The root package manifest requires Swift 6.2 and the canonical compatibility
-lane uses Xcode 26.0.1. `InnoNetworkHLSAudio` is the one narrower exception:
-its decoded-sample and preferred-format audio-mix APIs were added to the Xcode
-27 SDK, so those public declarations require Xcode 27 and Swift 6.4. Xcode 26
-still resolves and builds the product as a compatibility module, but exposes
-no HLS-audio symbols. Applications selecting that product must build with
-Xcode 27 and guard use with the declared version 27 runtime availability.
+lane uses Xcode 26.0.1. The Xcode 27-only decoded-audio HLS surface moved to
+the separate InnoStream package.
 
 ## Why no Linux
 

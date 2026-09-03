@@ -8,14 +8,9 @@ trap 'rm -rf "$work_dir"' EXIT
 
 products=(
   InnoNetwork
-  InnoNetworkNext
   InnoNetworkAuthAWS
   InnoNetworkDownload
   InnoNetworkUpload
-  InnoNetworkHLS
-  InnoNetworkHLSLive
-  InnoNetworkHLSAVFoundation
-  InnoNetworkHLSAudio
   InnoNetworkWebSocket
   InnoNetworkPersistentCache
   InnoNetworkOpenAPI

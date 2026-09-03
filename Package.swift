@@ -39,10 +39,6 @@ let package = Package(
             targets: ["InnoNetwork"]
         ),
         .library(
-            name: "InnoNetworkNext",
-            targets: ["InnoNetworkNext"]
-        ),
-        .library(
             name: "InnoNetworkAuthAWS",
             targets: ["InnoNetworkAuthAWS"]
         ),
@@ -53,22 +49,6 @@ let package = Package(
         .library(
             name: "InnoNetworkUpload",
             targets: ["InnoNetworkUpload"]
-        ),
-        .library(
-            name: "InnoNetworkHLS",
-            targets: ["InnoNetworkHLS"]
-        ),
-        .library(
-            name: "InnoNetworkHLSLive",
-            targets: ["InnoNetworkHLSLive"]
-        ),
-        .library(
-            name: "InnoNetworkHLSAVFoundation",
-            targets: ["InnoNetworkHLSAVFoundation"]
-        ),
-        .library(
-            name: "InnoNetworkHLSAudio",
-            targets: ["InnoNetworkHLSAudio"]
         ),
         .library(
             name: "InnoNetworkWebSocket",
@@ -185,12 +165,6 @@ let package = Package(
             swiftSettings: strictSettings
         ),
         .target(
-            name: "InnoNetworkNext",
-            dependencies: ["InnoNetwork"],
-            path: "Sources/InnoNetworkNext",
-            swiftSettings: strictSettings
-        ),
-        .target(
             name: "InnoNetworkAuthAWS",
             dependencies: [
                 "InnoNetwork",
@@ -214,39 +188,6 @@ let package = Package(
             name: "InnoNetworkUpload",
             dependencies: ["InnoNetwork"],
             path: "Sources/InnoNetworkUpload",
-            swiftSettings: strictSettings
-        ),
-        .target(
-            name: "InnoNetworkHLS",
-            dependencies: ["InnoNetwork"],
-            path: "Sources/InnoNetworkHLS",
-            // Bundles `Resources/PrivacyInfo.xcprivacy` for the disk-capacity
-            // preflight's Required Reason API declaration.
-            resources: [.process("Resources")],
-            swiftSettings: strictSettings
-        ),
-        .target(
-            name: "InnoNetworkHLSLive",
-            dependencies: [
-                "InnoNetwork",
-                "InnoNetworkHLS",
-            ],
-            path: "Sources/InnoNetworkHLSLive",
-            swiftSettings: strictSettings
-        ),
-        .target(
-            name: "InnoNetworkHLSAVFoundation",
-            dependencies: [
-                "InnoNetwork",
-                "InnoNetworkHLS",
-            ],
-            path: "Sources/InnoNetworkHLSAVFoundation",
-            resources: [.process("Resources")],
-            swiftSettings: strictSettings
-        ),
-        .target(
-            name: "InnoNetworkHLSAudio",
-            path: "Sources/InnoNetworkHLSAudio",
             swiftSettings: strictSettings
         ),
         .target(
@@ -318,13 +259,9 @@ let package = Package(
             name: "InnoNetworkDocSmoke",
             dependencies: [
                 "InnoNetwork",
-                "InnoNetworkNext",
                 "InnoNetworkAuthAWS",
                 "InnoNetworkDownload",
-                "InnoNetworkHLS",
-                "InnoNetworkHLSLive",
-                "InnoNetworkHLSAVFoundation",
-                "InnoNetworkHLSAudio",
+                "InnoNetworkUpload",
                 "InnoNetworkOpenAPI",
                 "InnoNetworkPersistentCache",
                 "InnoNetworkWebSocket",
@@ -382,12 +319,6 @@ let package = Package(
             swiftSettings: strictSettings
         ),
         .testTarget(
-            name: "InnoNetworkNextTests",
-            dependencies: ["InnoNetwork", "InnoNetworkNext", "InnoNetworkTestSupport"],
-            path: "Tests/InnoNetworkNextTests",
-            swiftSettings: strictSettings
-        ),
-        .testTarget(
             name: "InnoNetworkMacroTests",
             dependencies: [
                 "InnoNetwork",
@@ -434,39 +365,6 @@ let package = Package(
             name: "InnoNetworkUploadTests",
             dependencies: ["InnoNetwork", "InnoNetworkUpload", "InnoNetworkTestSupport"],
             path: "Tests/InnoNetworkUploadTests",
-            swiftSettings: strictSettings
-        ),
-        .testTarget(
-            name: "InnoNetworkHLSTests",
-            dependencies: ["InnoNetwork", "InnoNetworkHLS"],
-            path: "Tests/InnoNetworkHLSTests",
-            swiftSettings: strictSettings
-        ),
-        .testTarget(
-            name: "InnoNetworkHLSLiveTests",
-            dependencies: [
-                "InnoNetwork",
-                "InnoNetworkHLS",
-                "InnoNetworkHLSLive",
-            ],
-            path: "Tests/InnoNetworkHLSLiveTests",
-            swiftSettings: strictSettings
-        ),
-        .testTarget(
-            name: "InnoNetworkHLSAVFoundationTests",
-            dependencies: [
-                "InnoNetwork",
-                "InnoNetworkHLS",
-                "InnoNetworkHLSLive",
-                "InnoNetworkHLSAVFoundation",
-            ],
-            path: "Tests/InnoNetworkHLSAVFoundationTests",
-            swiftSettings: strictSettings
-        ),
-        .testTarget(
-            name: "InnoNetworkHLSAudioTests",
-            dependencies: ["InnoNetworkHLSAudio"],
-            path: "Tests/InnoNetworkHLSAudioTests",
             swiftSettings: strictSettings
         ),
         .testTarget(

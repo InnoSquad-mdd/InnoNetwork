@@ -9,22 +9,21 @@
 > 우선합니다.
 
 InnoNetwork 는 Apple 플랫폼을 위한 타입 안전한 Swift 네트워킹 패키지입니다. root runtime package 는
-열네 개의 공개 product 로 구성되어 있습니다.
+아홉 개의 공개 product 로 구성되어 있습니다.
 
 - `InnoNetwork` — 요청/응답 API
-- `InnoNetworkNext` — 6.0 operation·failure·configuration 계약 프리뷰와 5.x 마이그레이션 브리지
 - `InnoNetworkAuthAWS` — body-aware AWS SigV4 reference signer
 - `InnoNetworkDownload` — 다운로드 생명주기 관리
 - `InnoNetworkUpload` — 파일 기반 foreground/background 업로드, 진행률, 복원, bounded 응답 디코딩
-- `InnoNetworkHLS` — 값 노출 없는 Apple 저작 진단과 bounded presentation-graph 교차 검사, 타입화된 인터스티셜 동기 재생 변동성·타임라인·이동 제한·건너뛰기 표시 메타데이터, 요청 관측, 목적별 요청 정책, HLS 2nd Edition draft-22 선택·보호·비디오 레이아웃·세션·LL-HLS 메타데이터와 I-frame trick-play 해석, 완성·LL-HLS 리소스의 병렬 `KEYFORMAT`에서 identity를 선택하고 선택형 `EXT-X-SESSION-KEY` 선행 요청을 지원하는 AES-128 비 DRM VOD 조립, 외부 오디오·비디오·자막을 보존하는 로컬 오프라인 패키지
-- `InnoNetworkHLSLive` — blocking reload와 delta window 복구, raw 헤더를 노출하지 않는 타입형 HTTP freshness 진단, AES-128 평문 로컬 패키지, 선택형 URL-free 체크포인트 재개 및 원자적 bounded DVR을 제공하는 async media-playlist snapshot stream
-- `InnoNetworkHLSAVFoundation` — AVFoundation 기반 백그라운드 HLS 저장과
+- 별도 `InnoStream` 패키지의 `InnoNetworkHLS` — 값 노출 없는 Apple 저작 진단과 bounded presentation-graph 교차 검사, 타입화된 인터스티셜 동기 재생 변동성·타임라인·이동 제한·건너뛰기 표시 메타데이터, 요청 관측, 목적별 요청 정책, HLS 2nd Edition draft-22 선택·보호·비디오 레이아웃·세션·LL-HLS 메타데이터와 I-frame trick-play 해석, 완성·LL-HLS 리소스의 병렬 `KEYFORMAT`에서 identity를 선택하고 선택형 `EXT-X-SESSION-KEY` 선행 요청을 지원하는 AES-128 비 DRM VOD 조립, 외부 오디오·비디오·자막을 보존하는 로컬 오프라인 패키지
+- 별도 `InnoStream` 패키지의 `InnoNetworkHLSLive` — blocking reload와 delta window 복구, raw 헤더를 노출하지 않는 타입형 HTTP freshness 진단, AES-128 평문 로컬 패키지, 선택형 URL-free 체크포인트 재개 및 원자적 bounded DVR을 제공하는 async media-playlist snapshot stream
+- 별도 `InnoStream` 패키지의 `InnoNetworkHLSAVFoundation` — AVFoundation 기반 백그라운드 HLS 저장과
   version 26의 URL-free 오프라인 다운로드 요약 메트릭,
   값 기반 CMCD 활성화 상태(watchOS는 asset resource loader가 없어 미지원),
   커스텀 자막 UI용 값 기반 미디어 카탈로그, 버전형 오프라인 에셋
   라이브러리, 값이 제거된 재생 상태 분석, 앱 소유 라이선스 통신·보안
   저장소를 유지하는 FairPlay 영구 키 흐름
-- `InnoNetworkHLSAudio` — version 27 플랫폼에서 HLS player item의 decoded
+- 별도 `InnoStream` 패키지의 `InnoNetworkHLSAudio` — version 27 플랫폼에서 HLS player item의 decoded
   PCM을 한 번에 하나씩 요청하거나 지원 플랫폼의 전체 오디오 mix를
   실시간·in-place로 처리하는 Xcode 27·Swift 6.4 전용 선택형 companion
 - `InnoNetworkWebSocket` — 연결 지향 실시간 흐름

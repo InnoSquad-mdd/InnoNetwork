@@ -43,8 +43,6 @@ jobs:
           python3 Scripts/tests/test_check_example_platform_floors.py
           python3 Scripts/tests/test_check_apple_platform_build_contract.py
           bash Scripts/tests/test_check_docc_archives.sh
-          bash Scripts/tests/test_validate_hls_with_apple_tools.sh
-          bash Scripts/tests/test_run_fairplay_acceptance.sh
           bash Scripts/tests/test_run_local_release_preflight.sh
           python3 Scripts/tests/test_check_release_workflow_contract.py
 

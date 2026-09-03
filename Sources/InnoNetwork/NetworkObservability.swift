@@ -242,7 +242,8 @@ public struct NetworkRequestContext: Sendable {
         metricsReporter: (any NetworkMetricsReporting)? = nil,
         trustPolicy: TrustPolicy = .systemDefault,
         eventObservers: [any NetworkEventObserving] = [],
-        redirectPolicy: any RedirectPolicy = DefaultRedirectPolicy()
+        redirectPolicy: any RedirectPolicy = DefaultRedirectPolicy(),
+        allowsInsecureHTTP: Bool = false
     ) {
         self.requestID = requestID
         self.retryIndex = retryIndex
@@ -250,7 +251,7 @@ public struct NetworkRequestContext: Sendable {
         self.trustPolicy = trustPolicy
         self.eventObservers = eventObservers
         self.redirectPolicy = redirectPolicy
-        self.allowsInsecureHTTP = false
+        self.allowsInsecureHTTP = allowsInsecureHTTP
         self.allowsAutomaticRedirects = true
         self.allowsURLCacheStorage = true
     }

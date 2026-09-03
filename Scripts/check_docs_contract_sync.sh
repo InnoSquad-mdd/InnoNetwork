@@ -55,15 +55,11 @@ required_feature_docs=(
   "$repo_root/Sources/InnoNetwork/InnoNetwork.docc/Articles/CachingStrategies.md"
   "$repo_root/Sources/InnoNetwork/InnoNetwork.docc/Articles/UsingMacros.md"
   "$repo_root/Sources/InnoNetwork/InnoNetwork.docc/InnoNetwork.md"
-  "$repo_root/Sources/InnoNetworkNext/InnoNetworkNext.docc/InnoNetworkNext.md"
+  "$repo_root/Sources/InnoNetwork/InnoNetwork.docc/MigrationTo6.md"
   "$repo_root/Sources/InnoNetworkOpenAPI/InnoNetworkOpenAPI.docc/InnoNetworkOpenAPI.md"
   "$repo_root/Sources/InnoNetworkDownload/InnoNetworkDownload.docc/Articles/BackgroundDownloads.md"
   "$repo_root/Sources/InnoNetworkDownload/InnoNetworkDownload.docc/Articles/Persistence.md"
   "$repo_root/Sources/InnoNetworkUpload/InnoNetworkUpload.docc/InnoNetworkUpload.md"
-  "$repo_root/Sources/InnoNetworkHLS/InnoNetworkHLS.docc/InnoNetworkHLS.md"
-  "$repo_root/Sources/InnoNetworkHLSLive/InnoNetworkHLSLive.docc/InnoNetworkHLSLive.md"
-  "$repo_root/Sources/InnoNetworkHLSAVFoundation/InnoNetworkHLSAVFoundation.docc/InnoNetworkHLSAVFoundation.md"
-  "$repo_root/Sources/InnoNetworkHLSAudio/InnoNetworkHLSAudio.docc/InnoNetworkHLSAudio.md"
   "$repo_root/Sources/InnoNetworkWebSocket/InnoNetworkWebSocket.docc/Articles/FeatureScopedManagers.md"
   "$repo_root/Sources/InnoNetworkWebSocket/InnoNetworkWebSocket.docc/Articles/CloseCodes.md"
   "$repo_root/Sources/InnoNetworkWebSocket/InnoNetworkWebSocket.docc/Articles/Reconnect.md"
@@ -190,11 +186,8 @@ expected_provisionally=(
 '`MultipartStreamingResponseDecoder` streaming multipart response parsing surface'
 '`InnoNetworkOpenAPI` companion product'
 '`InnoNetworkUpload` companion product and its public file-upload, progress, restoration, bounded response, event, and error symbols'
-'`InnoNetworkNext` preview product and its operation-first client, value-only'
-'`InnoNetworkHLS` companion product and its public playlist, variant selection, single-file download, offline package, event, and error symbols'
-'`InnoNetworkHLSLive` companion product and its public live reload, bounded DVR recording, snapshot, configuration, and error symbols'
-'`InnoNetworkHLSAVFoundation` companion product and its public download, offline readiness, playback configuration, timed metadata, playback metrics, playback health, interstitial and integrated-timeline observation, and FairPlay symbols'
-'`InnoNetworkHLSAudio` companion product and its Xcode 27 / Swift 6.4 public decoded PCM plus full-mix processing configuration, callback, lifecycle, pacing, sample, and error symbols'
+'operation-first `NetworkClientConfiguration`, `OperationNetworkClient`,'
+'bounded companion transport contracts: `BoundedNetworkTransfer`,'
 '`@APIDefinition(method:path:auth:)` and the default-enabled `Macros` package trait'
 '`PersistentResponseCache` statistics and telemetry surfaces'
 '`WebSocketError.unsupportedProtocolFeature`'
@@ -261,42 +254,7 @@ expected_shipping_public_declarations=(
   DownloadProgress
   DownloadState
   DownloadTask
-  HLSDownloader
-  HLSDownloadError
-  HLSDownloadEvent
-  HLSExternalResourceError
-  HLSExternalResourcePack
-  HLSExternalResourceResolver
-  HLSInterstitialAsset
-  HLSMediaContainer
-  HLSOfflinePackageConfiguration
-  HLSOfflinePackageDownloader
-  HLSOfflinePackageEvent
-  HLSOfflinePackagePreparation
-  HLSOfflinePackageReceipt
-  HLSOfflinePackageStoragePack
-  HLSOfflinePackageTrack
-  HLSOfflinePackageTrackKind
-  HLSOfflineRenditionPack
-  HLSOfflineRenditionSelectionPolicy
-  HLSPlaylist
-  HLSSessionDataValue
-  HLSVariant
-  HLSLiveConfiguration
-  HLSLiveError
-  HLSLivePartialSegment
-  HLSLivePlaylistClient
-  HLSLivePlaylistSnapshot
-  HLSLiveReloadPack
-  HLSLiveSegment
-  HLSAssetDownload
-  HLSAssetDownloadEvent
-  HLSAssetDownloadRequest
-  HLSAssetDownloadSession
-  HLSAssetDownloadSessionError
-  HLSAssetDownloadSessionPack
-  PlaylistResolver
-  VariantSelector
+  BoundedNetworkTransfer
   EmptyParameter
   EmptyResponse
   EndpointPathEncoding
@@ -339,9 +297,12 @@ expected_shipping_public_declarations=(
   NetworkMonitor
   NetworkMonitoring
   NetworkReachabilityStatus
+  NetworkRetryExecutor
   NetworkUnsatisfiedReason
   NetworkRequestContext
   NetworkSnapshot
+  NetworkURLPolicy
+  NetworkURLValidator
   OSLogNetworkEventObserver
   PersistentResponseCache
   PersistentResponseCacheConfiguration
@@ -504,34 +465,20 @@ validate_benchmark_docs() {
 
 validate_doc_smoke_coverage() {
   local doc_smoke="$repo_root/SmokeTests/InnoNetworkDocSmoke/main.swift"
-  require_contains 'import InnoNetworkNext' "$doc_smoke"
+  require_contains 'import InnoNetwork' "$doc_smoke"
   require_contains 'NetworkClientConfiguration.secure' "$doc_smoke"
+  require_contains 'OperationNetworkClient<DefaultNetworkClient>.self' "$doc_smoke"
+  require_contains 'BoundedNetworkTransfer.self' "$doc_smoke"
+  require_contains 'NetworkRetryExecutor()' "$doc_smoke"
+  require_contains 'NetworkURLPolicy.http()' "$doc_smoke"
   require_contains 'import InnoNetworkPersistentCache' "$doc_smoke"
   require_contains 'import InnoNetworkOpenAPI' "$doc_smoke"
-  require_contains 'import InnoNetworkHLS' "$doc_smoke"
-  require_contains 'import InnoNetworkHLSLive' "$doc_smoke"
-  require_contains 'import InnoNetworkHLSAVFoundation' "$doc_smoke"
-  require_contains 'import InnoNetworkHLSAudio' "$doc_smoke"
-  require_contains 'HLSLivePlaylistClient' "$doc_smoke"
-  require_contains 'HLSLiveReloadPack' "$doc_smoke"
-  require_contains 'HLSAssetDownloadSessionPack' "$doc_smoke"
-  require_contains 'HLSAssetDownloadSession.self' "$doc_smoke"
-  require_contains 'HLSDecodedAudioConfiguration.float32' "$doc_smoke"
-  require_contains 'HLSDecodedAudioOutput' "$doc_smoke"
-  require_contains 'HLSDecodedAudioPacedSequence' "$doc_smoke"
-  require_contains 'HLSOfflinePackageConfiguration.advanced' "$doc_smoke"
-  require_contains 'HLSOfflinePackageDownloader' "$doc_smoke"
-  require_contains 'HLSLocalPlaybackAsset' "$doc_smoke"
-  require_contains 'receipt.playbackSource' "$doc_smoke"
-  require_contains 'HLSExternalResourceResolver' "$doc_smoke"
-  require_contains 'HLSExternalResourcePack' "$doc_smoke"
-  require_contains 'destinationDirectoryURL:' "$doc_smoke"
+  require_contains 'import InnoNetworkUpload' "$doc_smoke"
+  require_contains 'UploadState.self' "$doc_smoke"
   require_contains 'PersistentResponseCacheConfiguration' "$doc_smoke"
   require_contains '"InnoNetworkPersistentCache"' "$repo_root/Package.swift"
   require_contains '"InnoNetworkOpenAPI"' "$repo_root/Package.swift"
-  require_contains '"InnoNetworkHLSAVFoundation"' "$repo_root/Package.swift"
-  require_contains '"InnoNetworkHLSAudio"' "$repo_root/Package.swift"
-  require_contains '"InnoNetworkHLSLive"' "$repo_root/Package.swift"
+  require_contains '"InnoNetworkUpload"' "$repo_root/Package.swift"
   require_contains 'compileBackgroundDownloadArticleExamples' "$doc_smoke"
   require_contains 'waitForRestoration()' "$doc_smoke"
   require_contains 'DownloadPersistencePack' "$doc_smoke"
@@ -877,7 +824,11 @@ for line in lines:
     if line.startswith("### "):
         flush(buffered, out)
         buffered = []
-        in_subsection = True
+        # InnoNetwork 6 keeps the former HLS declaration ledgers as migration
+        # history after those products moved to InnoStream. They are no longer
+        # declarations of this package and therefore do not participate in
+        # current symbol-graph parity.
+        in_subsection = not line.startswith("### Historical 5.x ")
         continue
     if not in_subsection:
         continue
@@ -1019,14 +970,9 @@ validate_public_surface_snapshot() {
   local snapshot="$public_symbols_dir/README.md"
   local entries=(
     'core.allowlist|`InnoNetwork` (core)'
-    'next.allowlist|`InnoNetworkNext`'
     'websocket.allowlist|`InnoNetworkWebSocket`'
     'download.allowlist|`InnoNetworkDownload`'
     'upload.allowlist|`InnoNetworkUpload`'
-    'hls.allowlist|`InnoNetworkHLS`'
-    'hls-live.allowlist|`InnoNetworkHLSLive`'
-    'hls-avfoundation.allowlist|`InnoNetworkHLSAVFoundation`'
-    'hls-audio.allowlist|`InnoNetworkHLSAudio`'
     'testsupport.allowlist|`InnoNetworkTestSupport`'
     'cache.allowlist|`InnoNetworkPersistentCache`'
     'openapi.allowlist|`InnoNetworkOpenAPI`'
@@ -1184,24 +1130,6 @@ validate_release_quality_gates() {
     "$repo_root/docs/RELEASE_POLICY.md"
   require_contains 'bash Scripts/run_bounded_parallel_tests.sh' \
     "$repo_root/Scripts/run_local_release_preflight.sh"
-  require_contains 'bash Scripts/run_hls_quality_gates.sh --skip-build' \
-    "$repo_root/.github/workflows/ci.yml"
-  require_contains 'bash Scripts/run_hls_quality_gates.sh --skip-build' \
-    "$repo_root/docs/CI_DoC.md"
-  require_contains 'bash Scripts/run_hls_runtime_smoke.sh' \
-    "$repo_root/Scripts/run_hls_quality_gates.sh"
-  require_contains '--require-runtime-smoke' \
-    "$repo_root/Scripts/run_local_release_preflight.sh"
-  require_contains 'AVPlayer decoded-audio runtime smoke' \
-    "$repo_root/docs/CI_DoC.md"
-  require_contains 'InnoNetworkHLSTests' \
-    "$repo_root/Scripts/run_bounded_parallel_tests.sh"
-  require_contains 'InnoNetworkHLSLiveTests' \
-    "$repo_root/Scripts/run_bounded_parallel_tests.sh"
-  require_contains 'InnoNetworkHLSAVFoundationTests' \
-    "$repo_root/Scripts/run_bounded_parallel_tests.sh"
-  require_contains 'InnoNetworkHLSAudioTests' \
-    "$repo_root/Scripts/run_bounded_parallel_tests.sh"
   require_contains 'bash Scripts/tests/test_run_local_release_preflight.sh' \
     "$repo_root/.github/workflows/ci.yml"
   require_contains 'bash Scripts/tests/test_run_local_release_preflight.sh' \
@@ -1262,8 +1190,6 @@ validate_release_quality_gates() {
     fail "DocC Pages must use docs/public-docc-products.txt in all three product loops"
   fi
   require_contains 'Sources/InnoNetworkPersistentCache' "$repo_root/Scripts/check_unchecked_sendable.sh"
-  require_contains 'Sources/InnoNetworkHLSLive' "$repo_root/Scripts/check_unchecked_sendable.sh"
-  require_contains 'Sources/InnoNetworkHLSLive' "$repo_root/Scripts/check_production_force_unwraps.sh"
   require_contains 'Sources/InnoNetworkMacros' "$repo_root/Scripts/check_unchecked_sendable.sh"
   require_contains 'Sources/InnoNetworkMacros' "$repo_root/Scripts/check_production_force_unwraps.sh"
   require_contains 'Sources/InnoNetworkMacros' "$repo_root/Scripts/check_no_print_in_production.sh"
@@ -1716,184 +1642,26 @@ for symbol in "${expected_provisionally[@]}"; do
         "$repo_root/Sources/InnoNetworkUpload/UploadConfiguration.swift"
       continue
       ;;
-    '`InnoNetworkNext` preview product and its operation-first client, value-only')
-      require_contains 'name: "InnoNetworkNext"' "$repo_root/Package.swift"
-      require_contains 'targets: ["InnoNetworkNext"]' "$repo_root/Package.swift"
+    'operation-first `NetworkClientConfiguration`, `OperationNetworkClient`,')
       require_contains 'public struct OperationNetworkClient' \
-        "$repo_root/Sources/InnoNetworkNext/OperationNetworkClient.swift"
+        "$repo_root/Sources/InnoNetwork/V6/OperationNetworkClient.swift"
       require_contains 'public struct NetworkFailure: Error, Sendable, Equatable' \
-        "$repo_root/Sources/InnoNetworkNext/NetworkFailure.swift"
+        "$repo_root/Sources/InnoNetwork/V6/NetworkFailure.swift"
       require_contains 'public struct NetworkOperation' \
-        "$repo_root/Sources/InnoNetworkNext/NetworkOperation.swift"
+        "$repo_root/Sources/InnoNetwork/V6/NetworkOperation.swift"
+      require_contains 'import InnoNetwork' \
+        "$repo_root/Sources/InnoNetwork/InnoNetwork.docc/MigrationTo6.md"
       continue
       ;;
-    '`InnoNetworkHLS` companion product and its public playlist, variant selection, single-file download, offline package, event, and error symbols')
-      require_contains 'name: "InnoNetworkHLS"' "$repo_root/Package.swift"
-      require_contains 'targets: ["InnoNetworkHLS"]' "$repo_root/Package.swift"
-      require_contains 'public struct HLSDownloader: Sendable' \
-        "$repo_root/Sources/InnoNetworkHLS/HLSDownloader.swift"
-      require_contains 'public struct PlaylistResolver: Sendable' \
-        "$repo_root/Sources/InnoNetworkHLS/PlaylistResolver.swift"
-      require_contains 'public struct VariantSelector: Sendable' \
-        "$repo_root/Sources/InnoNetworkHLS/VariantSelector.swift"
-      require_contains 'public struct HLSOfflinePackageDownloader: Sendable' \
-        "$repo_root/Sources/InnoNetworkHLS/HLSOfflinePackageDownloader.swift"
-      require_contains 'public struct HLSOfflinePackageConfiguration: Sendable' \
-        "$repo_root/Sources/InnoNetworkHLS/HLSOfflinePackageConfiguration.swift"
-      require_contains 'public enum HLSOfflineRenditionSelectionPolicy' \
-        "$repo_root/Sources/InnoNetworkHLS/HLSOfflinePackageModels.swift"
-      require_contains 'public struct HLSExternalResourceResolver: Sendable' \
-        "$repo_root/Sources/InnoNetworkHLS/HLSExternalResourceResolver.swift"
-      require_contains 'resolveInterstitialAssets' \
-        "$repo_root/Sources/InnoNetworkHLS/InnoNetworkHLS.docc/InnoNetworkHLS.md"
-      if ! awk '
-        /path: "Sources\/InnoNetworkHLS"/ { in_hls_target = 1 }
-        in_hls_target &&
-          index($0, "resources: [.process(\"Resources\")]") {
-          found_resources = 1
-        }
-        in_hls_target && /swiftSettings: strictSettings/ {
-          exit(found_resources ? 0 : 1)
-        }
-        END {
-          if (!found_resources) {
-            exit 1
-          }
-        }
-      ' "$repo_root/Package.swift"; then
-        fail "InnoNetworkHLS must package its Resources directory"
-      fi
-      require_contains 'NSPrivacyAccessedAPICategoryDiskSpace' \
-        "$repo_root/Sources/InnoNetworkHLS/Resources/PrivacyInfo.xcprivacy"
-      require_contains 'E174.1' \
-        "$repo_root/Sources/InnoNetworkHLS/Resources/PrivacyInfo.xcprivacy"
-      continue
-      ;;
-    '`InnoNetworkHLSLive` companion product and its public live reload, bounded DVR recording, snapshot, configuration, and error symbols')
-      require_contains 'name: "InnoNetworkHLSLive"' "$repo_root/Package.swift"
-      require_contains 'targets: ["InnoNetworkHLSLive"]' "$repo_root/Package.swift"
-      require_contains 'public struct HLSLivePlaylistClient: Sendable' \
-        "$repo_root/Sources/InnoNetworkHLSLive/HLSLivePlaylistClient.swift"
-      require_contains 'public struct HLSLiveConfiguration: Sendable' \
-        "$repo_root/Sources/InnoNetworkHLSLive/HLSLiveConfiguration.swift"
-      require_contains 'public struct HLSLivePlaylistSnapshot: Equatable, Sendable' \
-        "$repo_root/Sources/InnoNetworkHLSLive/HLSLiveModels.swift"
-      require_contains 'public struct HLSLiveDVRRecorder: Sendable' \
-        "$repo_root/Sources/InnoNetworkHLSLive/HLSLiveDVRRecorder.swift"
-      require_contains '## Bounded live DVR' \
-        "$repo_root/Sources/InnoNetworkHLSLive/InnoNetworkHLSLive.docc/InnoNetworkHLSLive.md"
-      require_contains 'client.snapshots(from:' \
-        "$repo_root/Sources/InnoNetworkHLSLive/InnoNetworkHLSLive.docc/InnoNetworkHLSLive.md"
-      continue
-      ;;
-    '`InnoNetworkHLSAVFoundation` companion product and its public download, offline readiness, playback configuration, timed metadata, playback metrics, playback health, interstitial and integrated-timeline observation, and FairPlay symbols')
-      require_contains 'name: "InnoNetworkHLSAVFoundation"' "$repo_root/Package.swift"
-      require_contains 'targets: ["InnoNetworkHLSAVFoundation"]' "$repo_root/Package.swift"
-      require_contains 'public final class HLSAssetDownloadSession: Sendable' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/HLSAssetDownloadSession.swift"
-      require_contains 'public struct HLSAssetDownloadSessionPack: Sendable' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/HLSAssetDownloadModels.swift"
-      require_contains 'public struct HLSOfflineAssetInspector: Sendable' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/HLSOfflineAssetInspector.swift"
-      require_contains 'AVAssetCache.isPlayableOffline' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/InnoNetworkHLSAVFoundation.docc/InnoNetworkHLSAVFoundation.md"
-      require_contains 'smokeHLSOfflineAssetSurface' \
-        "$repo_root/SmokeTests/InnoNetworkDocSmoke/main.swift"
-      require_contains 'AVAssetDownloadURLSession(' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/HLSAssetDownloadSession.swift"
-      require_contains 'AVAssetDownloadConfiguration(' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/HLSAssetDownloadSession.swift"
-      require_contains 'AVContentKeySession' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/InnoNetworkHLSAVFoundation.docc/InnoNetworkHLSAVFoundation.md"
-      require_contains 'public final class HLSIntegratedTimelineMonitor' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/HLSIntegratedTimelineMonitor.swift"
-      require_contains '## Integrated playback timeline' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/InnoNetworkHLSAVFoundation.docc/InnoNetworkHLSAVFoundation.md"
-      require_contains 'smokeHLSIntegratedTimelineSurface' \
-        "$repo_root/SmokeTests/InnoNetworkDocSmoke/main.swift"
-      require_contains 'public struct HLSAssetDownloadLibrary: Codable, Equatable, Sendable' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/HLSAssetDownloadLibrary.swift"
-      require_contains 'public final class HLSFairPlaySession' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/HLSFairPlaySession.swift"
-      require_contains 'public struct HLSFairPlayPersistentKeyWorkflow: Sendable' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/HLSFairPlayPersistentKeyWorkflow.swift"
-      require_contains 'public protocol HLSFairPlayPersistentKeyStoring: Sendable' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/HLSFairPlayPersistentKeyModels.swift"
-      require_contains '### Persistent-key workflow' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/InnoNetworkHLSAVFoundation.docc/InnoNetworkHLSAVFoundation.md"
-      require_contains 'public final class HLSInterstitialPlaybackMonitor' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/HLSInterstitialPlaybackMonitor.swift"
-      require_contains 'public enum HLSInterstitialRuntimeEvent: Equatable, Sendable' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/HLSInterstitialRuntimeModels.swift"
-      require_contains '## Interstitial playback' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/InnoNetworkHLSAVFoundation.docc/InnoNetworkHLSAVFoundation.md"
-      require_contains 'public final class HLSTimedMetadataMonitor' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/HLSTimedMetadataMonitor.swift"
-      require_contains 'public struct HLSTimedMetadataConfiguration: Equatable, Sendable' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/HLSTimedMetadataModels.swift"
-      require_contains '## Timed metadata' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/InnoNetworkHLSAVFoundation.docc/InnoNetworkHLSAVFoundation.md"
-      require_contains 'public struct HLSPlaybackHealthAnalyzer: Sendable' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/HLSPlaybackHealthAnalyzer.swift"
-      require_contains 'public struct HLSPlaybackHealthSnapshot: Equatable, Sendable' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/HLSPlaybackHealthModels.swift"
-      require_contains 'public let droppedMetricEventCount: UInt64' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/HLSPlaybackHealthModels.swift"
-      require_contains '## Playback health analysis' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/InnoNetworkHLSAVFoundation.docc/InnoNetworkHLSAVFoundation.md"
-      require_contains 'public struct HLSPlaybackStartupMetric: Equatable, Sendable' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/HLSPlaybackStartupMetrics.swift"
-      require_contains 'smokeHLSPlaybackStartupMetricsSurface' \
-        "$repo_root/SmokeTests/InnoNetworkDocSmoke/main.swift"
-      require_contains 'public struct HLSPlaybackVariantSwitchMetric: Equatable, Sendable' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/HLSPlaybackVariantSwitchMetrics.swift"
-      require_contains 'public struct HLSPlaybackBufferMetric: Equatable, Sendable' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/HLSPlaybackBufferMetric.swift"
-      require_contains 'public struct HLSPlaybackReadinessMetric: Equatable, Sendable' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/HLSPlaybackReadinessMetrics.swift"
-      require_contains 'public struct HLSPlaybackMetricDelivery: Equatable, Sendable' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/HLSPlaybackMetricDelivery.swift"
-      require_contains 'smokeHLSPlaybackMetricDeliverySurface' \
-        "$repo_root/SmokeTests/InnoNetworkDocSmoke/main.swift"
-      require_contains 'public struct HLSPlaybackRateChangeMetric: Equatable, Sendable' \
-        "$repo_root/Sources/InnoNetworkHLSAVFoundation/HLSPlaybackRateChangeMetrics.swift"
-      require_contains 'smokeHLSPlaybackRateChangeMetricsSurface' \
-        "$repo_root/SmokeTests/InnoNetworkDocSmoke/main.swift"
-      require_contains 'smokeHLSPlaybackVariantSwitchMetricsSurface' \
-        "$repo_root/SmokeTests/InnoNetworkDocSmoke/main.swift"
-      continue
-      ;;
-    '`InnoNetworkHLSAudio` companion product and its Xcode 27 / Swift 6.4 public decoded PCM plus full-mix processing configuration, callback, lifecycle, pacing, sample, and error symbols')
-      require_contains 'name: "InnoNetworkHLSAudio"' "$repo_root/Package.swift"
-      require_contains 'targets: ["InnoNetworkHLSAudio"]' "$repo_root/Package.swift"
-      for hls_audio_source in \
-        "$repo_root"/Sources/InnoNetworkHLSAudio/*.swift \
-        "$repo_root"/Tests/InnoNetworkHLSAudioTests/HLSAudioMixProcessingTapTests.swift \
-        "$repo_root"/Tests/InnoNetworkHLSAudioTests/HLSDecodedAudioRuntimeTests.swift \
-        "$repo_root"/Tests/InnoNetworkHLSAudioTests/HLSDecodedAudioTests.swift; do
-        require_contains '#if compiler(>=6.4)' "$hls_audio_source"
-      done
-      require_contains '#if compiler(<6.4)' \
-        "$repo_root/Tests/InnoNetworkHLSAudioTests/HLSAudioToolchainCompatibilityTests.swift"
-      require_contains '- label: "27.0"' \
-        "$repo_root/.github/workflows/ci.yml"
-      require_contains 'runs-on: xcode-27' \
-        "$repo_root/.github/workflows/docc-pages.yml"
-      require_contains 'requires Xcode 27 and Swift 6.4' "$repo_root/README.md"
-      require_contains 'public struct HLSDecodedAudioConfiguration: Sendable' \
-        "$repo_root/Sources/InnoNetworkHLSAudio/HLSDecodedAudioConfiguration.swift"
-      require_contains 'public final class HLSDecodedAudioOutput' \
-        "$repo_root/Sources/InnoNetworkHLSAudio/HLSDecodedAudioOutput.swift"
-      require_contains 'public struct HLSDecodedAudioSample: Sendable' \
-        "$repo_root/Sources/InnoNetworkHLSAudio/HLSDecodedAudioSample.swift"
-      require_contains 'public struct HLSDecodedAudioPacingConfiguration: Equatable, Sendable' \
-        "$repo_root/Sources/InnoNetworkHLSAudio/HLSDecodedAudioPacingConfiguration.swift"
-      require_contains 'public struct HLSDecodedAudioPacedSequence: AsyncSequence, Sendable' \
-        "$repo_root/Sources/InnoNetworkHLSAudio/HLSDecodedAudioPacedSequence.swift"
-      require_contains 'AVPlayerItemSampleBufferOutput(' \
-        "$repo_root/Sources/InnoNetworkHLSAudio/HLSDecodedAudioOutput.swift"
-      require_contains '## Overview' \
-        "$repo_root/Sources/InnoNetworkHLSAudio/InnoNetworkHLSAudio.docc/InnoNetworkHLSAudio.md"
+    'bounded companion transport contracts: `BoundedNetworkTransfer`,')
+      require_contains 'public struct BoundedNetworkTransfer: Sendable' \
+        "$repo_root/Sources/InnoNetwork/BoundedNetworkTransfer.swift"
+      require_contains 'public struct NetworkRetryExecutor: Sendable' \
+        "$repo_root/Sources/InnoNetwork/NetworkRetryExecutor.swift"
+      require_contains 'public enum NetworkURLPolicy: Sendable, Equatable' \
+        "$repo_root/Sources/InnoNetwork/NetworkURLValidator.swift"
+      require_contains 'public enum NetworkURLValidator' \
+        "$repo_root/Sources/InnoNetwork/NetworkURLValidator.swift"
       continue
       ;;
     '`@APIDefinition(method:path:auth:)` and the default-enabled `Macros` package trait')

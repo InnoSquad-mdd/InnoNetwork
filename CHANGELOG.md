@@ -28,9 +28,18 @@ Versioning.
   semantic attributes without adding an exporter SDK dependency.
 - Experimental `RateLimitExecutionPolicy` adds cancellation-aware fixed-window
   request pacing around each transport attempt, including retries.
-- The provisional `InnoNetworkNext` product previews the 6.0 operation-first
-  client, value-only failure taxonomy, secure configuration façade, and 5.x
-  migration bridges while continuing to use the proven request pipeline.
+- The root `InnoNetwork` product now owns the operation-first client,
+  value-only failure taxonomy, secure configuration façade, bounded companion
+  transfer, retry execution, and URL-validation contracts.
+
+### Changed
+
+- The `InnoNetworkNext` preview product was removed after its declarations
+  were promoted into the root module. Existing type names remain unchanged.
+- The HLS products (`InnoNetworkHLS`, `InnoNetworkHLSLive`,
+  `InnoNetworkHLSAVFoundation`, and `InnoNetworkHLSAudio`) moved to the
+  independently versioned InnoStream package without changing their product
+  or module names.
 
 ## [5.1.0] - 2026-09-03
 
