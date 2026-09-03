@@ -49,6 +49,23 @@ Retry-After: 5
 The next attempt fires after 5 seconds even if the exponential backoff for that attempt
 number would have been larger.
 
+## Client-side Request Pacing
+
+``RateLimitExecutionPolicy`` is an experimental fixed-window admission policy
+for APIs with a known client budget:
+
+```swift
+let pacing = RateLimitExecutionPolicy(maximumRequests: 10, per: .seconds(1))
+let configuration = NetworkConfiguration.advanced(
+    baseURL: apiBaseURL,
+    resilience: ResiliencePack(customExecutionPolicies: [pacing])
+)
+```
+
+The policy applies to transport attempts, so a retry consumes another slot.
+It is cancellation-aware while waiting, but does not replace server-driven
+`Retry-After` handling or distributed rate limiting.
+
 ## Idempotency defaults
 
 The built-in ``ExponentialBackoffRetryPolicy`` is conservative by default:

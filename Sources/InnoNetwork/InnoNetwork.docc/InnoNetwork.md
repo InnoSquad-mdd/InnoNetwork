@@ -68,6 +68,7 @@ retain those values.
 - <doc:TrustPolicies>
 - ``NetworkEvent``
 - ``NetworkEventObserving``
+- ``SemanticNetworkEventAdapter``
 - ``NetworkMetricsReporting``
 
 ### Request and Response Behavior
@@ -89,11 +90,13 @@ retain those values.
 - ``RetryPolicy``
 - ``ExponentialBackoffRetryPolicy``
 - ``RefreshTokenPolicy``
+- ``AuthenticationRealm``
 - ``RequestCoalescingPolicy``
 - ``ResponseCachePolicy``
 - ``ResponseCache``
 - ``InMemoryResponseCache``
 - ``RequestExecutionPolicy``
+- ``RateLimitExecutionPolicy``
 - ``ResponseBodyBufferingPolicy``
 - ``CircuitBreakerPolicy``
 - ``CircuitBreakerOpenError``

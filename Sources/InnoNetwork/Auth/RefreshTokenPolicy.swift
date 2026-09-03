@@ -8,12 +8,15 @@ import os
 /// only the single-flight coordination and one-time replay after configured
 /// authentication status codes.
 public struct RefreshTokenPolicy: Sendable {
-    package let currentTokenProvider: @Sendable () async throws -> String?
-    package let refreshTokenProvider: @Sendable () async throws -> String
-    package let tokenApplicator: @Sendable (String, URLRequest) -> URLRequest
+    package let realmResolver: @Sendable (URLRequest) -> AuthenticationRealm?
+    package let currentTokenProvider:
+        @Sendable (AuthenticationRealm, URLRequest) async throws -> String?
+    package let refreshTokenProvider:
+        @Sendable (AuthenticationRealm, URLRequest) async throws -> String
+    package let tokenApplicator:
+        @Sendable (AuthenticationRealm, String, URLRequest) -> URLRequest
     package let refreshStatusCodes: Set<Int>
     package let failureCooldown: RefreshFailureCooldown
-    package let appliesToRequest: @Sendable (URLRequest) -> Bool
 
     /// Creates a token refresh policy.
     ///
@@ -45,9 +48,38 @@ public struct RefreshTokenPolicy: Sendable {
     ) {
         self.refreshStatusCodes = refreshStatusCodes
         self.failureCooldown = failureCooldown
-        self.appliesToRequest = appliesTo
-        self.currentTokenProvider = currentToken
-        self.refreshTokenProvider = refreshToken
+        self.realmResolver = { request in
+            appliesTo(request) ? .default : nil
+        }
+        self.currentTokenProvider = { _, _ in try await currentToken() }
+        self.refreshTokenProvider = { _, _ in try await refreshToken() }
+        self.tokenApplicator = { _, token, request in applyToken(token, request) }
+    }
+
+    /// Creates a realm-aware token refresh policy.
+    ///
+    /// Requests that resolve to `nil` are outside this policy. Each non-nil
+    /// realm receives an independent single-flight refresh generation and
+    /// failure cooldown, so a failed tenant refresh cannot block another
+    /// tenant or identity provider.
+    public init(
+        refreshStatusCodes: Set<Int> = [401],
+        realmForRequest: @escaping @Sendable (URLRequest) -> AuthenticationRealm?,
+        failureCooldown: RefreshFailureCooldown = .exponentialBackoff(base: 1.0, max: 30.0),
+        currentToken: @escaping @Sendable (AuthenticationRealm) async throws -> String?,
+        refreshToken: @escaping @Sendable (AuthenticationRealm) async throws -> String,
+        applyToken: @escaping @Sendable (AuthenticationRealm, String, URLRequest) -> URLRequest = {
+            _, token, request in
+            var request = request
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            return request
+        }
+    ) {
+        self.refreshStatusCodes = refreshStatusCodes
+        self.failureCooldown = failureCooldown
+        self.realmResolver = realmForRequest
+        self.currentTokenProvider = { realm, _ in try await currentToken(realm) }
+        self.refreshTokenProvider = { realm, _ in try await refreshToken(realm) }
         self.tokenApplicator = applyToken
     }
 }
@@ -86,8 +118,12 @@ public struct RefreshFailureCooldown: Sendable {
 package actor RefreshTokenCoordinator {
     private let policy: RefreshTokenPolicy
     private let now: @Sendable () -> Date
-    private var state: RefreshLifecycleState = .initial
-    private var successfulRefreshGeneration: UInt64 = 0
+    private struct RealmState: Sendable {
+        var lifecycle: RefreshLifecycleState = .initial
+        var successfulRefreshGeneration: UInt64 = 0
+    }
+
+    private var realmStates: [AuthenticationRealm: RealmState] = [:]
 
     package init(
         policy: RefreshTokenPolicy,
@@ -98,8 +134,10 @@ package actor RefreshTokenCoordinator {
     }
 
     deinit {
-        if case .inFlight(_, let task) = state.phase {
-            task.cancel()
+        for realmState in realmStates.values {
+            if case .inFlight(_, let task) = realmState.lifecycle.phase {
+                task.cancel()
+            }
         }
     }
 
@@ -110,7 +148,7 @@ package actor RefreshTokenCoordinator {
     /// window so a stale 401 result cannot leak across callers when
     /// `Authorization` is excluded from the dedup key.
     package var isRefreshInProgress: Bool {
-        state.isRefreshInProgress
+        realmStates.values.contains { $0.lifecycle.isRefreshInProgress }
     }
 
     package func applyCurrentToken(to request: URLRequest) async throws -> URLRequest {
@@ -120,10 +158,10 @@ package actor RefreshTokenCoordinator {
     package func applyCurrentTokenWithGeneration(
         to request: URLRequest
     ) async throws -> RefreshTokenApplication {
-        guard policy.appliesToRequest(request) else {
+        guard let realm = policy.realmResolver(request) else {
             return RefreshTokenApplication(
                 request: request,
-                generation: successfulRefreshGeneration,
+                generation: 0,
                 didApplyToken: false
             )
         }
@@ -132,9 +170,9 @@ package actor RefreshTokenCoordinator {
         // successful refresh while it is suspended. Re-read until the token
         // and generation come from one stable refresh epoch.
         while true {
-            let generation = successfulRefreshGeneration
-            let token = try await policy.currentTokenProvider()
-            guard generation == successfulRefreshGeneration else { continue }
+            let generation = realmState(for: realm).successfulRefreshGeneration
+            let token = try await policy.currentTokenProvider(realm, request)
+            guard generation == realmState(for: realm).successfulRefreshGeneration else { continue }
             guard let token else {
                 return RefreshTokenApplication(
                     request: request,
@@ -143,7 +181,11 @@ package actor RefreshTokenCoordinator {
                 )
             }
             return RefreshTokenApplication(
-                request: policy.tokenApplicator(token, Self.removingAuthorizationHeaders(from: request)),
+                request: policy.tokenApplicator(
+                    realm,
+                    token,
+                    Self.removingAuthorizationHeaders(from: request)
+                ),
                 generation: generation,
                 didApplyToken: true
             )
@@ -156,10 +198,10 @@ package actor RefreshTokenCoordinator {
     package func applyRequiredTokenWithGeneration(
         to request: URLRequest
     ) async throws -> RefreshTokenApplication {
-        guard policy.appliesToRequest(request) else {
+        guard let realm = policy.realmResolver(request) else {
             throw NetworkError.configuration(
                 reason: .invalidRequest(
-                    "Session-auth-required endpoint is excluded by RefreshTokenPolicy.appliesTo."
+                    "Session-auth-required endpoint is outside RefreshTokenPolicy.appliesTo or the configured authentication realms."
                 )
             )
         }
@@ -168,23 +210,35 @@ package actor RefreshTokenCoordinator {
         if current.didApplyToken { return current }
 
         try Task.checkCancellation()
-        let resolution = try await resolveRefresh(expectedGeneration: nil)
+        let resolution = try await resolveRefresh(
+            for: realm,
+            request: request,
+            expectedGeneration: nil
+        )
         guard case .refreshed(let token) = resolution else {
             // `expectedGeneration == nil` always starts or joins a refresh.
             return try await applyRequiredTokenWithGeneration(to: request)
         }
         try Task.checkCancellation()
         return RefreshTokenApplication(
-            request: policy.tokenApplicator(token, Self.removingAuthorizationHeaders(from: request)),
-            generation: successfulRefreshGeneration,
+            request: policy.tokenApplicator(
+                realm,
+                token,
+                Self.removingAuthorizationHeaders(from: request)
+            ),
+            generation: realmState(for: realm).successfulRefreshGeneration,
             didApplyToken: true
         )
     }
 
     package func refreshAndApply(to request: URLRequest) async throws -> URLRequest {
         try Task.checkCancellation()
-        guard policy.appliesToRequest(request) else { return request }
-        let resolution = try await resolveRefresh(expectedGeneration: nil)
+        guard let realm = policy.realmResolver(request) else { return request }
+        let resolution = try await resolveRefresh(
+            for: realm,
+            request: request,
+            expectedGeneration: nil
+        )
         guard case .refreshed(let token) = resolution else {
             // `expectedGeneration == nil` never produces this branch. Keep the
             // fallback total so the invariant remains explicit if resolution
@@ -192,7 +246,11 @@ package actor RefreshTokenCoordinator {
             return try await applyCurrentTokenWithGeneration(to: request).request
         }
         try Task.checkCancellation()
-        return policy.tokenApplicator(token, Self.removingAuthorizationHeaders(from: request))
+        return policy.tokenApplicator(
+            realm,
+            token,
+            Self.removingAuthorizationHeaders(from: request)
+        )
     }
 
     package func recoverAfterAuthenticationFailure(
@@ -200,10 +258,10 @@ package actor RefreshTokenCoordinator {
         observedGeneration: UInt64
     ) async throws -> RefreshTokenApplication {
         try Task.checkCancellation()
-        guard policy.appliesToRequest(request) else {
+        guard let realm = policy.realmResolver(request) else {
             return RefreshTokenApplication(
                 request: request,
-                generation: successfulRefreshGeneration,
+                generation: 0,
                 didApplyToken: false
             )
         }
@@ -213,28 +271,37 @@ package actor RefreshTokenCoordinator {
         // decisions together closes the reentrancy window where a refresh
         // could complete after this method checked the generation but before
         // a second refresh task was registered.
-        let resolution = try await resolveRefresh(expectedGeneration: observedGeneration)
+        let resolution = try await resolveRefresh(
+            for: realm,
+            request: request,
+            expectedGeneration: observedGeneration
+        )
         guard case .refreshed(let token) = resolution else {
             return try await applyCurrentTokenWithGeneration(to: request)
         }
         try Task.checkCancellation()
         return RefreshTokenApplication(
-            request: policy.tokenApplicator(token, Self.removingAuthorizationHeaders(from: request)),
-            generation: successfulRefreshGeneration,
+            request: policy.tokenApplicator(
+                realm,
+                token,
+                Self.removingAuthorizationHeaders(from: request)
+            ),
+            generation: realmState(for: realm).successfulRefreshGeneration,
             didApplyToken: true
         )
     }
 
     package func shutdown() {
-        if case .inFlight(_, let task) = state.phase {
-            task.cancel()
+        for realmState in realmStates.values {
+            if case .inFlight(_, let task) = realmState.lifecycle.phase {
+                task.cancel()
+            }
         }
-        state = .initial
-        successfulRefreshGeneration = 0
+        realmStates.removeAll()
     }
 
     package func shouldRefresh(statusCode: Int, request: URLRequest) -> Bool {
-        policy.appliesToRequest(request) && policy.refreshStatusCodes.contains(statusCode)
+        policy.realmResolver(request) != nil && policy.refreshStatusCodes.contains(statusCode)
     }
 
     private static func removingAuthorizationHeaders(from request: URLRequest) -> URLRequest {
@@ -257,22 +324,26 @@ package actor RefreshTokenCoordinator {
     }
 
     private func resolveRefresh(
+        for realm: AuthenticationRealm,
+        request: URLRequest,
         expectedGeneration: UInt64?
     ) async throws -> RefreshResolution {
+        var realmState = realmState(for: realm)
         if let expectedGeneration,
-            expectedGeneration != successfulRefreshGeneration
+            expectedGeneration != realmState.successfulRefreshGeneration
         {
             return .generationAdvanced
         }
 
-        state =
+        realmState.lifecycle =
             RefreshLifecycleReducer.reduce(
-                state: state,
+                state: realmState.lifecycle,
                 event: .expireCooldownIfNeeded,
                 context: lifecycleContext()
             ).state
+        realmStates[realm] = realmState
 
-        switch state.phase {
+        switch realmState.lifecycle.phase {
         case .cooldown(let until, let lastError):
             if now() < until { throw lastError }
         case .inFlight(_, let task):
@@ -307,58 +378,73 @@ package actor RefreshTokenCoordinator {
         // pool reorder the refresh under the prevailing priority.
         let task = Task.detached { [weak self] () async throws -> String in
             do {
-                let token = try await refreshTokenProvider()
-                await self?.refreshDidSucceed(id: id)
+                let token = try await refreshTokenProvider(realm, request)
+                await self?.refreshDidSucceed(realm: realm, id: id)
                 return token
             } catch is CancellationError {
-                await self?.refreshDidCancel(id: id)
+                await self?.refreshDidCancel(realm: realm, id: id)
                 throw CancellationError()
             } catch {
-                await self?.refreshDidFail(id: id, error: error)
+                await self?.refreshDidFail(realm: realm, id: id, error: error)
                 throw error
             }
         }
-        state =
+        realmState.lifecycle =
             RefreshLifecycleReducer.reduce(
-                state: state,
+                state: realmState.lifecycle,
                 event: .start(id: id, task: task),
                 context: lifecycleContext()
             ).state
+        realmStates[realm] = realmState
         return .refreshed(try await RefreshTokenTaskAwaitBridge().value(of: task))
     }
 
-    private func refreshDidSucceed(id: UUID) {
+    private func refreshDidSucceed(realm: AuthenticationRealm, id: UUID) {
+        var realmState = realmState(for: realm)
         let reduction = RefreshLifecycleReducer.reduce(
-            state: state,
+            state: realmState.lifecycle,
             event: .succeed(id: id),
             context: lifecycleContext()
         )
-        state = reduction.state
+        realmState.lifecycle = reduction.state
         if !reduction.effects.contains(.ignoreStaleCompletion) {
-            successfulRefreshGeneration &+= 1
+            realmState.successfulRefreshGeneration &+= 1
         }
+        realmStates[realm] = realmState
     }
 
-    private func refreshDidCancel(id: UUID) {
-        state =
+    private func refreshDidCancel(realm: AuthenticationRealm, id: UUID) {
+        var realmState = realmState(for: realm)
+        realmState.lifecycle =
             RefreshLifecycleReducer.reduce(
-                state: state,
+                state: realmState.lifecycle,
                 event: .cancel(id: id),
                 context: lifecycleContext()
             ).state
+        realmStates[realm] = realmState
     }
 
-    private func refreshDidFail(id: UUID, error: any Error & Sendable) {
-        state =
+    private func refreshDidFail(
+        realm: AuthenticationRealm,
+        id: UUID,
+        error: any Error & Sendable
+    ) {
+        var realmState = realmState(for: realm)
+        realmState.lifecycle =
             RefreshLifecycleReducer.reduce(
-                state: state,
+                state: realmState.lifecycle,
                 event: .fail(id: id, error: error),
                 context: lifecycleContext()
             ).state
+        realmStates[realm] = realmState
     }
 
     private func lifecycleContext() -> RefreshLifecycleContext {
         RefreshLifecycleContext(now: now(), failureCooldown: policy.failureCooldown)
+    }
+
+    private func realmState(for realm: AuthenticationRealm) -> RealmState {
+        realmStates[realm] ?? RealmState()
     }
 }
 

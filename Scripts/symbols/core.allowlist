@@ -42,6 +42,7 @@ InnoNetwork	swift.enum	ResponseBodyBufferingPolicy
 InnoNetwork	swift.enum	ResponseCachePolicy
 InnoNetwork	swift.enum	ResponseDecodingStrategy
 InnoNetwork	swift.enum	RetryDecision
+InnoNetwork	swift.enum	SemanticAttributeValue
 InnoNetwork	swift.enum	SessionAuthentication
 InnoNetwork	swift.enum	SingleValueHeader
 InnoNetwork	swift.enum	StreamingBufferingPolicy
@@ -182,6 +183,9 @@ InnoNetwork	swift.enum.case	ResponseDecodingStrategy.jsonAllowingEmpty(_:)
 InnoNetwork	swift.enum.case	RetryDecision.noRetry
 InnoNetwork	swift.enum.case	RetryDecision.retry
 InnoNetwork	swift.enum.case	RetryDecision.retryAfter(_:)
+InnoNetwork	swift.enum.case	SemanticAttributeValue.double(_:)
+InnoNetwork	swift.enum.case	SemanticAttributeValue.integer(_:)
+InnoNetwork	swift.enum.case	SemanticAttributeValue.string(_:)
 InnoNetwork	swift.enum.case	SessionAuthentication.anonymous
 InnoNetwork	swift.enum.case	SessionAuthentication.optional
 InnoNetwork	swift.enum.case	SessionAuthentication.required
@@ -219,6 +223,8 @@ InnoNetwork	swift.init	AnyEncodable.init(_:)
 InnoNetwork	swift.init	AnyRequestExecutionPolicy.init(_:)
 InnoNetwork	swift.init	AnyResponseDecoder.init(_:)
 InnoNetwork	swift.init	AuthPack.init(refreshToken:additionalRequestInterceptors:additionalSigners:additionalResponseInterceptors:additionalDecodingInterceptors:)
+InnoNetwork	swift.init	AuthenticationRealm.init(rawValue:)
+InnoNetwork	swift.init	AuthenticationRealm.init(stringLiteral:)
 InnoNetwork	swift.init	CachePack.init(responseCachePolicy:responseCache:sensitiveHeaderNames:captureFailurePayload:)
 InnoNetwork	swift.init	CachedResponse.init(data:statusCode:headers:storedAt:requiresRevalidation:varyHeaders:)
 InnoNetwork	swift.init	CancellationTag.init(_:)
@@ -267,8 +273,10 @@ InnoNetwork	swift.init	NetworkSnapshot.init(status:interfaceTypes:isExpensive:is
 InnoNetwork	swift.init	NetworkUnsatisfiedReason.init(rawValue:)
 InnoNetwork	swift.init	OSLogNetworkEventObserver.init()
 InnoNetwork	swift.init	ObservabilityPack.init(eventObservers:eventDeliveryPolicy:eventMetricsReporter:networkMonitor:metricsReporter:)
+InnoNetwork	swift.init	RateLimitExecutionPolicy.init(maximumRequests:per:)
 InnoNetwork	swift.init	ReachabilityCheckExecutionPolicy.init(monitor:mode:suspensionWaitTimeout:)
 InnoNetwork	swift.init	RefreshTokenPolicy.init(refreshStatusCodes:appliesTo:failureCooldown:currentToken:refreshToken:applyToken:)
+InnoNetwork	swift.init	RefreshTokenPolicy.init(refreshStatusCodes:realmForRequest:failureCooldown:currentToken:refreshToken:applyToken:)
 InnoNetwork	swift.init	RequestCoalescingPolicy.init(methods:excludedHeaderNames:)
 InnoNetwork	swift.init	RequestExecutionContext.init(requestID:retryIndex:metricsReporter:trustPolicy:eventObservers:)
 InnoNetwork	swift.init	RequestExecutionInput.init(request:requestID:retryIndex:)
@@ -277,6 +285,8 @@ InnoNetwork	swift.init	ResiliencePack.init(retry:coalescing:circuitBreaker:idemp
 InnoNetwork	swift.init	Response.init(statusCode:data:request:response:kind:)
 InnoNetwork	swift.init	ResponseCacheKey.init(method:url:headers:sensitiveHeaderNames:)
 InnoNetwork	swift.init	RetryIdempotencyPolicy.init(safeMethods:idempotencyHeaderName:retriesUnsafeMethodsWithIdempotencyKey:retriesAllMethods:)
+InnoNetwork	swift.init	SemanticNetworkEvent.init(name:requestID:attributes:)
+InnoNetwork	swift.init	SemanticNetworkEventAdapter.init(export:)
 InnoNetwork	swift.init	SendableUnderlyingError.Frame.init(domain:code:message:failureReason:recoverySuggestion:)
 InnoNetwork	swift.init	SendableUnderlyingError.init(_:)
 InnoNetwork	swift.init	SendableUnderlyingError.init(domain:code:message:failureReason:recoverySuggestion:underlyingChain:)
@@ -373,6 +383,7 @@ InnoNetwork	swift.method	NetworkMonitoring.currentSnapshot()
 InnoNetwork	swift.method	NetworkMonitoring.snapshots()
 InnoNetwork	swift.method	NetworkMonitoring.waitForChange(from:timeout:)
 InnoNetwork	swift.method	OSLogNetworkEventObserver.handle(_:)
+InnoNetwork	swift.method	RateLimitExecutionPolicy.execute(input:context:next:)
 InnoNetwork	swift.method	ReachabilityCheckExecutionPolicy.execute(input:context:next:)
 InnoNetwork	swift.method	RedirectPolicy.redirect(request:response:originalRequest:)
 InnoNetwork	swift.method	RequestExecutionNext.execute()
@@ -389,6 +400,7 @@ InnoNetwork	swift.method	RetryIdempotencyPolicy.allowsRetry(for:)
 InnoNetwork	swift.method	RetryPolicy.retryDelay(for:)
 InnoNetwork	swift.method	RetryPolicy.shouldResetAttempts(afterNetworkChangeFrom:to:)
 InnoNetwork	swift.method	RetryPolicy.shouldRetry(error:retryIndex:request:response:)
+InnoNetwork	swift.method	SemanticNetworkEventAdapter.handle(_:)
 InnoNetwork	swift.method	ServerSentEventDecoder.decode(line:)
 InnoNetwork	swift.method	SingleRequestExecutable.decode(data:response:)
 InnoNetwork	swift.method	SingleRequestExecutable.makePayload()
@@ -405,6 +417,7 @@ InnoNetwork	swift.method	UploadNetworkClient.upload(_:)
 InnoNetwork	swift.method	UploadNetworkClient.upload(_:tag:)
 InnoNetwork	swift.property	APIDefinition.parameters
 InnoNetwork	swift.property	APIDefinition.transport
+InnoNetwork	swift.property	AuthenticationRealm.rawValue
 InnoNetwork	swift.property	CachedResponse.data
 InnoNetwork	swift.property	CachedResponse.etag
 InnoNetwork	swift.property	CachedResponse.headers
@@ -542,6 +555,8 @@ InnoNetwork	swift.property	NetworkSnapshot.supportsDNS
 InnoNetwork	swift.property	NetworkSnapshot.supportsIPv4
 InnoNetwork	swift.property	NetworkSnapshot.supportsIPv6
 InnoNetwork	swift.property	NetworkSnapshot.unsatisfiedReason
+InnoNetwork	swift.property	RateLimitExecutionPolicy.interval
+InnoNetwork	swift.property	RateLimitExecutionPolicy.maximumRequests
 InnoNetwork	swift.property	ReachabilityCheckExecutionPolicy.mode
 InnoNetwork	swift.property	ReachabilityCheckExecutionPolicy.monitor
 InnoNetwork	swift.property	ReachabilityCheckExecutionPolicy.suspensionWaitTimeout
@@ -577,6 +592,9 @@ InnoNetwork	swift.property	RetryPolicy.maxTotalRetries
 InnoNetwork	swift.property	RetryPolicy.networkChangeTimeout
 InnoNetwork	swift.property	RetryPolicy.retryDelay
 InnoNetwork	swift.property	RetryPolicy.waitsForNetworkChanges
+InnoNetwork	swift.property	SemanticNetworkEvent.attributes
+InnoNetwork	swift.property	SemanticNetworkEvent.name
+InnoNetwork	swift.property	SemanticNetworkEvent.requestID
 InnoNetwork	swift.property	SendableUnderlyingError.Frame.code
 InnoNetwork	swift.property	SendableUnderlyingError.Frame.description
 InnoNetwork	swift.property	SendableUnderlyingError.Frame.domain
@@ -661,6 +679,7 @@ InnoNetwork	swift.struct	AnyEncodable
 InnoNetwork	swift.struct	AnyRequestExecutionPolicy
 InnoNetwork	swift.struct	AnyResponseDecoder
 InnoNetwork	swift.struct	AuthPack
+InnoNetwork	swift.struct	AuthenticationRealm
 InnoNetwork	swift.struct	CachePack
 InnoNetwork	swift.struct	CachedResponse
 InnoNetwork	swift.struct	CancellationTag
@@ -698,6 +717,7 @@ InnoNetwork	swift.struct	NetworkRequestContext
 InnoNetwork	swift.struct	NetworkSnapshot
 InnoNetwork	swift.struct	OSLogNetworkEventObserver
 InnoNetwork	swift.struct	ObservabilityPack
+InnoNetwork	swift.struct	RateLimitExecutionPolicy
 InnoNetwork	swift.struct	ReachabilityCheckExecutionPolicy
 InnoNetwork	swift.struct	RefreshFailureCooldown
 InnoNetwork	swift.struct	RefreshTokenPolicy
@@ -709,6 +729,8 @@ InnoNetwork	swift.struct	ResiliencePack
 InnoNetwork	swift.struct	Response
 InnoNetwork	swift.struct	ResponseCacheKey
 InnoNetwork	swift.struct	RetryIdempotencyPolicy
+InnoNetwork	swift.struct	SemanticNetworkEvent
+InnoNetwork	swift.struct	SemanticNetworkEventAdapter
 InnoNetwork	swift.struct	SendableUnderlyingError
 InnoNetwork	swift.struct	SendableUnderlyingError.Frame
 InnoNetwork	swift.struct	ServerSentEvent
@@ -751,6 +773,7 @@ InnoNetwork	swift.type.method	NetworkConfiguration.safeDefaults(baseURL:)
 InnoNetwork	swift.type.method	NetworkError.mapTransportError(_:)
 InnoNetwork	swift.type.method	RFC3986Encoding.encode(_:)
 InnoNetwork	swift.type.method	RefreshFailureCooldown.exponentialBackoff(base:max:)
+InnoNetwork	swift.type.method	SemanticNetworkEventAdapter.map(_:)
 InnoNetwork	swift.type.method	TransportPolicy.custom(encoding:decode:)
 InnoNetwork	swift.type.method	TransportPolicy.formURLEncoded(encoder:rootKey:decoder:)
 InnoNetwork	swift.type.method	TransportPolicy.json(encoder:decoder:)
@@ -758,6 +781,7 @@ InnoNetwork	swift.type.method	TransportPolicy.jsonAllowingEmpty(encoder:decoder:
 InnoNetwork	swift.type.method	TransportPolicy.multipart(decoder:)
 InnoNetwork	swift.type.method	TransportPolicy.query(encoder:rootKey:decoder:)
 InnoNetwork	swift.type.method	W3CTraceContext.generated(sampled:)
+InnoNetwork	swift.type.property	AuthenticationRealm.default
 InnoNetwork	swift.type.property	CircuitBreakerOpenError.errorDomain
 InnoNetwork	swift.type.property	EventDeliveryPolicy.default
 InnoNetwork	swift.type.property	HTTPHeader.defaultAcceptEncoding

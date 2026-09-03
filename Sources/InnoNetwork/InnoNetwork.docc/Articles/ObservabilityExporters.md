@@ -13,6 +13,24 @@ vendor SDK adapter is glue code: it forwards those events to
 the vendor's tracer/span/breadcrumb API in the format the vendor
 expects.
 
+``SemanticNetworkEventAdapter`` provides the dependency-free half of that
+glue. It maps lifecycle events to a compact envelope using current HTTP
+semantic-convention names such as `http.request.method`, `url.full`,
+`server.address`, `http.request.resend_count`,
+`http.response.status_code`, and `error.type`. The application still owns the
+vendor exporter and span lifecycle.
+
+```swift
+let observer = SemanticNetworkEventAdapter { event in
+    await telemetryPipeline.export(event)
+}
+
+let configuration = NetworkConfiguration.advanced(
+    baseURL: apiBaseURL,
+    observability: ObservabilityPack(eventObservers: [observer])
+)
+```
+
 Putting that glue inside InnoNetwork would either pull every supported
 vendor into the package graph (build-time cost, transitive license
 exposure) or fragment the API behind compile-time flags. The vendor

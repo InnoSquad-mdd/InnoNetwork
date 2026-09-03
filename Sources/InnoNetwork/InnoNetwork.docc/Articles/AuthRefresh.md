@@ -44,6 +44,34 @@ The default behaviour is:
 Provide `refreshStatusCodes:` or `applyToken:` only when your API differs from
 standard bearer-token authentication.
 
+## Isolate Multiple Authentication Realms
+
+Use the realm-aware initializer when one client reaches multiple tenants,
+principals, or identity providers. Returning `nil` excludes a request from the
+policy. Non-nil realms keep independent refresh tasks, generations, and failure
+cooldowns.
+
+```swift
+let refreshPolicy = RefreshTokenPolicy(
+    realmForRequest: { request in
+        switch request.url?.host {
+        case "customer.example.com": "customer"
+        case "operator.example.com": "operator"
+        default: nil
+        }
+    },
+    currentToken: { realm in
+        try await tokenStore.currentAccessToken(for: realm.rawValue)
+    },
+    refreshToken: { realm in
+        try await authService.refreshAccessToken(for: realm.rawValue)
+    }
+)
+```
+
+Realm identifiers are process-memory routing keys, not credentials. Avoid
+putting access tokens or other secrets in ``AuthenticationRealm/rawValue``.
+
 ## Shared Refresh Task Ownership
 
 The refresh operation is intentionally owned by the coordinator, not by the

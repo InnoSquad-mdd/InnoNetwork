@@ -23,7 +23,7 @@ Stable compatibility promise.
 
 | Product | Public declarations |
 |---|---:|
-| `InnoNetwork` (core) | 803 |
+| `InnoNetwork` (core) | 827 |
 | `InnoNetworkWebSocket` | 164 |
 | `InnoNetworkDownload` | 94 |
 | `InnoNetworkUpload` | 59 |
@@ -36,18 +36,18 @@ Stable compatibility promise.
 | `InnoNetworkOpenAPI` | 36 |
 | `InnoNetworkTrust` | 17 |
 | `InnoNetworkAuthAWS` | 10 |
-| **Total** | **3,185** |
+| **Total** | **3,209** |
 
 | Compatibility tier | Public declarations |
 |---|---:|
 | Stable consumer API | 305 |
-| Provisionally Stable consumer API | 2,847 |
+| Provisionally Stable consumer API | 2,871 |
 | `@_spi(GeneratedClientSupport)` | 33 |
-| **Total** | **3,185** |
+| **Total** | **3,209** |
 
 ## Why this matters
 
-For a single-maintainer client-side Swift networking library, 3,185 public
+For a single-maintainer client-side Swift networking library, 3,209 public
 declarations is unusually large — roughly 4× `Get`'s surface and ~10× the
 `URLSession`-only "two functions and a `Decoder`" baseline.
 

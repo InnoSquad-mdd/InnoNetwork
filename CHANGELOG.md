@@ -21,6 +21,13 @@ Versioning.
   restoration, bounded response capture, and `AnyResponseDecoder` integration.
   Background requests reject redirect-sensitive authorization and cookie
   headers because Foundation cannot expose every background redirect hop.
+- `RefreshTokenPolicy` can now resolve an `AuthenticationRealm` per request.
+  Refresh single-flight state, generations, and failure cooldowns are isolated
+  by realm while the original single-token initializer keeps its behavior.
+- `SemanticNetworkEventAdapter` maps lifecycle events to vendor-neutral HTTP
+  semantic attributes without adding an exporter SDK dependency.
+- Experimental `RateLimitExecutionPolicy` adds cancellation-aware fixed-window
+  request pacing around each transport attempt, including retries.
 
 ## [5.1.0] - 2026-09-03
 

@@ -284,6 +284,20 @@ Promotion from Provisionally Stable to Stable requires all of the following:
   configurations to share one cap. The raw semaphore is not public, preventing
   interceptor pairs that leak capacity when transport errors skip response
   processing.
+- `AuthenticationRealm` and the realm-aware `RefreshTokenPolicy` initializer
+  — per-request realm routing is additive in 5.x. Each realm owns its refresh
+  generation, in-flight task, and failure cooldown; returning `nil` excludes
+  a request. Realm identifiers are opaque in-memory routing keys and must not
+  contain credentials.
+- `SemanticNetworkEvent`, `SemanticAttributeValue`, and
+  `SemanticNetworkEventAdapter` — dependency-free mapping from redacted
+  lifecycle events to semantic HTTP attributes. Event names and InnoNetwork
+  extension attributes may gain additive cases while the exporter boundary
+  remains vendor-neutral.
+- `RateLimitExecutionPolicy` — experimental cancellation-aware fixed-window
+  admission around each transport attempt. Copies share one limiter; retry
+  attempts consume capacity independently. Its scheduling algorithm may be
+  refined before the 6.0 contract is finalized.
 - `ResiliencePack`, `AuthPack`, `ObservabilityPack`, `CachePack`,
   `TransportPack` — configuration packs accepted as named arguments by
   `NetworkConfiguration.advanced(baseURL:resilience:auth:observability:cache:transport:)`.
@@ -408,8 +422,8 @@ types and members in addition to top-level declarations. The grouped ledger
 below keeps the high-level compatibility classification readable for the
 5.x release line.
 
-The machine-checked snapshot currently partitions all 3,185 declarations into
-305 Stable consumer declarations, 2,847 Provisionally Stable consumer
+The machine-checked snapshot currently partitions all 3,209 declarations into
+305 Stable consumer declarations, 2,871 Provisionally Stable consumer
 declarations, and 33 opt-in SPI declarations. The three sets are disjoint and
 exhaustive. `Scripts/symbols/stable-rules.tsv` maps the Stable ledger to symbol
 paths, while the compiler-authored SPI flag is snapshotted in
@@ -419,10 +433,10 @@ Stable.
 ### InnoNetwork
 
 - `APIDefinition`, `AnyEncodable`, `AnyRequestExecutionPolicy`,
-  `AnyResponseDecoder`,
+  `AnyResponseDecoder`, `AuthenticationRealm`,
   `CachedResponse`, `CacheRevalidationState`, `CancellationTag`,
   `CircuitBreakerOpenError`, `CircuitBreakerPolicy`,
-  `ConcurrencyLimitExecutionPolicy`,
+  `ConcurrencyLimitExecutionPolicy`, `RateLimitExecutionPolicy`,
   `ContentType`, `CorrelationIDInterceptor`, `CurlCommandOptions`,
   `DecodingStage`,
   `DefaultNetworkClient`, `DefaultRedirectPolicy`,
@@ -441,7 +455,8 @@ Stable.
   `NetworkMonitor`, `NetworkMonitoring`, `NetworkReachabilityStatus`,
   `NetworkUnsatisfiedReason`,
   `NetworkRequestContext`, `NetworkSnapshot`,
-  `OSLogNetworkEventObserver`,
+  `OSLogNetworkEventObserver`, `SemanticAttributeValue`,
+  `SemanticNetworkEvent`, `SemanticNetworkEventAdapter`,
   `RedirectPolicy`, `RefreshFailureCooldown`, `RefreshTokenPolicy`,
   `RequestCoalescingPolicy`, `RequestEncodingPolicy`,
   `RequestPriority`, `RequestBody`,

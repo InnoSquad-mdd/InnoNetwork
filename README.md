@@ -88,7 +88,8 @@ wrapper or Alamofire-style helper:
   `SessionAuthentication` as `.anonymous`, `.optional`, or `.required`.
   Required endpoints fail before transport when no refresh policy can provide
   a token; the single-flight `RefreshTokenPolicy` only refreshes endpoints
-  that opted in.
+  that opted in and can isolate token, refresh, generation, and cooldown state
+  with a per-request `AuthenticationRealm`.
 - **Single-flight refresh + idempotency-aware retry** — concurrent 401s
   coalesce into one refresh call (`RefreshTokenCoordinator`). Retries
   follow RFC 9110: `GET`, `HEAD`, `OPTIONS`, and `TRACE` retry by default;
@@ -99,6 +100,10 @@ wrapper or Alamofire-style helper:
   `rfc9111Compliant(wrapping:)` to get the documented directive subset, or
   drop in `MockURLSession` / `VCRURLSession` / `StubNetworkClient` from
   `InnoNetworkTestSupport` (a top-level product, not a hidden helper).
+
+Production controls remain composable: use `RateLimitExecutionPolicy` for
+client-side fixed-window pacing and `SemanticNetworkEventAdapter` to translate
+redacted request lifecycle events into exporter-neutral semantic attributes.
 
 See `API_STABILITY.md` for the Stable / Provisionally Stable contract
 around each of these.
