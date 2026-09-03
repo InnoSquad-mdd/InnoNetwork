@@ -9,12 +9,9 @@ import os
 /// authentication status codes.
 public struct RefreshTokenPolicy: Sendable {
     package let realmResolver: @Sendable (URLRequest) -> AuthenticationRealm?
-    package let currentTokenProvider:
-        @Sendable (AuthenticationRealm, URLRequest) async throws -> String?
-    package let refreshTokenProvider:
-        @Sendable (AuthenticationRealm, URLRequest) async throws -> String
-    package let tokenApplicator:
-        @Sendable (AuthenticationRealm, String, URLRequest) -> URLRequest
+    package let currentTokenProvider: @Sendable (AuthenticationRealm, URLRequest) async throws -> String?
+    package let refreshTokenProvider: @Sendable (AuthenticationRealm, URLRequest) async throws -> String
+    package let tokenApplicator: @Sendable (AuthenticationRealm, String, URLRequest) -> URLRequest
     package let refreshStatusCodes: Set<Int>
     package let failureCooldown: RefreshFailureCooldown
 

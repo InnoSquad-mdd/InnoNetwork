@@ -174,13 +174,15 @@ public actor UploadManager {
                 totalBytesExpectedToSend: urlTask.countOfBytesExpectedToSend
             )
             let state: UploadState = urlTask.state == .suspended ? .waiting : .uploading
-            let task = tasks[id] ?? UploadTask(
-                id: id,
-                requestURL: url,
-                method: request.httpMethod ?? "POST",
-                state: state,
-                progress: progress
-            )
+            let task =
+                tasks[id]
+                ?? UploadTask(
+                    id: id,
+                    requestURL: url,
+                    method: request.httpMethod ?? "POST",
+                    state: state,
+                    progress: progress
+                )
 
             do {
                 try Self.validateRestored(request: request, configuration: configuration)
@@ -381,8 +383,9 @@ public actor UploadManager {
                 return
             }
             if let underlying {
-                let error: UploadError = (underlying.domain == NSURLErrorDomain
-                    && underlying.code == NSURLErrorCancelled) ? .cancelled : .network(underlying)
+                let error: UploadError =
+                    (underlying.domain == NSURLErrorDomain
+                        && underlying.code == NSURLErrorCancelled) ? .cancelled : .network(underlying)
                 await fail(task, with: error)
                 return
             }
@@ -439,7 +442,8 @@ public actor UploadManager {
 
     private func removeRuntime(for logicalID: String) {
         let urlTask = uploadTasks.removeValue(forKey: logicalID)
-        let identifier = urlTask?.taskIdentifier
+        let identifier =
+            urlTask?.taskIdentifier
             ?? logicalIDsBySystemIdentifier.first(where: { $0.value == logicalID })?.key
         guard let identifier else { return }
         logicalIDsBySystemIdentifier.removeValue(forKey: identifier)
@@ -474,7 +478,8 @@ public actor UploadManager {
         do {
             try NetworkURLAdmission.validate(request, policy: .http(allowsInsecure: false))
         } catch {
-            throw .invalidRequest("Only absolute HTTPS URLs without credentials, fragments, or dot segments are allowed")
+            throw .invalidRequest(
+                "Only absolute HTTPS URLs without credentials, fragments, or dot segments are allowed")
         }
         guard request.httpBody == nil, request.httpBodyStream == nil else {
             throw .invalidRequest("The request body is supplied by fromFile and must not also be set on URLRequest")
@@ -494,7 +499,8 @@ public actor UploadManager {
         do {
             try NetworkURLAdmission.validate(request, policy: .http(allowsInsecure: false))
         } catch {
-            throw .invalidRequest("Only absolute HTTPS URLs without credentials, fragments, or dot segments are allowed")
+            throw .invalidRequest(
+                "Only absolute HTTPS URLs without credentials, fragments, or dot segments are allowed")
         }
         guard configuration.sessionMode == .background else { return }
         let sensitive = Set(["authorization", "cookie", "proxy-authorization"])
