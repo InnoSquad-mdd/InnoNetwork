@@ -335,6 +335,7 @@ expected_shipping_public_declarations=(
   NetworkMonitor
   NetworkMonitoring
   NetworkReachabilityStatus
+  NetworkUnsatisfiedReason
   NetworkRequestContext
   NetworkSnapshot
   OSLogNetworkEventObserver
@@ -393,19 +394,27 @@ expected_shipping_public_declarations=(
   URLQueryKeyEncodingStrategy
   URLQueryArrayEncodingStrategy
   W3CTraceContext
+  JSONWebSocketMessageCodec
   WebSocketCloseCode
   WebSocketCloseDisposition
   WebSocketConfiguration
+  WebSocketDecodedMessages
   WebSocketError
   WebSocketEvent
+  WebSocketFrame
+  WebSocketFrameKind
   WebSocketHandshakeRequestAdapter
   WebSocketManager
+  WebSocketMessageCodec
+  WebSocketMessageCodingError
   WebSocketPingContext
   WebSocketPongContext
   WebSocketProtocolFeature
   WebSocketSendOverflowPolicy
   WebSocketState
   WebSocketTask
+  WebSocketTypedChannel
+  WebSocketTypedSendError
 )
 
 # Top-level type declarations exposed under

@@ -13,6 +13,9 @@ Versioning.
   IPv6, and typed unsatisfied-reason state. `NetworkMonitoring.snapshots()`
   provides a latest-state stream that replays the current snapshot when one is
   available.
+- `WebSocketMessageCodec`, `JSONWebSocketMessageCodec`, and the lazy
+  `WebSocketDecodedMessages` sequence add typed application-message send and
+  receive paths without introducing another relay task or message buffer.
 
 ## [5.1.0] - 2026-09-03
 

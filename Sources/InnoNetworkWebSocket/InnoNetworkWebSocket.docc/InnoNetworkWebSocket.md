@@ -13,6 +13,8 @@ Use this module when you need:
   `.error(.pingTimeout)` events
 - typed close-code handling via ``WebSocketCloseCode``
 - async handshake request adaptation via ``WebSocketHandshakeRequestAdapter``
+- typed application messages via ``WebSocketMessageCodec`` and
+  ``JSONWebSocketMessageCodec``
 - listener retention across automatic reconnect transport generations
 - explicit retry through ``WebSocketManager/retry(_:)``, which returns a fresh
   task and a pre-registered bounded event stream in ``WebSocketRetryResult``
@@ -82,6 +84,7 @@ for await event in await manager.events(for: task) {
 
 - <doc:Reconnect>
 - <doc:FeatureScopedManagers>
+- <doc:TypedMessages>
 - <doc:WebSocketProtocolPolicy>
 - <doc:WebSocketBackgroundTransition>
 - ``WebSocketManager``
