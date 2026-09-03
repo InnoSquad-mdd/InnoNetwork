@@ -1,7 +1,9 @@
-# API Stability (5.x)
+# API Stability (6.0 Draft)
 
-This document defines the compatibility contract for the InnoNetwork 5.x
-release line. `5.0.0` is the public compatibility baseline for this contract.
+This document defines the planned compatibility contract for InnoNetwork 6.
+`6.0.0` has not been tagged; `5.1.0` remains the latest stable public release.
+The Stable ledger inherited from 5.x remains protected unless the 6.0
+migration guide explicitly removes or relocates a package boundary.
 
 The 5.0.0 baseline removes the deprecated 4.x
 `NetworkConfiguration.with(...)` modifier family, replace the type-level
@@ -106,7 +108,8 @@ and own application reducer types in their feature or architecture layer.
 > **5.0.0 is the compatibility reset for the 5.x line.**
 > From this release onward, the Stable ledger will only grow during 5.x;
 > entries will not move back into Provisionally Stable, and breaking changes
-> will wait for a future major.
+> wait for a future major. InnoNetwork 6 is that next major; declarations not
+> named as removed in the 6.0 migration guide retain their compatibility tier.
 
 ## Stable Examples
 
@@ -411,13 +414,15 @@ Promotion from Provisionally Stable to Stable requires all of the following:
 
 ## Version Pinning Guidance
 
-Applications using only Stable API may consume the tagged 5.x line:
+Production applications should continue consuming the tagged 5.x line while
+6.0 remains a draft:
 
 ```swift
 .package(url: "https://github.com/InnoSquadCorp/InnoNetwork", .upToNextMajor(from: "5.1.0"))
 ```
 
-Applications using Provisionally Stable API should prefer a minor-bound range:
+Applications using Provisionally Stable 5.x API should prefer a minor-bound
+range:
 
 ```swift
 .package(url: "https://github.com/InnoSquadCorp/InnoNetwork", .upToNextMinor(from: "5.1.0"))
@@ -425,6 +430,11 @@ Applications using Provisionally Stable API should prefer a minor-bound range:
 
 Pin the exact `5.1.0` version when a reproducible release build must not accept
 any dependency update.
+
+After `6.0.0` is published, Stable-only applications may adopt the new major
+with `.upToNextMajor(from: "6.0.0")`; Provisionally Stable adopters should use
+`.upToNextMinor(from: "6.0.0")`. Those declarations are intentionally not
+shown as the current install snippet before the tag exists.
 
 ## Public Declaration Ledger
 

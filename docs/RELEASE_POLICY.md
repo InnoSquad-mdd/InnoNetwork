@@ -20,11 +20,12 @@
    Change it to the exact top-of-file
    `<!-- release-status: ready -->` marker only after the release contents and
    required validation are deliberately approved. Unknown, missing, misplaced,
-   or draft markers block release publication. For the `5.0.0` compatibility
-   reset, the marker must change in the same commit as README, API stability,
+   or draft markers block release publication. For the `5.0.0` and `6.0.0` compatibility
+   resets, the marker must change in the same commit as README, API stability,
    CHANGELOG, security-support, symbol-baseline, migration-guide, status-line,
-   and release-date claims. `Scripts/validate_docs_release_state.sh` rejects a
-   marker-only transition or a mixed draft/ready Git tree.
+   and release-date claims. `Scripts/validate_docs_release_state.sh` guards the
+   historical 5.0 transition and `Scripts/validate_6_release_state.sh` guards
+   the 6.0 transition; both reject a marker-only or mixed Git tree.
 3. Before tagging, run the `Release` workflow manually from `main`. A manual
    dispatch executes the full validation and five-platform matrix, produces
    candidate artifacts, and structurally skips the signing/publication job.
@@ -60,14 +61,12 @@
 7. Re-run DocC/sample smoke after documentation-only release edits so
    examples, symbol links, and docs-contract wording stay in sync.
 8. Run `bash Scripts/run_local_release_preflight.sh --full` before changing the
-   release status to ready. It reproduces the pre-tag validation, coverage,
-   benchmark, SBOM, DocC, five-platform build, actual AVPlayer decoded-audio,
-   and official Apple HLS conformance gates locally. Run it on macOS 27 or
-   newer and install Apple's separate HTTP Live Streaming Tools download first;
-   the full preflight requires both
-   `mediastreamvalidator` and `hlsreport` and retains their reports below
-   `.build/local-release-preflight/`. Tag identity, signing, and publication
-   remain GitHub-only responsibilities.
+   release status to ready. It reproduces root-package pre-tag validation,
+   coverage, benchmark, SBOM, DocC, and five-platform builds locally on the
+   required Xcode 27 toolchain. InnoStream separately owns AVPlayer runtime,
+   Apple HLS conformance, FairPlay, and HLS-module release gates after the 6.0
+   split. Tag identity, signing, and publication remain GitHub-only
+   responsibilities.
 9. Before tagging, export the active repository ruleset and run
    `python3 Scripts/check_required_status_checks.py --ruleset-json <path>`.
    It must match `.github/required-status-checks.json`. Narrow or remove the
@@ -87,3 +86,14 @@
 
 - Release quality is expected for Stable API.
 - Response time remains best-effort under the lightweight maintainer model.
+
+## InnoNetwork 6 and InnoStream publication order
+
+1. Complete the InnoNetwork 6 root contract, consumer, and full preflight
+   gates.
+2. Publish and verify InnoNetwork `6.0.0`.
+3. Resolve InnoStream without `INNONETWORK_LOCAL_PATH`, complete its HLS and
+   five-platform release gates, then publish `1.0.0`.
+4. Migrate HLS consumers only after both tags resolve from a clean checkout.
+5. Publish dependent companion packages after their clean tagged-dependency
+   smoke passes.

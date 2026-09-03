@@ -55,7 +55,7 @@ At release, every public symbol becomes:
 
 - A regression-testing obligation in CI (the allowlists make this concrete).
 - A backwards-compatibility promise for the lifetime of the surrounding
-  contract tier throughout 5.x (Stable / Provisionally Stable, see
+  contract tier throughout the released major line (Stable / Provisionally Stable, see
   `API_STABILITY.md`).
 - A documentation obligation — DocC catalogues are spot-checked by
   `check_docs_contract_sync.sh`.

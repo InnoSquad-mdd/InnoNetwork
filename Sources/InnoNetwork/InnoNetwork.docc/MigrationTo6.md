@@ -68,3 +68,34 @@ does not authorize automatic replay of the failed operation.
 The 5.x `InnoNetworkNext` product no longer exists. Remove that product from
 the package dependency and replace `import InnoNetworkNext` with
 `import InnoNetwork`. The source names of its preview types are unchanged.
+
+## Move HLS product ownership to InnoStream
+
+The HLS product and module names remain unchanged, but their SwiftPM package
+owner changes. After InnoNetwork `6.0.0` and InnoStream `1.0.0` are published,
+change a target dependency from:
+
+```swift
+.product(name: "InnoNetworkHLS", package: "InnoNetwork")
+```
+
+to:
+
+```swift
+.product(name: "InnoNetworkHLS", package: "InnoStream")
+```
+
+and add the InnoStream package dependency:
+
+```swift
+.package(
+    url: "https://github.com/InnoSquadCorp/InnoStream.git",
+    .upToNextMajor(from: "1.0.0")
+)
+```
+
+Apply the same owner change to `InnoNetworkHLSLive`,
+`InnoNetworkHLSAVFoundation`, and `InnoNetworkHLSAudio`. Existing
+`import InnoNetworkHLS...` statements do not change. A local sibling checkout
+is useful before release, but only a clean build resolving both published tags
+proves the final dependency graph.

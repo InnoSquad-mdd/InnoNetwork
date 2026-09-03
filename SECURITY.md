@@ -30,6 +30,8 @@ Whichever channel you use, please include:
 ## Supported Versions
 
 - `5.x` is the actively supported tagged public release line.
+- `6.0.0` is an unreleased draft. Reports against the 6.0 branch are assessed
+  as prerelease findings until the release is tagged.
 - `4.x` receives no further routine maintenance after the 5.0 compatibility
   reset; security reports are still assessed according to impact.
 - Earlier release lines are unsupported.

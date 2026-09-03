@@ -162,6 +162,7 @@ run_package_xcodebuild() {
 
 run_release_script_fixtures() {
   bash Scripts/tests/test_validate_docs_release_state.sh
+  bash Scripts/tests/test_validate_6_release_state.sh
   bash Scripts/tests/test_validate_release_ref.sh
   bash Scripts/tests/test_validate_release_candidate.sh
   bash Scripts/tests/test_generate_sbom.sh
@@ -195,6 +196,7 @@ run_static_contracts() {
   bash Scripts/check_guarded_benchmark_contract.sh
   python3 Scripts/check_macro_build_baseline_contract.py
   bash Scripts/check_docs_contract_sync.sh
+  bash Scripts/validate_6_release_state.sh --expect draft
   bash Scripts/check_stable_examples.sh
   python3 Scripts/check_example_platform_floors.py
   python3 Scripts/check_apple_platform_build_contract.py

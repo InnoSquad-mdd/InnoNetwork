@@ -496,7 +496,9 @@ jobs:
         run: bash Scripts/tests/test_docs_contract_helpers.sh
 
       - name: Verify docs and stability contract
-        run: bash Scripts/check_docs_contract_sync.sh
+        run: |
+          bash Scripts/tests/test_validate_6_release_state.sh
+          bash Scripts/check_docs_contract_sync.sh
 
       - name: Verify guarded benchmark contract
         run: |

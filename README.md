@@ -24,8 +24,9 @@ persistent cache, OpenAPI, AWS signing, pinning, and test support—is an
 optional product selected only when that capability is required.
 
 > **Release status:** `5.1.0` is the latest tagged stable release and the
-> actively security-supported line. The API examples below describe the 5.x
-> contract and may not compile against 4.x.
+> actively security-supported line. `6.0.0` is an unreleased draft on this
+> branch; do not point production dependencies at `main`. The API examples
+> below describe the developing 6.0 contract and may not compile against 5.x.
 
 ## Product Selection Guide
 
@@ -78,6 +79,9 @@ The four HLS products moved to the independently versioned
 [InnoStream](https://github.com/InnoSquadCorp/InnoStream) package. Their product
 and module names are unchanged, so migration consists of changing the SwiftPM
 package dependency while keeping existing imports.
+
+See the [6.0 migration guide](docs/Migration-6.0.0.md) for the exact package
+manifest diff, replay-safety rules, and tag validation order.
 
 ## Why InnoNetwork
 
@@ -176,6 +180,10 @@ dependencies: [
     )
 ]
 ```
+
+The 6.0 examples in this branch are prerelease documentation. After the
+`6.0.0` tag exists, new adopters can change the lower bound to `6.0.0`; until
+then, use a local checkout only for explicit migration validation.
 
 > InnoNetwork also intentionally requires Swift 6.2+ and current Apple OS
 > baselines (iOS 16, macOS 14, tvOS 16, watchOS 9, visionOS 1). That keeps
@@ -1179,7 +1187,7 @@ examples.
 
 Public releases follow semantic versioning. `5.1.0` is the latest tagged
 stable release; `5.0.0` remains the compatibility baseline for the 5.x
-contract.
+contract. `6.0.0` remains an unreleased compatibility-reset draft.
 
 - Stable public API: [API_STABILITY.md](API_STABILITY.md)
 - Release rules and compatibility policy: [docs/RELEASE_POLICY.md](docs/RELEASE_POLICY.md)
@@ -1204,9 +1212,10 @@ offers unbounded or lossy delivery when that trade-off is intentional. To
 cancel every in-flight request and stream
 (for example, on logout or backgrounding), call
 `DefaultNetworkClient.cancelAll()`. See the
-[5.1 release notes](docs/releases/5.1.0.md) for the HLS companion products and
-the
-[5.0 migration guide](docs/Migration-5.0.0.md) for source changes.
+[6.0 migration guide](docs/Migration-6.0.0.md) for the package split and
+operation contract, [5.1 release notes](docs/releases/5.1.0.md) for the
+previous HLS companion products, and the [5.0 migration guide](docs/Migration-5.0.0.md)
+for the prior compatibility reset.
 
 ## Benchmarks
 
@@ -1362,6 +1371,8 @@ Operational items to verify before shipping a client built on InnoNetwork.
 - Migration Guides: [docs/MigrationGuides.md](docs/MigrationGuides.md)
 - 5.0 Migration Guide: [docs/Migration-5.0.0.md](docs/Migration-5.0.0.md)
 - 5.1 Release Notes: [docs/releases/5.1.0.md](docs/releases/5.1.0.md)
+- 6.0 Migration Guide: [docs/Migration-6.0.0.md](docs/Migration-6.0.0.md)
+- Draft 6.0 Release Notes: [docs/releases/6.0.0.md](docs/releases/6.0.0.md)
 - Alamofire Migration Cookbook: [docs/MigrationFromAlamofire.md](docs/MigrationFromAlamofire.md)
 - Moya Migration Cookbook: [docs/MigrationFromMoya.md](docs/MigrationFromMoya.md)
 - DocC Deployment: [docs/DocC_Deployment.md](docs/DocC_Deployment.md)

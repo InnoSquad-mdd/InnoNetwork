@@ -7,6 +7,8 @@ Versioning.
 
 ## [Unreleased]
 
+These changes form the unreleased `6.0.0` draft and have not been tagged.
+
 ### Added
 
 - `NetworkSnapshot` now reports Low Data Mode, expensive-path, DNS, IPv4,

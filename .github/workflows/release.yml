@@ -27,6 +27,7 @@ jobs:
       - name: Test release artifact scripts
         run: |
           bash Scripts/tests/test_validate_docs_release_state.sh
+          bash Scripts/tests/test_validate_6_release_state.sh
           bash Scripts/tests/test_validate_release_ref.sh
           bash Scripts/tests/test_validate_release_candidate.sh
           bash Scripts/tests/test_generate_sbom.sh

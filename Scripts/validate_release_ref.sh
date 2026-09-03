@@ -133,7 +133,8 @@ case "$first_line" in
         ;;
 esac
 
-# 5.0.0 changes the repository's documented stable line as well as the code.
+# Major baselines change the repository's documented stable line as well as
+# the code.
 # A ready marker by itself is therefore insufficient: the tagged Git tree must
 # atomically move README, API stability, changelog, security, symbols, and
 # migration claims out of preview state. Later patch/minor releases keep using
@@ -145,6 +146,15 @@ if [[ "$release_tag" == "5.0.0" ]]; then
         || fail "required 5.0 documentation state validator is missing: '$docs_state_validator'."
     if ! bash "$docs_state_validator" --expect ready --ref "$tag_commit"; then
         fail "tagged 5.0.0 documentation does not form one coherent ready release state."
+    fi
+fi
+
+if [[ "$release_tag" == "6.0.0" ]]; then
+    six_docs_state_validator="$repo_root/Scripts/validate_6_release_state.sh"
+    [[ -f "$six_docs_state_validator" ]] \
+        || fail "required 6.0 documentation state validator is missing: '$six_docs_state_validator'."
+    if ! bash "$six_docs_state_validator" --expect ready --ref "$tag_commit"; then
+        fail "tagged 6.0.0 documentation does not form one coherent ready release state."
     fi
 fi
 

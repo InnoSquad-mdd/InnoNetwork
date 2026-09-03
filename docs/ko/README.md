@@ -40,7 +40,8 @@ Swift Concurrency, 명시적인 transport 정책, 운영 가시성을 중심으�
 클라이언트까지 일관되게 사용할 수 있습니다.
 
 > **릴리즈 상태:** 현재 태그로 공개된 최신 안정 버전은 `5.1.0`입니다. 아래 API 예제는
-> 5.x 공개 계약을 기준으로 하며 4.x와 source-compatible하지 않을 수 있습니다.
+> 아직 태그가 없는 6.0 계약 초안을 반영하며 5.x와 source-compatible하지 않을 수 있습니다.
+> 프로덕션 의존성은 6.0 릴리즈 전까지 `5.1.0`에 유지하세요.
 
 > 📚 **API Reference (DocC):** https://innosquadcorp.github.io/InnoNetwork/
 
@@ -359,6 +360,8 @@ InnoNetwork 기반 클라이언트를 출시하기 전에 점검해야 할 운�
 - 마이그레이션 정책: [../MIGRATION_POLICY.md](../MIGRATION_POLICY.md)
 - 5.0 마이그레이션 가이드: [../Migration-5.0.0.md](../Migration-5.0.0.md)
 - 5.1 릴리즈 노트: [../releases/5.1.0.md](../releases/5.1.0.md)
+- 6.0 마이그레이션 가이드: [../Migration-6.0.0.md](../Migration-6.0.0.md)
+- 6.0 릴리즈 노트 초안: [../releases/6.0.0.md](../releases/6.0.0.md)
 - 5.0 릴리즈 노트: [../releases/5.0.0.md](../releases/5.0.0.md)
 - 로드맵: [../ROADMAP.md](../ROADMAP.md)
 

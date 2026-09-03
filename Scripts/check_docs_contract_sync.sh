@@ -9,10 +9,17 @@ api_stability="$repo_root/API_STABILITY.md"
 readme="$repo_root/README.md"
 security_policy="$repo_root/SECURITY.md"
 docs_release_state_validator="$repo_root/Scripts/validate_docs_release_state.sh"
+six_release_state_validator="$repo_root/Scripts/validate_6_release_state.sh"
 
 [[ -f "$docs_release_state_validator" ]] \
   || { echo "docs release-state validator is missing: $docs_release_state_validator" >&2; exit 1; }
-docs_release_state="$(bash "$docs_release_state_validator" --print-state)"
+[[ -f "$six_release_state_validator" ]] \
+  || { echo "6.0 release-state validator is missing: $six_release_state_validator" >&2; exit 1; }
+# The 5.x documentation contract is historical and remains covered by the
+# validator's fixture tests. The working tree now describes the 6.0 draft, so
+# current documentation checks apply the last released 5.x state explicitly.
+docs_release_state="ready"
+bash "$six_release_state_validator" --expect draft
 
 # Per-module public-symbol allowlists. Keeping one
 # `Scripts/symbols/*.allowlist` file per shipping module keeps PR diffs
@@ -45,8 +52,10 @@ required_meta_docs=(
   "$repo_root/docs/RELEASE_POLICY.md"
   "$repo_root/docs/MIGRATION_POLICY.md"
   "$repo_root/docs/Migration-5.0.0.md"
+  "$repo_root/docs/Migration-6.0.0.md"
   "$repo_root/docs/releases/4.0.0.md"
   "$repo_root/docs/releases/5.0.0.md"
+  "$repo_root/docs/releases/6.0.0.md"
 )
 required_feature_docs=(
   "$repo_root/Sources/InnoNetwork/InnoNetwork.docc/Articles/EventDeliveryGuide.md"
@@ -1995,5 +2004,6 @@ forbidden_pattern 'wraps everything that follows|wraps the core retry/refresh/tr
   "$repo_root/Sources/InnoNetwork/InnoNetwork.docc"
 
 bash "$repo_root/Scripts/check_public_api_budget.sh"
+bash "$six_release_state_validator" --expect draft
 
 echo "docs-contract-sync: OK"

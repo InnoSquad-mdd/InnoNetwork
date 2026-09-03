@@ -278,18 +278,18 @@
       <h1>InnoNetwork Documentation</h1>
       <p>
         Type-safe request execution and focused companion modules for authentication, downloads,
-        HLS media, realtime flows, caching, OpenAPI, trust, and testing on current Apple platforms. The
-        documentation site is organized by product so teams can start from the module they need.
+        realtime flows, caching, OpenAPI, trust, and testing on current Apple platforms. HLS media
+        moves to InnoStream in the InnoNetwork 6 draft.
       </p>
       <div class="hero-actions">
         <a class="button button-primary" href="./InnoNetwork/documentation/innonetwork/gettingstarted">Get Started</a>
         <a class="button button-secondary" href="https://github.com/InnoSquadCorp/InnoNetwork">View Repository</a>
-        <a class="button button-secondary" href="https://github.com/InnoSquadCorp/InnoNetwork/blob/main/docs/releases/5.1.0.md">5.1 Release Notes</a>
+        <a class="button button-secondary" href="https://github.com/InnoSquadCorp/InnoNetwork/blob/main/docs/releases/6.0.0.md">Draft 6.0 Notes</a>
       </div>
       <div class="metrics">
         <div class="metric">
-          <strong>14 Products</strong>
-          <span>One core library and thirteen opt-in companion modules.</span>
+          <strong>9 Products</strong>
+          <span>One core library and eight opt-in companion modules.</span>
         </div>
         <div class="metric">
           <strong>Swift 6.2+</strong>
@@ -303,7 +303,7 @@
     </section>
 
     <section class="section">
-      <h2>Products</h2>
+      <h2>Products and package boundaries</h2>
       <div class="cards">
         <article class="card">
           <h3>InnoNetwork</h3>
@@ -387,85 +387,19 @@
         </article>
 
         <article class="card">
-          <h3>InnoNetworkHLS</h3>
+          <h3>InnoStream (HLS)</h3>
           <p>
-            Typed HLS 2nd Edition metadata, AES-128 non-DRM VOD assembly,
-            and atomic local packages for selected external audio and subtitles.
+            The four HLS products retain their module names in an independently
+            versioned package after the InnoNetwork 6 split.
           </p>
           <ul>
-            <li>Bounded playlist parsing and relative URL resolution</li>
-            <li>Stable IDs, accessibility, audio-format, and pathway metadata</li>
-            <li>Typed HDCP, content-protection, video-layout, and live-sequence metadata</li>
-            <li>Opt-in Apple authoring and LL-HLS guidance</li>
-            <li>Bounded draft-22 presentation-graph conformance inspection</li>
-            <li>Typed interstitial coordination, timeline, restriction, and skip-control metadata</li>
-            <li>Purpose-aware request policy and value-redacted HLS request events</li>
-            <li>Explicit quality, resolution, and bandwidth variant policies</li>
-            <li>Event-stream or one-shot ordered TS/fMP4 assembly</li>
-            <li>Local multivariant packages with rewritten rendition playlists</li>
-            <li>Localized recovery guidance, retry hints, and explicit storage policy</li>
+            <li>Playlist parsing, VOD download, live reload, and DVR</li>
+            <li>AVFoundation playback, offline assets, and FairPlay workflows</li>
+            <li>Decoded-audio and real-time audio-mix processing</li>
+            <li>Separate public API, runtime, conformance, and release gates</li>
           </ul>
           <div class="link-row">
-            <a class="pill" href="https://github.com/InnoSquadCorp/InnoStream">InnoStream</a>
-          </div>
-        </article>
-
-        <article class="card">
-          <h3>InnoNetworkHLSLive</h3>
-          <p>
-            Media-playlist reloads with negotiated blocking requests, delta
-            reconstruction, bounded async snapshots, and atomic live DVR.
-          </p>
-          <ul>
-            <li>Typed blocking, part, and skip request negotiation</li>
-            <li>Sequence-based delta and Date Range reconstruction</li>
-            <li>Value-only HTTP freshness and live-health diagnostics</li>
-            <li>Uncached reloads with one clean full-reload recovery</li>
-            <li>Polling fallback and deterministic ENDLIST completion</li>
-            <li>Memory-only AES-128 keys and plaintext local DVR packages</li>
-            <li>Opt-in URL-free complete-segment checkpoints and atomic resume</li>
-            <li>Typed encryption, byte-range, and disk-capacity failures</li>
-          </ul>
-          <div class="link-row">
-            <a class="pill" href="https://github.com/InnoSquadCorp/InnoStream">InnoStream</a>
-          </div>
-        </article>
-
-        <article class="card">
-          <h3>InnoNetworkHLSAVFoundation</h3>
-          <p>
-            Native, system-managed HLS persistence for applications that need
-            background asset downloads, media selections, or FairPlay setup.
-          </p>
-          <ul>
-            <li>Reconnectable AVFoundation background sessions</li>
-            <li>Typed AVFoundation CMCD opt-in and platform status</li>
-            <li>Task restoration with bounded progress and terminal streams</li>
-            <li>Versioned, bounded Codable offline-asset libraries</li>
-            <li>Value-only catalogs for custom subtitle and caption UI</li>
-            <li>Typed FairPlay session attachment and expiration lifecycle</li>
-            <li>Localized app-group, HTTPS, and lifecycle diagnostics</li>
-          </ul>
-          <div class="link-row">
-            <a class="pill" href="https://github.com/InnoSquadCorp/InnoStream">InnoStream</a>
-          </div>
-        </article>
-
-        <article class="card">
-          <h3>InnoNetworkHLSAudio</h3>
-          <p>
-            Demand-driven decoded PCM for HLS playback analysis and assistive
-            experiences on version 27 Apple platforms, built with Xcode 27 and
-            Swift 6.4.
-          </p>
-          <ul>
-            <li>Validated PCM and convenient Float32 configuration</li>
-            <li>Single-consumer async sample delivery</li>
-            <li>Typed marker and sequence-restart metadata</li>
-            <li>Caller-owned timebase pacing and audio processing</li>
-          </ul>
-          <div class="link-row">
-            <a class="pill" href="https://github.com/InnoSquadCorp/InnoStream">InnoStream</a>
+            <a class="pill" href="https://github.com/InnoSquadCorp/InnoStream">View InnoStream</a>
           </div>
         </article>
 
@@ -593,10 +527,10 @@
     </section>
 
     <p class="footer">
-      This site documents the released 5.x line. The latest tagged stable
-      release is 5.1.0; use a tagged dependency rather than moving
-      <code>main</code> in production. For support, issues, and release notes,
-      use the repository links above.
+      The latest tagged stable release is 5.1.0. This site also previews the
+      unreleased InnoNetwork 6 contract; use a tagged dependency rather than
+      moving <code>main</code> in production. For support, issues, and release
+      notes, use the repository links above.
     </p>
   </div>
 </body>

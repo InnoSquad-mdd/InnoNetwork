@@ -194,9 +194,10 @@ sudo xcode-select -s /Applications/Xcode_26.0.1.app
 xcrun swift build
 xcrun swift test --no-parallel
 
-# Release preflight validates the complete HLS-audio surface and therefore
-# requires Xcode 27 / Swift 6.4. On the xcode-27 runner and standard local
-# installs, /Applications/Xcode.app resolves to that toolchain.
+# Release preflight validates the complete InnoNetwork 6 root surface and
+# requires Xcode 27 / Swift 6.4. InnoStream owns the separate HLS runtime and
+# conformance gates. On the xcode-27 runner and standard local installs,
+# /Applications/Xcode.app resolves to that toolchain.
 sudo xcode-select -s /Applications/Xcode.app
 xcodebuild -version
 
