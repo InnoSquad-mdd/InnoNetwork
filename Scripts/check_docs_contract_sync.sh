@@ -8,6 +8,7 @@ export LC_ALL=C
 api_stability="$repo_root/API_STABILITY.md"
 readme="$repo_root/README.md"
 security_policy="$repo_root/SECURITY.md"
+roadmap="$repo_root/docs/ROADMAP.md"
 docs_release_state_validator="$repo_root/Scripts/validate_docs_release_state.sh"
 six_release_state_validator="$repo_root/Scripts/validate_6_release_state.sh"
 
@@ -51,6 +52,7 @@ required_meta_docs=(
   "$repo_root/CHANGELOG.md"
   "$repo_root/docs/RELEASE_POLICY.md"
   "$repo_root/docs/MIGRATION_POLICY.md"
+  "$roadmap"
   "$repo_root/docs/Migration-5.0.0.md"
   "$repo_root/docs/Migration-6.0.0.md"
   "$repo_root/docs/releases/4.0.0.md"
@@ -94,6 +96,10 @@ require_line "## Provisionally Stable" "$api_stability"
 require_line "## Internal/Operational" "$api_stability"
 require_contains 'baseline caps inline' "$api_stability"
 require_contains '`safeDefaults` and the `advanced` preset' "$api_stability"
+require_line '## 6.0.0 Release Boundary' "$roadmap"
+require_line '## 6.1.0 Candidate Scope' "$roadmap"
+require_contains 'No item in the 6.1' "$roadmap"
+require_contains 'HLS parsing, playback, download, FairPlay, and live DVR remain owned by' "$roadmap"
 
 if [[ "$docs_release_state" == "draft" ]]; then
   require_contains 'branch: "main"' "$api_stability"

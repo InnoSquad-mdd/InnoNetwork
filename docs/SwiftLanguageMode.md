@@ -58,12 +58,15 @@ in Instruments.
 
 ### Task-local values
 
-A task-local `TraceID` (or `SpanID`) would unlock OpenTelemetry-style
-correlation without threading extra arguments through public APIs. This
-is closest in value to the remaining Tier 3 Observer / Tracer work, but
-that feature still needs an RFC to settle the public contract first.
+The current 6.0 draft now exposes `NetworkContext.current` as a task-local
+carrier for trace IDs, correlation IDs, and baggage. `CorrelationIDInterceptor`
+and `TraceContextInterceptor` can copy that context into request headers without
+threading metadata through every client call.
 
-**Deferred.** Tracked as a future observer / tracer candidate in the roadmap.
+The remaining 6.1 candidate is narrower: relate request, retry, refresh, cache,
+and transfer events to a parent/child span lifecycle through an exporter-neutral
+adapter. It must reuse the existing task-local carrier, avoid a vendor SDK
+dependency, and keep request and response bodies out of telemetry.
 
 ### Other
 

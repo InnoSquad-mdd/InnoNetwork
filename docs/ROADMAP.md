@@ -1,5 +1,88 @@
 # Roadmap
 
+## 6.0.0 Release Boundary
+
+`6.0.0` is still an unreleased draft. Its scope is the compatibility reset
+already described in `docs/releases/6.0.0.md`: the operation-first contract
+moves into `InnoNetwork`, HLS moves to InnoStream, and recovery decisions gain
+explicit HTTP, authentication, and replay-safety context. No item in the 6.1
+candidate list below is a blocker for that release.
+
+The 6.0 exit gate is evidence, not another feature pass: the API allowlists,
+package preflight, non-HLS consumers, InnoStream local integration, companion
+packages, and finally clean remote-tag consumers must all agree with the
+published contract.
+
+## 6.1.0 Candidate Scope
+
+The first minor after 6.0 should be additive and operationally narrow. A
+candidate enters implementation only with an API sketch, a named adopter or
+reproducible protocol gap, negative-path tests, and a measurement or fixture
+that can become a permanent gate. Items are ordered by expected consumer
+value, not by implementation convenience.
+
+### Priority 0 — correctness and adoption evidence
+
+1. **Complete conditional cache revalidation.** When a cached response has no
+   `ETag` but does have a valid `Last-Modified`, emit `If-Modified-Since` and
+   merge a `304` response through the same bounded, authenticated, and
+   observable path as `If-None-Match`. Cover malformed dates, dual validators,
+   unsafe methods, coalesced reads, and persistent-cache reopen behavior.
+2. **Promote only proven provisional surfaces.** Use Capto, the known main-app
+   consumers, and companion-package migrations to identify which 6.0
+   provisional declarations are used without wrappers or SPI. Promotion is a
+   compatibility promise, not a declaration-count target; unused or awkward
+   surfaces stay provisional until there is independent adopter evidence.
+
+### Priority 1 — explicit opt-in capabilities
+
+1. **Directive-aware cache controls.** Evaluate additive, opt-in handling for
+   `stale-if-error` and request `only-if-cached`. `immutable`, synthesized
+   `Age`, and default-policy consumption remain separate decisions. The minor
+   must not silently change existing caller-owned freshness windows or serve
+   stale authenticated data outside an explicit policy.
+2. **Caller-owned streaming cursors.** Generalize the current
+   `StreamingResumePolicy.lastEventID` convenience so NDJSON and other
+   line-oriented protocols can provide a validated cursor and reconnect
+   header. Resume must remain bounded, reject buffering modes that can hide a
+   cursor gap, and never turn an opaque partial body into an automatic retry.
+3. **Exporter-neutral request span lifecycle.** `NetworkContext` already
+   provides task-local trace and correlation values, and
+   `TraceContextInterceptor` already propagates W3C headers. Evaluate a small
+   adapter that relates request, retry, refresh, cache, and transfer events to
+   parent/child span identities without importing an observability vendor SDK
+   or exposing request/response bodies.
+
+### Admission and release gates
+
+- Each feature ships independently; an unfinished Priority 1 item does not
+  hold the minor release.
+- Public additions update symbol allowlists, API stability classification,
+  changelog, migration examples, and DocC in the same commit.
+- HTTP behavior needs deterministic URLProtocol fixtures plus persistent-cache
+  parity where applicable; streaming behavior needs disconnect, duplicate,
+  gap, cancellation, and memory-bound tests.
+- Performance-sensitive paths must stay within the existing release benchmark
+  budgets, and diagnostics must prove header/body redaction.
+- At least one real consumer must build without SPI for any surface proposed
+  for Stable promotion.
+
+### Explicitly outside 6.1
+
+- HLS parsing, playback, download, FairPlay, and live DVR remain owned by
+  InnoStream.
+- gRPC, HTTP/3 ownership, WebTransport, a SwiftNIO transport, and WebSocket
+  `permessage-deflate` are separate products or major design efforts.
+- Renaming configuration packs, reshaping `NetworkError`, or removing
+  provisional declarations requires a later major release.
+- Automatic replay of unsafe requests, automatic reuse of opaque body streams,
+  and a claim of complete RFC 9111 compliance are not minor-release goals.
+
+## Historical release context
+
+Everything below this heading is retained as design history for the 4.x and
+5.x lines. It is not the active 6.1 backlog.
+
 ## 5.0.0 Release Scope
 
 The 5.0.0 release converted the hardening backlog into an explicit
