@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import InnoNetwork
+import InnoNetworkNext
 import InnoNetworkAuthAWS
 import InnoNetworkDownload
 import InnoNetworkHLS
@@ -12,6 +13,12 @@ import InnoNetworkWebSocket
 #if compiler(>=6.4)
 import InnoNetworkHLSAudio
 #endif
+
+private let smokeNextConfiguration = NetworkClientConfiguration.secure(
+    baseURL: URL(string: "https://example.com")!
+)
+private let smokeNextFailureKind = NetworkFailureKind.transport
+private let smokeNextRecoveryDisposition = NetworkRecoveryDisposition.retry
 
 private let smokeHLSResolver = PlaylistResolver()
 private let smokeHLSSelector = VariantSelector()

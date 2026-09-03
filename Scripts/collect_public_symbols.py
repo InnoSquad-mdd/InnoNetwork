@@ -23,6 +23,7 @@ def main() -> None:
     symbolgraph_dir = max(symbolgraph_dirs, key=lambda path: path.stat().st_mtime)
     included_modules = {
         "InnoNetwork",
+        "InnoNetworkNext",
         "InnoNetworkAuthAWS",
         "InnoNetworkDownload",
         "InnoNetworkUpload",

@@ -9,18 +9,19 @@ DocC documentation is built and deployed to GitHub Pages via:
 The workflow builds and publishes DocC archives for all public products:
 
 1. `InnoNetwork`
-2. `InnoNetworkAuthAWS`
-3. `InnoNetworkDownload`
-4. `InnoNetworkUpload`
-5. `InnoNetworkHLS`
-6. `InnoNetworkHLSLive`
-7. `InnoNetworkHLSAVFoundation`
-8. `InnoNetworkHLSAudio`
-9. `InnoNetworkWebSocket`
-10. `InnoNetworkPersistentCache`
-11. `InnoNetworkOpenAPI`
-12. `InnoNetworkTrust`
-13. `InnoNetworkTestSupport`
+2. `InnoNetworkNext`
+3. `InnoNetworkAuthAWS`
+4. `InnoNetworkDownload`
+5. `InnoNetworkUpload`
+6. `InnoNetworkHLS`
+7. `InnoNetworkHLSLive`
+8. `InnoNetworkHLSAVFoundation`
+9. `InnoNetworkHLSAudio`
+10. `InnoNetworkWebSocket`
+11. `InnoNetworkPersistentCache`
+12. `InnoNetworkOpenAPI`
+13. `InnoNetworkTrust`
+14. `InnoNetworkTestSupport`
 
 The build uses GitHub's `xcode-27` image because the HLS-audio catalog links
 SDK declarations that do not exist in Xcode 26.
@@ -39,6 +40,7 @@ symbol-only fallback behavior.
 The workflow deploys a static site to GitHub Pages with module-specific entry points:
 
 - `/<repo>/InnoNetwork/documentation/innonetwork`
+- `/<repo>/InnoNetworkNext/documentation/innonetworknext`
 - `/<repo>/InnoNetworkAuthAWS/documentation/innonetworkauthaws`
 - `/<repo>/InnoNetworkDownload/documentation/innonetworkdownload`
 - `/<repo>/InnoNetworkUpload/documentation/innonetworkupload`
@@ -54,7 +56,7 @@ The workflow deploys a static site to GitHub Pages with module-specific entry po
 
 It also publishes a root index page linking to every module. Before upload, the
 workflow requires each module's transformed landing HTML and render-node JSON
-to exist and requires the root index to link to all thirteen routes. After Pages
+to exist and requires the root index to link to all fourteen routes. After Pages
 deployment, it requests the root and every module URL with bounded retries so a
 bad hosting base path or missing route fails the deployment job.
 

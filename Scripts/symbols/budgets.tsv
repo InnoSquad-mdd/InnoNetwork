@@ -7,9 +7,10 @@ hls.allowlist	797
 hls-live.allowlist	300
 hls-avfoundation.allowlist	705
 hls-audio.allowlist	65
+next.allowlist	45
 openapi.allowlist	36
 testsupport.allowlist	84
 trust.allowlist	17
 upload.allowlist	59
 websocket.allowlist	164
-TOTAL	3209
+TOTAL	3254

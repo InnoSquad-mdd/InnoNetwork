@@ -55,6 +55,7 @@ required_feature_docs=(
   "$repo_root/Sources/InnoNetwork/InnoNetwork.docc/Articles/CachingStrategies.md"
   "$repo_root/Sources/InnoNetwork/InnoNetwork.docc/Articles/UsingMacros.md"
   "$repo_root/Sources/InnoNetwork/InnoNetwork.docc/InnoNetwork.md"
+  "$repo_root/Sources/InnoNetworkNext/InnoNetworkNext.docc/InnoNetworkNext.md"
   "$repo_root/Sources/InnoNetworkOpenAPI/InnoNetworkOpenAPI.docc/InnoNetworkOpenAPI.md"
   "$repo_root/Sources/InnoNetworkDownload/InnoNetworkDownload.docc/Articles/BackgroundDownloads.md"
   "$repo_root/Sources/InnoNetworkDownload/InnoNetworkDownload.docc/Articles/Persistence.md"
@@ -189,6 +190,7 @@ expected_provisionally=(
 '`MultipartStreamingResponseDecoder` streaming multipart response parsing surface'
 '`InnoNetworkOpenAPI` companion product'
 '`InnoNetworkUpload` companion product and its public file-upload, progress, restoration, bounded response, event, and error symbols'
+'`InnoNetworkNext` preview product and its operation-first client, value-only'
 '`InnoNetworkHLS` companion product and its public playlist, variant selection, single-file download, offline package, event, and error symbols'
 '`InnoNetworkHLSLive` companion product and its public live reload, bounded DVR recording, snapshot, configuration, and error symbols'
 '`InnoNetworkHLSAVFoundation` companion product and its public download, offline readiness, playback configuration, timed metadata, playback metrics, playback health, interstitial and integrated-timeline observation, and FairPlay symbols'
@@ -405,6 +407,13 @@ expected_shipping_public_declarations=(
   UploadReceipt
   UploadState
   UploadTask
+  NetworkClientConfiguration
+  NetworkFailure
+  NetworkFailureKind
+  NetworkOperation
+  NetworkOperationEvent
+  NetworkRecoveryDisposition
+  OperationNetworkClient
   JSONWebSocketMessageCodec
   WebSocketCloseCode
   WebSocketCloseDisposition
@@ -495,6 +504,8 @@ validate_benchmark_docs() {
 
 validate_doc_smoke_coverage() {
   local doc_smoke="$repo_root/SmokeTests/InnoNetworkDocSmoke/main.swift"
+  require_contains 'import InnoNetworkNext' "$doc_smoke"
+  require_contains 'NetworkClientConfiguration.secure' "$doc_smoke"
   require_contains 'import InnoNetworkPersistentCache' "$doc_smoke"
   require_contains 'import InnoNetworkOpenAPI' "$doc_smoke"
   require_contains 'import InnoNetworkHLS' "$doc_smoke"
@@ -1008,6 +1019,7 @@ validate_public_surface_snapshot() {
   local snapshot="$public_symbols_dir/README.md"
   local entries=(
     'core.allowlist|`InnoNetwork` (core)'
+    'next.allowlist|`InnoNetworkNext`'
     'websocket.allowlist|`InnoNetworkWebSocket`'
     'download.allowlist|`InnoNetworkDownload`'
     'upload.allowlist|`InnoNetworkUpload`'
@@ -1702,6 +1714,17 @@ for symbol in "${expected_provisionally[@]}"; do
         "$repo_root/Sources/InnoNetworkUpload/UploadModels.swift"
       require_contains 'Background requests containing `Authorization`' \
         "$repo_root/Sources/InnoNetworkUpload/UploadConfiguration.swift"
+      continue
+      ;;
+    '`InnoNetworkNext` preview product and its operation-first client, value-only')
+      require_contains 'name: "InnoNetworkNext"' "$repo_root/Package.swift"
+      require_contains 'targets: ["InnoNetworkNext"]' "$repo_root/Package.swift"
+      require_contains 'public struct OperationNetworkClient' \
+        "$repo_root/Sources/InnoNetworkNext/OperationNetworkClient.swift"
+      require_contains 'public struct NetworkFailure: Error, Sendable, Equatable' \
+        "$repo_root/Sources/InnoNetworkNext/NetworkFailure.swift"
+      require_contains 'public struct NetworkOperation' \
+        "$repo_root/Sources/InnoNetworkNext/NetworkOperation.swift"
       continue
       ;;
     '`InnoNetworkHLS` companion product and its public playlist, variant selection, single-file download, offline package, event, and error symbols')

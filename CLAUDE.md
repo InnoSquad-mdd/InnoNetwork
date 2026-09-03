@@ -158,6 +158,12 @@ swift test --list-tests
 - `UploadModels.swift` — 진행률, lifecycle event, bounded response receipt
 - `UploadSessionDelegate.swift` — 진행률·응답·redirect delegate bridge
 
+### Sources/InnoNetworkNext
+- `OperationNetworkClient.swift` — 6.0 operation-first 실행 프리뷰와 5.x client adapter
+- `NetworkOperation.swift` — 취소 가능한 typed value handle과 bounded lifecycle event
+- `NetworkFailure.swift` — payload를 보존하지 않는 value-only 실패·복구 분류
+- `NetworkClientConfiguration.swift` — secure/production configuration façade와 migration bridge
+
 ### Sources/InnoNetworkHLS
 - `PlaylistResolver.swift` — bounded UTF-8 playlist fetch + parser
 - `VariantSelector.swift` — deterministic configurable variant selection

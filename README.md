@@ -19,7 +19,7 @@ concepts:
 2. `@APIDefinition` to derive and validate repetitive protocol witnesses
 3. `DefaultNetworkClient.request(_:)` to execute the typed request
 
-Everything else—including Download, Upload, raw or system-managed HLS, WebSocket,
+Everything else—including the 6.0 contract preview, Download, Upload, raw or system-managed HLS, WebSocket,
 persistent cache, OpenAPI, AWS signing, pinning, and test support—is an
 optional product selected only when that capability is required.
 
@@ -32,6 +32,7 @@ optional product selected only when that capability is required.
 | Product | Use When |
 | --- | --- |
 | `InnoNetwork` | Start here for named typed HTTP endpoints and the async request pipeline. Advanced policy remains opt-in. |
+| `InnoNetworkNext` | Preview the 6.0 operation, failure, and configuration contracts while reusing existing 5.x endpoints and clients. |
 | `InnoNetworkAuthAWS` | You need the optional AWS SigV4 reference signer. It is a single-shot signer, not an AWS SDK replacement. |
 | `InnoNetworkDownload` | You need foreground/background download lifecycle management with pause, resume, retry, persistence, and event streams. |
 | `InnoNetworkUpload` | You need file-backed foreground/background uploads with progress, restoration, bounded responses, and typed decoding. |
@@ -57,7 +58,7 @@ Start with only the `InnoNetwork` product and
 `DefaultNetworkClient(baseURL:)`. A named endpoint struct plus
 `@APIDefinition` needs no configuration pack or optional product. Add an
 advanced pack only when a concrete retry, auth, cache, transport, or
-observability requirement appears; add Download, Upload, WebSocket, persistent cache,
+observability requirement appears; add the 6.0 preview, Download, Upload, WebSocket, persistent cache,
 the HLS assembler, AVFoundation HLS, OpenAPI, AWS auth, or pinning products only
 for the capability named in the table above. If the application has only one
 or two uncomplicated requests and no shared policy, direct `URLSession` is

@@ -39,6 +39,10 @@ let package = Package(
             targets: ["InnoNetwork"]
         ),
         .library(
+            name: "InnoNetworkNext",
+            targets: ["InnoNetworkNext"]
+        ),
+        .library(
             name: "InnoNetworkAuthAWS",
             targets: ["InnoNetworkAuthAWS"]
         ),
@@ -181,6 +185,12 @@ let package = Package(
             swiftSettings: strictSettings
         ),
         .target(
+            name: "InnoNetworkNext",
+            dependencies: ["InnoNetwork"],
+            path: "Sources/InnoNetworkNext",
+            swiftSettings: strictSettings
+        ),
+        .target(
             name: "InnoNetworkAuthAWS",
             dependencies: [
                 "InnoNetwork",
@@ -308,6 +318,7 @@ let package = Package(
             name: "InnoNetworkDocSmoke",
             dependencies: [
                 "InnoNetwork",
+                "InnoNetworkNext",
                 "InnoNetworkAuthAWS",
                 "InnoNetworkDownload",
                 "InnoNetworkHLS",
@@ -368,6 +379,12 @@ let package = Package(
                 .product(name: "OpenAPIRuntime", package: "swift-openapi-runtime"),
             ],
             path: "Tests/InnoNetworkTests",
+            swiftSettings: strictSettings
+        ),
+        .testTarget(
+            name: "InnoNetworkNextTests",
+            dependencies: ["InnoNetwork", "InnoNetworkNext", "InnoNetworkTestSupport"],
+            path: "Tests/InnoNetworkNextTests",
             swiftSettings: strictSettings
         ),
         .testTarget(

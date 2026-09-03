@@ -247,6 +247,7 @@ bash Scripts/run_hls_quality_gates.sh --skip-build \
   --require-runtime-smoke --require-apple-tools
 rg -n "@unchecked Sendable" \
   Sources/InnoNetwork \
+  Sources/InnoNetworkNext \
   Sources/InnoNetworkMacros \
   Sources/InnoNetworkDownload \
   Sources/InnoNetworkUpload \

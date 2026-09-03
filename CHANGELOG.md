@@ -28,6 +28,9 @@ Versioning.
   semantic attributes without adding an exporter SDK dependency.
 - Experimental `RateLimitExecutionPolicy` adds cancellation-aware fixed-window
   request pacing around each transport attempt, including retries.
+- The provisional `InnoNetworkNext` product previews the 6.0 operation-first
+  client, value-only failure taxonomy, secure configuration façade, and 5.x
+  migration bridges while continuing to use the proven request pipeline.
 
 ## [5.1.0] - 2026-09-03
 

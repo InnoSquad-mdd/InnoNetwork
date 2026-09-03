@@ -9,9 +9,10 @@
 > 우선합니다.
 
 InnoNetwork 는 Apple 플랫폼을 위한 타입 안전한 Swift 네트워킹 패키지입니다. root runtime package 는
-열세 개의 공개 product 로 구성되어 있습니다.
+열네 개의 공개 product 로 구성되어 있습니다.
 
 - `InnoNetwork` — 요청/응답 API
+- `InnoNetworkNext` — 6.0 operation·failure·configuration 계약 프리뷰와 5.x 마이그레이션 브리지
 - `InnoNetworkAuthAWS` — body-aware AWS SigV4 reference signer
 - `InnoNetworkDownload` — 다운로드 생명주기 관리
 - `InnoNetworkUpload` — 파일 기반 foreground/background 업로드, 진행률, 복원, bounded 응답 디코딩
