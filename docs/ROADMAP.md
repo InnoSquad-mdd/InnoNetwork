@@ -56,12 +56,20 @@ value, not by implementation convenience.
    `Age`, and default-policy consumption remain separate decisions. The minor
    must not silently change existing caller-owned freshness windows or serve
    stale authenticated data outside an explicit policy.
-2. **Caller-owned streaming cursors.** Generalize the current
+2. **Managed-upload controls — implemented for the 6.1 candidate.** Pause and
+   resume are idempotent, background restoration persists user-paused intent,
+   and retry requires the original stable `Idempotency-Key` plus an explicitly
+   refreshed request and readable source file. A retry reuses only the logical
+   task identity and receives a new pre-registered event stream; it cannot
+   change destination or method and cannot restart cancelled or completed
+   uploads. This surface remains Provisionally Stable pending external adopter
+   evidence.
+3. **Caller-owned streaming cursors.** Generalize the current
    `StreamingResumePolicy.lastEventID` convenience so NDJSON and other
    line-oriented protocols can provide a validated cursor and reconnect
    header. Resume must remain bounded, reject buffering modes that can hide a
    cursor gap, and never turn an opaque partial body into an automatic retry.
-3. **Exporter-neutral request span lifecycle.** `NetworkContext` already
+4. **Exporter-neutral request span lifecycle.** `NetworkContext` already
    provides task-local trace and correlation values, and
    `TraceContextInterceptor` already propagates W3C headers. Evaluate a small
    adapter that relates request, retry, refresh, cache, and transfer events to
@@ -70,12 +78,6 @@ value, not by implementation convenience.
 
 ### Discovery only — not admitted yet
 
-- **Managed-upload controls.** Pause, explicit resume, retry, and durable
-  user-intent state would make `InnoNetworkUpload` useful for interactive
-  transfer UIs. Restoration now safely resumes Foundation-suspended tasks and
-  shutdown is bounded, but no external workspace consumer currently exercises
-  `UploadManager`; admit a public control surface only after a named adopter
-  establishes pause/relaunch semantics and idempotency requirements.
 - **Rate-limiter algorithm upgrades.** The 6.0 provisional policy is a shared,
   cancellation-aware fixed window. Token-bucket or sliding-window scheduling,
   fairness guarantees, server-quota feedback, and retry coordination remain

@@ -19,6 +19,12 @@ that cut and are not part of the 6.0 contract.
   decoding. Deadline failures expose only a coarse
   `NetworkOperationDeadlineStage`, preserve replay-safe recovery guidance, and
   keep coalesced callers' budgets independent.
+- `UploadManager.pause(_:)` and `resume(_:)` add idempotent interactive upload
+  controls. Background restoration distinguishes durable user-paused intent
+  from an ordinary Foundation suspension. `retry(_:with:fromFile:)` reuses the
+  logical task only for failed attempts, requires explicit refreshed inputs,
+  and verifies that the original application-owned `Idempotency-Key` is
+  unchanged.
 
 ### Added for 6.0.0
 

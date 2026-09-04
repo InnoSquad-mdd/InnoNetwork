@@ -5,6 +5,7 @@ import InnoNetwork
 public enum UploadState: String, Sendable, Equatable {
     case waiting
     case uploading
+    case paused
     case completed
     case failed
     case cancelled
@@ -14,7 +15,7 @@ public enum UploadState: String, Sendable, Equatable {
         switch self {
         case .completed, .failed, .cancelled:
             true
-        case .waiting, .uploading:
+        case .waiting, .uploading, .paused:
             false
         }
     }
@@ -157,10 +158,26 @@ public actor UploadTask: Identifiable {
         currentState = .uploading
     }
 
+    package func pause() {
+        guard currentState == .waiting || currentState == .uploading else { return }
+        currentState = .paused
+    }
+
     package func update(progress: UploadProgress) {
         guard !currentState.isTerminal else { return }
         currentProgress = progress
-        currentState = .uploading
+        if currentState != .paused {
+            currentState = .uploading
+        }
+    }
+
+    package func prepareForRetry() -> Bool {
+        guard currentState == .failed else { return false }
+        currentState = .waiting
+        currentProgress = .zero
+        currentReceipt = nil
+        currentError = nil
+        return true
     }
 
     package func complete(with receipt: UploadReceipt) {
@@ -183,7 +200,7 @@ public actor UploadTask: Identifiable {
             currentReceipt.map(UploadEvent.completed)
         case .failed, .cancelled:
             currentError.map(UploadEvent.failed)
-        case .waiting, .uploading:
+        case .waiting, .uploading, .paused:
             nil
         }
     }

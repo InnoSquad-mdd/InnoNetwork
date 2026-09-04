@@ -62,8 +62,10 @@ let restored = await manager.restoreTasks()
 Create only one live manager for a background session identifier. Call
 ``UploadManager/restoreTasks()`` before presenting transfer state after launch;
 starting a new background upload performs this restoration automatically.
-Foundation owns the transfer bytes, while `taskDescription` carries the opaque
-logical task identifier used for reattachment.
+Foundation owns the transfer bytes, while `taskDescription` carries a private
+versioned descriptor containing the opaque logical task identifier and active
+or user-paused intent used for reattachment. Legacy identifier-only tasks
+remain restorable as active work.
 An admitted restored task that is still suspended is resumed after its request
 passes the same URL and sensitive-header checks. Invalid restored tasks fail
 closed and are never resumed.
@@ -78,6 +80,40 @@ The source file must remain readable and unchanged until the background task
 finishes. An App Group session also requires the file itself to live in a
 container available to every participating process.
 
+### Pause, resume, and retry
+
+```swift
+await manager.pause(operation.task)
+await manager.resume(operation.task)
+```
+
+Pause and resume are idempotent no-ops for foreign, terminal, or mismatched
+state. A background upload persists the distinction between user-paused intent
+and Foundation's ordinary suspended state. Restoration therefore keeps a
+user-paused task in ``UploadState/paused`` while still resuming an active task
+that Foundation happened to suspend.
+
+A retry is allowed only after failure. Supply the request and file again so
+credentials, pre-signed URLs, and source availability are freshly validated:
+
+```swift
+var retryRequest = URLRequest(url: uploadURL)
+retryRequest.httpMethod = "POST"
+retryRequest.setValue(stableAttemptID, forHTTPHeaderField: "Idempotency-Key")
+
+let retry = try await manager.retry(
+    operation.task,
+    with: retryRequest,
+    fromFile: payloadFileURL
+)
+```
+
+The destination and method must match the original attempt. The original
+request must already contain the same non-empty application-owned
+`Idempotency-Key`; adding or rotating a key after a possibly applied attempt
+does not make replay safe. The manager reuses the logical ``UploadTask`` but
+returns a new pre-registered ``UploadOperation/events`` stream for the retry.
+
 ## Security contract
 
 - Only absolute HTTPS URLs without URL credentials, fragments, or dot-path
@@ -91,6 +127,9 @@ container available to every participating process.
 - Automatic cookie and URL credential storage is disabled for upload sessions.
 - Final response URLs are revalidated, although this cannot undo a redirect
   already followed by the system background daemon.
+- Retry inputs are not retained after an attempt. Only the original
+  idempotency key is kept privately for equality validation; callers must
+  provide the refreshed request and readable source file explicitly.
 - ``UploadManager/shutdown()`` cancels active work and waits for URLSession
   invalidation up to the package's bounded internal shutdown deadline. A
   missing callback is logged without leaving shutdown suspended forever.

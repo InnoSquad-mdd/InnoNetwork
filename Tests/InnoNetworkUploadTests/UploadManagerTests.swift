@@ -133,6 +133,34 @@ struct UploadManagerTests {
         await manager.shutdown()
     }
 
+    @Test("A user-paused background upload stays paused across restoration")
+    func restoresDurablePausedIntent() async throws {
+        var request = URLRequest(url: URL(string: "https://upload.example.test/files")!)
+        request.httpMethod = "PUT"
+        let systemTask = StubUploadURLTask(
+            taskIdentifier: 45,
+            request: request,
+            taskDescription: UploadTaskDescription.paused(id: "paused-upload"),
+            state: .running,
+            bytesSent: 12,
+            expectedBytes: 100
+        )
+        let configuration = UploadConfiguration.background(sessionIdentifier: "test.paused.upload")
+        let (manager, _, _) = makeUploadHarness(configuration: configuration, tasks: [systemTask])
+
+        let restored = await manager.restoreTasks()
+        let task = try #require(restored.first)
+
+        #expect(task.id == "paused-upload")
+        #expect(await task.state == .paused)
+        #expect(systemTask.state == .suspended)
+        #expect(systemTask.suspendCount == 1)
+        #expect(systemTask.resumeCount == 0)
+        #expect(UploadTaskDescription.decode(systemTask.taskDescription).intent == .paused)
+
+        await manager.shutdown()
+    }
+
     @Test("An invalid restored upload fails closed instead of resuming")
     func rejectsInvalidRestoredTask() async throws {
         var request = URLRequest(url: URL(string: "https://upload.example.test/files")!)
@@ -265,6 +293,189 @@ struct UploadManagerTests {
         #expect(await terminalFailures.value == [.cancelled])
         #expect(await operation.task.state == .cancelled)
         #expect(systemTask.cancelCount == 1)
+
+        await manager.shutdown()
+    }
+
+    @Test("Pause and resume are idempotent and publish observable state")
+    func pauseAndResumeAreIdempotent() async throws {
+        let (manager, session, _) = makeUploadHarness()
+        let file = try makeTemporaryUploadFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        var request = URLRequest(url: URL(string: "https://upload.example.test/files")!)
+        request.httpMethod = "PUT"
+        let operation = try await manager.upload(request, fromFile: file)
+        let systemTask = try #require(session.latestTask)
+        let stateEvents = Task { () -> [UploadState] in
+            var states: [UploadState] = []
+            for await event in operation.events {
+                switch event {
+                case .stateChanged(let state): states.append(state)
+                case .failed, .completed: return states
+                case .progress: continue
+                }
+            }
+            return states
+        }
+
+        await manager.pause(operation.task)
+        await manager.pause(operation.task)
+
+        #expect(await operation.task.state == .paused)
+        #expect(systemTask.state == .suspended)
+        #expect(systemTask.suspendCount == 1)
+        #expect(UploadTaskDescription.decode(systemTask.taskDescription).intent == .paused)
+
+        await manager.resume(operation.task)
+        await manager.resume(operation.task)
+
+        #expect(await operation.task.state == .uploading)
+        #expect(systemTask.state == .running)
+        #expect(systemTask.resumeCount == 2)
+        #expect(UploadTaskDescription.decode(systemTask.taskDescription).intent == .active)
+
+        await manager.cancel(operation.task)
+        #expect(await stateEvents.value == [.uploading, .paused, .uploading])
+
+        await manager.shutdown()
+    }
+
+    @Test("Retry reuses the logical task with an explicit stable idempotency key")
+    func retriesFailedUploadWithExplicitInputs() async throws {
+        let (manager, session, channel) = makeUploadHarness()
+        let file = try makeTemporaryUploadFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        var request = URLRequest(url: URL(string: "https://upload.example.test/files")!)
+        request.httpMethod = "POST"
+        request.setValue("asset-attempt-1", forHTTPHeaderField: "Idempotency-Key")
+        let operation = try await manager.upload(request, fromFile: file)
+        let firstSystemTask = try #require(session.latestTask)
+        let firstFailure = Task { () -> UploadError? in
+            for await event in operation.events {
+                if case .failed(let error) = event { return error }
+            }
+            return nil
+        }
+
+        channel.send(
+            .completed(
+                taskIdentifier: firstSystemTask.taskIdentifier,
+                taskDescription: firstSystemTask.taskDescription,
+                originalRequest: request,
+                currentRequest: request,
+                response: nil,
+                error: SendableUnderlyingError(URLError(.networkConnectionLost))
+            )
+        )
+        let failure = await firstFailure.value
+        guard case .network = failure else {
+            Issue.record("Expected the first attempt to fail with a network error")
+            await manager.shutdown()
+            return
+        }
+
+        let retry = try await manager.retry(operation.task, with: request, fromFile: file)
+        let secondSystemTask = try #require(session.latestTask)
+        #expect(retry.task === operation.task)
+        #expect(secondSystemTask.taskIdentifier != firstSystemTask.taskIdentifier)
+        #expect(session.taskCount == 2)
+        #expect(await retry.task.state == .uploading)
+        #expect(UploadTaskDescription.decode(secondSystemTask.taskDescription).intent == .active)
+
+        let retryCompletion = Task { () -> UploadReceipt? in
+            for await event in retry.events {
+                if case .completed(let receipt) = event { return receipt }
+                if case .failed = event { return nil }
+            }
+            return nil
+        }
+        let response = try #require(
+            HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)
+        )
+        channel.send(
+            .completed(
+                taskIdentifier: secondSystemTask.taskIdentifier,
+                taskDescription: secondSystemTask.taskDescription,
+                originalRequest: request,
+                currentRequest: request,
+                response: response,
+                error: nil
+            )
+        )
+
+        #expect(await retryCompletion.value?.response.statusCode == 201)
+        #expect(await retry.task.state == .completed)
+
+        await manager.shutdown()
+    }
+
+    @Test("Retry rejects failed uploads without a stable idempotency key")
+    func retryRequiresStableIdempotencyKey() async throws {
+        let (manager, session, channel) = makeUploadHarness()
+        let file = try makeTemporaryUploadFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        var request = URLRequest(url: URL(string: "https://upload.example.test/files")!)
+        request.httpMethod = "POST"
+        let operation = try await manager.upload(request, fromFile: file)
+        let systemTask = try #require(session.latestTask)
+        let terminal = Task {
+            for await event in operation.events {
+                if case .failed = event { return }
+            }
+        }
+        channel.send(
+            .completed(
+                taskIdentifier: systemTask.taskIdentifier,
+                taskDescription: systemTask.taskDescription,
+                originalRequest: request,
+                currentRequest: request,
+                response: nil,
+                error: SendableUnderlyingError(URLError(.timedOut))
+            )
+        )
+        await terminal.value
+
+        await #expect(throws: UploadError.self) {
+            _ = try await manager.retry(operation.task, with: request, fromFile: file)
+        }
+        #expect(session.taskCount == 1)
+        #expect(await operation.task.state == .failed)
+
+        await manager.shutdown()
+    }
+
+    @Test("Retry rejects a different idempotency key from the original attempt")
+    func retryRequiresOriginalIdempotencyKey() async throws {
+        let (manager, session, channel) = makeUploadHarness()
+        let file = try makeTemporaryUploadFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        var request = URLRequest(url: URL(string: "https://upload.example.test/files")!)
+        request.httpMethod = "POST"
+        request.setValue("original-key", forHTTPHeaderField: "Idempotency-Key")
+        let operation = try await manager.upload(request, fromFile: file)
+        let systemTask = try #require(session.latestTask)
+        let terminal = Task {
+            for await event in operation.events {
+                if case .failed = event { return }
+            }
+        }
+        channel.send(
+            .completed(
+                taskIdentifier: systemTask.taskIdentifier,
+                taskDescription: systemTask.taskDescription,
+                originalRequest: request,
+                currentRequest: request,
+                response: nil,
+                error: SendableUnderlyingError(URLError(.timedOut))
+            )
+        )
+        await terminal.value
+
+        request.setValue("replacement-key", forHTTPHeaderField: "Idempotency-Key")
+        await #expect(throws: UploadError.self) {
+            _ = try await manager.retry(operation.task, with: request, fromFile: file)
+        }
+        #expect(session.taskCount == 1)
 
         await manager.shutdown()
     }

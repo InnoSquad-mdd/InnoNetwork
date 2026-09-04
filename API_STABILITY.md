@@ -170,6 +170,8 @@ acquiring a 6.x Stable compatibility promise.
 - `MultipartStreamingResponseDecoder` streaming multipart response parsing surface
 - `InnoNetworkOpenAPI` companion product
 - `InnoNetworkUpload` companion product and its public file-upload, progress, restoration, bounded response, event, and error symbols
+  plus the additive 6.1 pause/resume, durable paused-intent, and
+  idempotency-key-guarded retry controls
 - operation-first `NetworkClientConfiguration`, `OperationNetworkClient`,
   `NetworkOperation`, `NetworkOperationReplaySafety`, and value-only
   `NetworkFailure` root-module contracts, including the additive 6.1
@@ -454,8 +456,8 @@ below keeps the high-level compatibility classification readable. Historical
 5.x HLS sections document the migration source but are no longer included in
 the current machine-checked inventory.
 
-The machine-checked snapshot currently partitions all 1,424 declarations into
-306 Stable consumer declarations, 1,085 Provisionally Stable consumer
+The machine-checked snapshot currently partitions all 1,428 declarations into
+306 Stable consumer declarations, 1,089 Provisionally Stable consumer
 declarations, and 33 opt-in SPI declarations. The three sets are disjoint and
 exhaustive. `Scripts/symbols/stable-rules.tsv` maps the Stable ledger to symbol
 paths, while the compiler-authored SPI flag is snapshotted in

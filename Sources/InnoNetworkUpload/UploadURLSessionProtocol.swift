@@ -12,6 +12,7 @@ package protocol UploadURLTask: AnyObject, Sendable {
     var countOfBytesExpectedToSend: Int64 { get }
 
     func resume()
+    func suspend()
     func cancel()
 }
 

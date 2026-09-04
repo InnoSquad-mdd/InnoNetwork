@@ -24,6 +24,7 @@ InnoNetworkUpload	swift.enum.case	UploadEvent.stateChanged(_:)
 InnoNetworkUpload	swift.enum.case	UploadState.cancelled
 InnoNetworkUpload	swift.enum.case	UploadState.completed
 InnoNetworkUpload	swift.enum.case	UploadState.failed
+InnoNetworkUpload	swift.enum.case	UploadState.paused
 InnoNetworkUpload	swift.enum.case	UploadState.uploading
 InnoNetworkUpload	swift.enum.case	UploadState.waiting
 InnoNetworkUpload	swift.init	UploadManager.init(configuration:)
@@ -32,7 +33,10 @@ InnoNetworkUpload	swift.method	UploadManager.allTasks()
 InnoNetworkUpload	swift.method	UploadManager.cancel(_:)
 InnoNetworkUpload	swift.method	UploadManager.events(for:)
 InnoNetworkUpload	swift.method	UploadManager.handleBackgroundEvents(completion:)
+InnoNetworkUpload	swift.method	UploadManager.pause(_:)
 InnoNetworkUpload	swift.method	UploadManager.restoreTasks()
+InnoNetworkUpload	swift.method	UploadManager.resume(_:)
+InnoNetworkUpload	swift.method	UploadManager.retry(_:with:fromFile:)
 InnoNetworkUpload	swift.method	UploadManager.shutdown()
 InnoNetworkUpload	swift.method	UploadManager.task(withId:)
 InnoNetworkUpload	swift.method	UploadManager.upload(_:fromFile:)

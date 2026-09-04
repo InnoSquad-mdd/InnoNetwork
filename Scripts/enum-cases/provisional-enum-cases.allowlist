@@ -80,6 +80,13 @@ TrustFailureReason.publicKeyExtractionFailed
 TrustFailureReason.systemTrustEvaluationFailed
 TrustFailureReason.unsupportedAuthenticationMethod
 
+UploadState.cancelled
+UploadState.completed
+UploadState.failed
+UploadState.paused
+UploadState.uploading
+UploadState.waiting
+
 WebSocketError.cancelled
 WebSocketError.connectionFailed
 WebSocketError.disconnected

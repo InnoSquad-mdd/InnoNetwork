@@ -28,11 +28,13 @@ public actor UploadManager {
     private var logicalIDsBySystemIdentifier: [Int: String] = [:]
     private var responseBodies: [Int: Data] = [:]
     private var forcedFailures: [Int: UploadError] = [:]
+    private var idempotencyKeys: [String: String] = [:]
     private var pendingDelegateEvents: [Int: [UploadDelegateEvent]] = [:]
     private var restorationCompleted = false
     private var isRestoring = false
     private var restorationWaiters: [CheckedContinuation<[UploadTask], Never>] = []
     private var restoredTaskIDs: Set<String> = []
+    private var retryingTaskIDs: Set<String> = []
     private var isShutdown = false
     private let ownsBackgroundSessionIdentifier: Bool
 
@@ -134,9 +136,12 @@ public actor UploadManager {
         let task = UploadTask(requestURL: url, method: method)
         let stream = await eventHub.stream(for: task.id)
         let urlTask = session.makeUploadTask(with: request, fromFile: fileURL)
-        urlTask.taskDescription = task.id
+        urlTask.taskDescription = UploadTaskDescription.active(id: task.id)
 
         tasks[task.id] = task
+        if let idempotencyKey = Self.idempotencyKey(in: request) {
+            idempotencyKeys[task.id] = idempotencyKey
+        }
         uploadTasks[task.id] = urlTask
         logicalIDsBySystemIdentifier[urlTask.taskIdentifier] = task.id
         responseBodies[urlTask.taskIdentifier] = Data()
@@ -170,14 +175,21 @@ public actor UploadManager {
                 continue
             }
 
-            let id = uniqueTaskID(urlTask.taskDescription)
-            urlTask.taskDescription = id
+            let descriptor = UploadTaskDescription.decode(urlTask.taskDescription)
+            let id = uniqueTaskID(descriptor.id)
+            urlTask.taskDescription =
+                descriptor.intent == .paused
+                ? UploadTaskDescription.paused(id: id)
+                : UploadTaskDescription.active(id: id)
             let progress = UploadProgress(
                 bytesSent: 0,
                 totalBytesSent: urlTask.countOfBytesSent,
                 totalBytesExpectedToSend: urlTask.countOfBytesExpectedToSend
             )
-            let state: UploadState = urlTask.state == .suspended ? .waiting : .uploading
+            let state: UploadState =
+                descriptor.intent == .paused
+                ? .paused
+                : (urlTask.state == .suspended ? .waiting : .uploading)
             let task =
                 tasks[id]
                 ?? UploadTask(
@@ -196,6 +208,9 @@ public actor UploadManager {
             }
 
             tasks[id] = task
+            if let idempotencyKey = Self.idempotencyKey(in: request) {
+                idempotencyKeys[id] = idempotencyKey
+            }
             uploadTasks[id] = urlTask
             logicalIDsBySystemIdentifier[urlTask.taskIdentifier] = id
             responseBodies[urlTask.taskIdentifier] = responseBodies[urlTask.taskIdentifier] ?? Data()
@@ -214,7 +229,11 @@ public actor UploadManager {
             }
 
             guard !(await task.state.isTerminal) else { continue }
-            if urlTask.state == .suspended {
+            if descriptor.intent == .paused {
+                if urlTask.state == .running {
+                    urlTask.suspend()
+                }
+            } else if urlTask.state == .suspended {
                 await task.begin()
                 await eventHub.publish(.stateChanged(.uploading), for: id)
                 urlTask.resume()
@@ -259,6 +278,95 @@ public actor UploadManager {
         return stream
     }
 
+    /// Pauses an upload owned by this manager.
+    ///
+    /// Background tasks persist this user intent in `taskDescription`, so a
+    /// later manager restoration keeps the task paused instead of interpreting
+    /// Foundation's suspended state as a request to resume automatically.
+    public func pause(_ task: UploadTask) async {
+        guard tasks[task.id] === task, let urlTask = uploadTasks[task.id] else { return }
+        let state = await task.state
+        guard state == .waiting || state == .uploading else { return }
+        guard UploadTaskDescription.decode(urlTask.taskDescription).intent != .paused else { return }
+
+        urlTask.taskDescription = UploadTaskDescription.paused(id: task.id)
+        urlTask.suspend()
+        await task.pause()
+        await eventHub.publish(.stateChanged(.paused), for: task.id)
+    }
+
+    /// Resumes a user-paused upload owned by this manager.
+    public func resume(_ task: UploadTask) async {
+        guard tasks[task.id] === task, let urlTask = uploadTasks[task.id] else { return }
+        guard await task.state == .paused else { return }
+        guard UploadTaskDescription.decode(urlTask.taskDescription).intent == .paused else { return }
+
+        // Persist active intent before resuming. If the process exits between
+        // these two calls, restoration will complete the requested resume.
+        urlTask.taskDescription = UploadTaskDescription.active(id: task.id)
+        await task.begin()
+        await eventHub.publish(.stateChanged(.uploading), for: task.id)
+        urlTask.resume()
+    }
+
+    /// Restarts a failed logical upload with an explicitly refreshed request
+    /// and source file.
+    ///
+    /// The destination and method must match the original task, and the request
+    /// must carry a non-empty application-owned `Idempotency-Key`. InnoNetwork
+    /// does not retain credentials, request headers, or source-file URLs after
+    /// an attempt, so callers must provide every retry input again.
+    public func retry(
+        _ task: UploadTask,
+        with request: URLRequest,
+        fromFile fileURL: URL
+    ) async throws(UploadError) -> UploadOperation {
+        guard !isShutdown else { throw .managerShutdown }
+        guard tasks[task.id] === task else {
+            throw .invalidRequest("The upload task is not owned by this manager")
+        }
+        guard await task.state == .failed else {
+            throw .invalidRequest("Only failed uploads can be retried")
+        }
+        guard !retryingTaskIDs.contains(task.id) else {
+            throw .invalidRequest("An upload retry is already being prepared")
+        }
+        retryingTaskIDs.insert(task.id)
+        defer { retryingTaskIDs.remove(task.id) }
+
+        try Self.validate(request: request, fileURL: fileURL, configuration: configuration)
+        guard let url = request.url,
+            url == task.requestURL,
+            (request.httpMethod ?? "POST").uppercased() == task.method.uppercased()
+        else {
+            throw .invalidRequest("Retry destination and HTTP method must match the original upload")
+        }
+        guard let idempotencyKey = Self.idempotencyKey(in: request) else {
+            throw .invalidRequest("Retry requires a stable application-owned Idempotency-Key header")
+        }
+        guard let originalIdempotencyKey = idempotencyKeys[task.id] else {
+            throw .invalidRequest("The original upload did not carry an Idempotency-Key")
+        }
+        guard idempotencyKey == originalIdempotencyKey else {
+            throw .invalidRequest("Retry must reuse the original upload's Idempotency-Key")
+        }
+
+        let stream = await eventHub.stream(for: task.id)
+        guard await task.prepareForRetry() else {
+            throw .invalidRequest("Only one retry can restart a failed upload")
+        }
+        let urlTask = session.makeUploadTask(with: request, fromFile: fileURL)
+        urlTask.taskDescription = UploadTaskDescription.active(id: task.id)
+        uploadTasks[task.id] = urlTask
+        logicalIDsBySystemIdentifier[urlTask.taskIdentifier] = task.id
+        responseBodies[urlTask.taskIdentifier] = Data()
+
+        await task.begin()
+        await eventHub.publish(.stateChanged(.uploading), for: task.id)
+        urlTask.resume()
+        return UploadOperation(task: task, events: stream)
+    }
+
     /// Cancels an active upload. The terminal cancellation event is published
     /// before this method returns.
     public func cancel(_ task: UploadTask) async {
@@ -294,6 +402,8 @@ public actor UploadManager {
         logicalIDsBySystemIdentifier.removeAll()
         responseBodies.removeAll()
         forcedFailures.removeAll()
+        idempotencyKeys.removeAll()
+        retryingTaskIDs.removeAll()
         session.invalidateAndCancel()
         let invalidated = await invalidationBarrier.wait(timeout: invalidationTimeout)
         if !invalidated {
@@ -361,7 +471,7 @@ public actor UploadManager {
                     pendingDelegateEvents[identifier, default: []].append(event)
                     return
                 }
-                let id = uniqueTaskID(taskDescription)
+                let id = uniqueTaskID(UploadTaskDescription.decode(taskDescription).id)
                 let adopted = UploadTask(
                     id: id,
                     requestURL: url,
@@ -369,6 +479,9 @@ public actor UploadManager {
                     state: .uploading
                 )
                 tasks[id] = adopted
+                if let idempotencyKey = Self.idempotencyKey(in: request) {
+                    idempotencyKeys[id] = idempotencyKey
+                }
                 logicalIDsBySystemIdentifier[identifier] = id
                 responseBodies[identifier] = responseBodies[identifier] ?? Data()
                 restoredTaskIDs.insert(id)
@@ -531,6 +644,17 @@ public actor UploadManager {
         } catch {
             return false
         }
+    }
+
+    private static func idempotencyKey(in request: URLRequest) -> String? {
+        guard
+            let value = request.value(forHTTPHeaderField: "Idempotency-Key")?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            !value.isEmpty
+        else {
+            return nil
+        }
+        return value
     }
 
     private static func claimBackgroundSessionIdentifier(

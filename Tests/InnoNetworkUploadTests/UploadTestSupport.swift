@@ -12,6 +12,7 @@ final class StubUploadURLTask: UploadURLTask, @unchecked Sendable {
         var bytesSent: Int64
         var expectedBytes: Int64
         var resumeCount: Int
+        var suspendCount: Int
         var cancelCount: Int
     }
 
@@ -40,6 +41,7 @@ final class StubUploadURLTask: UploadURLTask, @unchecked Sendable {
                 bytesSent: bytesSent,
                 expectedBytes: expectedBytes,
                 resumeCount: 0,
+                suspendCount: 0,
                 cancelCount: 0
             )
         )
@@ -55,12 +57,20 @@ final class StubUploadURLTask: UploadURLTask, @unchecked Sendable {
     var countOfBytesSent: Int64 { storage.withLock { $0.bytesSent } }
     var countOfBytesExpectedToSend: Int64 { storage.withLock { $0.expectedBytes } }
     var resumeCount: Int { storage.withLock { $0.resumeCount } }
+    var suspendCount: Int { storage.withLock { $0.suspendCount } }
     var cancelCount: Int { storage.withLock { $0.cancelCount } }
 
     func resume() {
         storage.withLock {
             $0.resumeCount += 1
             $0.state = .running
+        }
+    }
+
+    func suspend() {
+        storage.withLock {
+            $0.suspendCount += 1
+            $0.state = .suspended
         }
     }
 
@@ -101,6 +111,10 @@ final class StubUploadURLSession: UploadURLSession, @unchecked Sendable {
 
     var latestTask: StubUploadURLTask? {
         storage.withLock { $0.tasks.last }
+    }
+
+    var taskCount: Int {
+        storage.withLock { $0.tasks.count }
     }
 
     var invalidationCallCount: Int {
