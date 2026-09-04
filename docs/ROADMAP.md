@@ -33,7 +33,16 @@ value, not by implementation convenience.
    merge a `304` response through the same bounded, authenticated, and
    observable path as `If-None-Match`. Cover malformed dates, dual validators,
    unsafe methods, coalesced reads, and persistent-cache reopen behavior.
-2. **Promote only proven remaining provisional surfaces.** Use each surface's
+2. **Add an end-to-end operation deadline.** The existing request and resource
+   timeouts bound individual URLSession work, but reachability admission,
+   authentication refresh, retry backoff, and repeated transport attempts can
+   outlive one caller-owned latency budget. Evaluate an additive deadline that
+   propagates a monotonic remaining budget through every stage, cancels pending
+   waits, and reports which stage exhausted it without exposing request data.
+   Cover already-expired input, retry and `Retry-After`, refresh single-flight,
+   reachability waits, coalesced callers with different budgets, streaming
+   handoff, and cancellation races.
+3. **Promote only proven remaining provisional surfaces.** Use each surface's
    relevant app and companion-package consumers to identify declarations used
    without wrappers or SPI. `@APIDefinition` is the deliberate 6.0 promotion;
    other surfaces remain evidence-gated. Promotion is a compatibility promise,
@@ -57,6 +66,21 @@ value, not by implementation convenience.
    adapter that relates request, retry, refresh, cache, and transfer events to
    parent/child span identities without importing an observability vendor SDK
    or exposing request/response bodies.
+
+### Discovery only — not admitted yet
+
+- **Managed-upload controls.** Pause, explicit resume, retry, and durable
+  user-intent state would make `InnoNetworkUpload` useful for interactive
+  transfer UIs. Restoration now safely resumes Foundation-suspended tasks and
+  shutdown is bounded, but no external workspace consumer currently exercises
+  `UploadManager`; admit a public control surface only after a named adopter
+  establishes pause/relaunch semantics and idempotency requirements.
+- **Rate-limiter algorithm upgrades.** The 6.0 provisional policy is a shared,
+  cancellation-aware fixed window. Token-bucket or sliding-window scheduling,
+  fairness guarantees, server-quota feedback, and retry coordination remain
+  possible 6.1 experiments, but no external workspace consumer currently uses
+  `RateLimitExecutionPolicy`. Keep the algorithm provisional until a real
+  quota model and deterministic fixture justify the additional API.
 
 ### Admission and release gates
 

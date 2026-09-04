@@ -215,7 +215,7 @@ expected_provisionally=(
 '`MultipartUploadStrategy.threshold(bytes:)`'
 '`PersistentResponseCacheStatistics.hitCount` / `missCount` / `evictionCount`'
 '`DownloadTask.generation` / `attempt` observation accessors'
-'`NetworkErrorCode` SSOT enum (4.0.0 baseline) — owns every `NetworkError.errorCode` raw value; new cases may be added in 5.x minors when `NetworkError` itself adds a case'
+'`NetworkErrorCode` SSOT enum (4.0.0 baseline) — owns every `NetworkError.errorCode` raw value; new cases may be added in 6.x minors when `NetworkError` itself adds a case'
 '`NetworkError.reachability(_:_:_:)` and `ReachabilityReason` (4.0.0 baseline)'
 '`MultipartUploadStrategy.inMemory(maxBytes:)` (4.0.0 baseline) — the explicit cap and encoder accumulator guard are part of the contract'
 '`DownloadTransferPack.init(...taskInactivityTimeout:...)` and `DownloadTask.lastProgressAt` (4.0.0 behavior carried into the 5.0 pack contract)'
@@ -1760,7 +1760,7 @@ for symbol in "${expected_provisionally[@]}"; do
         "$repo_root/Sources/InnoNetworkDownload/DownloadTask.swift"
       continue
       ;;
-    '`NetworkErrorCode` SSOT enum (4.0.0 baseline) — owns every `NetworkError.errorCode` raw value; new cases may be added in 5.x minors when `NetworkError` itself adds a case')
+    '`NetworkErrorCode` SSOT enum (4.0.0 baseline) — owns every `NetworkError.errorCode` raw value; new cases may be added in 6.x minors when `NetworkError` itself adds a case')
       require_contains 'public enum NetworkErrorCode' \
         "$repo_root/Sources/InnoNetwork/NetworkErrorCode.swift"
       require_contains 'return NetworkErrorCode.reachability.rawValue' \

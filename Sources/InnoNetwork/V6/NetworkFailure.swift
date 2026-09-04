@@ -1,6 +1,6 @@
 import Foundation
 
-/// Stable high-level classification for operation failures.
+/// High-level classification for operation failures.
 public enum NetworkFailureKind: String, Sendable, Equatable {
     case configuration
     case transport
