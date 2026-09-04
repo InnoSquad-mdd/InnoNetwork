@@ -244,6 +244,7 @@ package struct RetryCoordinator {
         var nextRetryIndex = retryIndex + 1
         var nextSnapshot = snapshot
         if policy.waitsForNetworkChanges, let monitor = networkMonitor {
+            NetworkOperationDeadlineContext.mark(.connectivityWait)
             let newSnapshot = await monitor.waitForChange(
                 from: nextSnapshot,
                 timeout: policy.networkChangeTimeout
@@ -259,6 +260,7 @@ package struct RetryCoordinator {
         }
 
         if delay > 0 {
+            NetworkOperationDeadlineContext.mark(.retryDelay)
             try await clock.sleep(for: .seconds(delay))
         }
 

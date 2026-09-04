@@ -32,6 +32,7 @@ public struct RateLimitExecutionPolicy: RequestExecutionPolicy {
         context: RequestExecutionContext,
         next: RequestExecutionNext
     ) async throws -> Response {
+        NetworkOperationDeadlineContext.mark(.policyAdmission)
         try await limiter.acquire()
         return try await next.execute()
     }

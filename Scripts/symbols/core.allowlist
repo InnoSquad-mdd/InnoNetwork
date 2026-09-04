@@ -24,6 +24,7 @@ InnoNetwork	swift.enum	NetworkErrorCode
 InnoNetwork	swift.enum	NetworkEvent
 InnoNetwork	swift.enum	NetworkFailureKind
 InnoNetwork	swift.enum	NetworkInterfaceType
+InnoNetwork	swift.enum	NetworkOperationDeadlineStage
 InnoNetwork	swift.enum	NetworkOperationEvent
 InnoNetwork	swift.enum	NetworkOperationReplaySafety
 InnoNetwork	swift.enum	NetworkReachabilityStatus
@@ -148,6 +149,15 @@ InnoNetwork	swift.enum.case	NetworkInterfaceType.loopback
 InnoNetwork	swift.enum.case	NetworkInterfaceType.other
 InnoNetwork	swift.enum.case	NetworkInterfaceType.wifi
 InnoNetwork	swift.enum.case	NetworkInterfaceType.wiredEthernet
+InnoNetwork	swift.enum.case	NetworkOperationDeadlineStage.authentication
+InnoNetwork	swift.enum.case	NetworkOperationDeadlineStage.cacheLookup
+InnoNetwork	swift.enum.case	NetworkOperationDeadlineStage.connectivityWait
+InnoNetwork	swift.enum.case	NetworkOperationDeadlineStage.policyAdmission
+InnoNetwork	swift.enum.case	NetworkOperationDeadlineStage.requestPreparation
+InnoNetwork	swift.enum.case	NetworkOperationDeadlineStage.responseDecoding
+InnoNetwork	swift.enum.case	NetworkOperationDeadlineStage.retryDelay
+InnoNetwork	swift.enum.case	NetworkOperationDeadlineStage.transport
+InnoNetwork	swift.enum.case	NetworkOperationDeadlineStage.unknown
 InnoNetwork	swift.enum.case	NetworkOperationEvent.failed(id:failure:)
 InnoNetwork	swift.enum.case	NetworkOperationEvent.started(id:)
 InnoNetwork	swift.enum.case	NetworkOperationEvent.succeeded(id:)
@@ -288,13 +298,15 @@ InnoNetwork	swift.init	MultipartStreamingResponseDecoder.init(boundary:)
 InnoNetwork	swift.init	NetworkClientConfiguration.init(migratingV5:)
 InnoNetwork	swift.init	NetworkContext.init(traceID:correlationID:baggage:)
 InnoNetwork	swift.init	NetworkErrorCode.init(rawValue:)
-InnoNetwork	swift.init	NetworkFailure.init(kind:code:statusCode:recovery:)
+InnoNetwork	swift.init	NetworkFailure.init(kind:code:statusCode:recovery:deadlineStage:)
 InnoNetwork	swift.init	NetworkFailure.init(migratingV5:)
 InnoNetwork	swift.init	NetworkFailureKind.init(rawValue:)
 InnoNetwork	swift.init	NetworkInterfaceType.init(rawValue:)
-InnoNetwork	swift.init	NetworkOperationReplaySafety.init(rawValue:)
 InnoNetwork	swift.init	NetworkLoggingOptions.init(includeRequestBody:includeResponseBody:includeCookies:redactSensitiveData:releaseLogging:)
 InnoNetwork	swift.init	NetworkMonitor.init()
+InnoNetwork	swift.init	NetworkOperationDeadline.init(after:)
+InnoNetwork	swift.init	NetworkOperationDeadlineStage.init(rawValue:)
+InnoNetwork	swift.init	NetworkOperationReplaySafety.init(rawValue:)
 InnoNetwork	swift.init	NetworkRecoveryDisposition.init(rawValue:)
 InnoNetwork	swift.init	NetworkRequestContext.init(requestID:retryIndex:metricsReporter:trustPolicy:eventObservers:redirectPolicy:allowsInsecureHTTP:)
 InnoNetwork	swift.init	NetworkRetryExecutor.init()
@@ -422,7 +434,9 @@ InnoNetwork	swift.method	NetworkRetryExecutor.execute(retryPolicy:networkMonitor
 InnoNetwork	swift.method	OSLogNetworkEventObserver.handle(_:)
 InnoNetwork	swift.method	OperationNetworkClient.shutdown()
 InnoNetwork	swift.method	OperationNetworkClient.start(_:)
+InnoNetwork	swift.method	OperationNetworkClient.start(_:deadline:)
 InnoNetwork	swift.method	OperationNetworkClient.start(_:replaySafety:)
+InnoNetwork	swift.method	OperationNetworkClient.start(_:replaySafety:deadline:)
 InnoNetwork	swift.method	RateLimitExecutionPolicy.execute(input:context:next:)
 InnoNetwork	swift.method	ReachabilityCheckExecutionPolicy.execute(input:context:next:)
 InnoNetwork	swift.method	RedirectPolicy.redirect(request:response:originalRequest:)
@@ -581,6 +595,7 @@ InnoNetwork	swift.property	NetworkError.isRetriableHint
 InnoNetwork	swift.property	NetworkError.isUserVisible
 InnoNetwork	swift.property	NetworkError.response
 InnoNetwork	swift.property	NetworkFailure.code
+InnoNetwork	swift.property	NetworkFailure.deadlineStage
 InnoNetwork	swift.property	NetworkFailure.errorDescription
 InnoNetwork	swift.property	NetworkFailure.kind
 InnoNetwork	swift.property	NetworkFailure.recovery
@@ -593,6 +608,7 @@ InnoNetwork	swift.property	NetworkLoggingOptions.releaseLogging
 InnoNetwork	swift.property	NetworkOperation.events
 InnoNetwork	swift.property	NetworkOperation.id
 InnoNetwork	swift.property	NetworkOperation.isCancelled
+InnoNetwork	swift.property	NetworkOperationDeadline.duration
 InnoNetwork	swift.property	NetworkRequestContext.eventObservers
 InnoNetwork	swift.property	NetworkRequestContext.metricsReporter
 InnoNetwork	swift.property	NetworkRequestContext.redirectPolicy
@@ -769,6 +785,7 @@ InnoNetwork	swift.struct	NetworkContext
 InnoNetwork	swift.struct	NetworkFailure
 InnoNetwork	swift.struct	NetworkLoggingOptions
 InnoNetwork	swift.struct	NetworkOperation
+InnoNetwork	swift.struct	NetworkOperationDeadline
 InnoNetwork	swift.struct	NetworkRequestContext
 InnoNetwork	swift.struct	NetworkRetryExecutor
 InnoNetwork	swift.struct	NetworkSnapshot

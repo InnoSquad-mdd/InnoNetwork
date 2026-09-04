@@ -54,6 +54,8 @@ retain those values.
 - ``OperationNetworkClient``
 - ``NetworkOperation``
 - ``NetworkOperationReplaySafety``
+- ``NetworkOperationDeadline``
+- ``NetworkOperationDeadlineStage``
 - ``NetworkFailure``
 - ``DefaultNetworkClient``
 - ``APIDefinition``

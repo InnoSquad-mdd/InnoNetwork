@@ -59,17 +59,22 @@ public struct NetworkFailure: Error, Sendable, Equatable {
     public let code: Int
     public let statusCode: Int?
     public let recovery: NetworkRecoveryDisposition
+    /// The active stage when an operation-wide deadline expired. This is nil
+    /// for transport request/resource timeouts and every non-deadline failure.
+    public let deadlineStage: NetworkOperationDeadlineStage?
 
     public init(
         kind: NetworkFailureKind,
         code: Int,
         statusCode: Int? = nil,
-        recovery: NetworkRecoveryDisposition
+        recovery: NetworkRecoveryDisposition,
+        deadlineStage: NetworkOperationDeadlineStage? = nil
     ) {
         self.kind = kind
         self.code = code
         self.statusCode = statusCode
         self.recovery = recovery
+        self.deadlineStage = deadlineStage
     }
 
     /// Converts a legacy ``NetworkError`` without retaining sensitive payloads.
@@ -197,6 +202,20 @@ public struct NetworkFailure: Error, Sendable, Equatable {
             return underlying.code
         }
         return (error as NSError).code
+    }
+
+    package static func operationDeadlineExceeded(
+        stage: NetworkOperationDeadlineStage,
+        requestMethod: HTTPMethod,
+        replaySafety: NetworkOperationReplaySafety
+    ) -> Self {
+        Self(
+            kind: .timeout,
+            code: NetworkErrorCode.timeout.rawValue,
+            recovery: allowsReplay(method: requestMethod, replaySafety: replaySafety)
+                ? .retry : .doNotRetry,
+            deadlineStage: stage
+        )
     }
 }
 

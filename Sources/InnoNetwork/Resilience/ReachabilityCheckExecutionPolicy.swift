@@ -96,6 +96,7 @@ public struct ReachabilityCheckExecutionPolicy: RequestExecutionPolicy {
                 reason: .offline("device path is .unsatisfied")
             )
         case .requiresConnection:
+            NetworkOperationDeadlineContext.mark(.connectivityWait)
             let updated = await monitor.waitForChange(
                 from: snapshot,
                 timeout: suspensionWaitTimeout

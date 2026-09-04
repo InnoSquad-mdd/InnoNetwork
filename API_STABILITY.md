@@ -172,7 +172,9 @@ acquiring a 6.x Stable compatibility promise.
 - `InnoNetworkUpload` companion product and its public file-upload, progress, restoration, bounded response, event, and error symbols
 - operation-first `NetworkClientConfiguration`, `OperationNetworkClient`,
   `NetworkOperation`, `NetworkOperationReplaySafety`, and value-only
-  `NetworkFailure` root-module contracts
+  `NetworkFailure` root-module contracts, including the additive 6.1
+  `NetworkOperationDeadline`, `NetworkOperationDeadlineStage`, deadline-aware
+  `start` overloads, and `NetworkFailure.deadlineStage`
 - bounded companion transport contracts: `BoundedNetworkTransfer`,
   `NetworkRetryExecutor`, `NetworkURLPolicy`, and `NetworkURLValidator`
 - `PersistentResponseCache` statistics and telemetry surfaces
@@ -452,8 +454,8 @@ below keeps the high-level compatibility classification readable. Historical
 5.x HLS sections document the migration source but are no longer included in
 the current machine-checked inventory.
 
-The machine-checked snapshot currently partitions all 1,407 declarations into
-306 Stable consumer declarations, 1,068 Provisionally Stable consumer
+The machine-checked snapshot currently partitions all 1,424 declarations into
+306 Stable consumer declarations, 1,085 Provisionally Stable consumer
 declarations, and 33 opt-in SPI declarations. The three sets are disjoint and
 exhaustive. `Scripts/symbols/stable-rules.tsv` maps the Stable ledger to symbol
 paths, while the compiler-authored SPI flag is snapshotted in
@@ -528,8 +530,10 @@ Stable.
 ### InnoNetwork 6 operation contract
 
 - `NetworkClientConfiguration`, `NetworkFailure`, `NetworkFailureKind`,
-  `NetworkOperation`, `NetworkOperationEvent`, `NetworkOperationReplaySafety`,
-  `NetworkRecoveryDisposition`, and `OperationNetworkClient`.
+  `NetworkOperation`, `NetworkOperationDeadline`,
+  `NetworkOperationDeadlineStage`, `NetworkOperationEvent`,
+  `NetworkOperationReplaySafety`, `NetworkRecoveryDisposition`, and
+  `OperationNetworkClient`.
 - These declarations now belong to the root InnoNetwork module. The 5.x
   InnoNetworkNext product has been removed.
 

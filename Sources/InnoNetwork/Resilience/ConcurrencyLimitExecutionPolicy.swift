@@ -46,6 +46,7 @@ public struct ConcurrencyLimitExecutionPolicy: RequestExecutionPolicy {
         context: RequestExecutionContext,
         next: RequestExecutionNext
     ) async throws -> Response {
+        NetworkOperationDeadlineContext.mark(.policyAdmission)
         try await bucket.acquire()
         do {
             let response = try await next.execute()

@@ -7,9 +7,20 @@ Versioning.
 
 ## [Unreleased]
 
-These changes form the unreleased `6.0.0` draft and have not been tagged.
+Changes through the local `6.0.0` release cut form the unreleased `6.0.0` draft and have not been tagged.
+Entries explicitly labelled for `6.1.0` are additive candidates layered after
+that cut and are not part of the 6.0 contract.
 
-### Added
+### Added for 6.1.0
+
+- `NetworkOperationDeadline` gives each operation-first buffered request one
+  monotonic latency budget across request preparation, authentication, cache
+  lookup, policy admission, connectivity waits, retry delay, transport, and
+  decoding. Deadline failures expose only a coarse
+  `NetworkOperationDeadlineStage`, preserve replay-safe recovery guidance, and
+  keep coalesced callers' budgets independent.
+
+### Added for 6.0.0
 
 - `NetworkSnapshot` now reports Low Data Mode, expensive-path, DNS, IPv4,
   IPv6, and typed unsatisfied-reason state. `NetworkMonitoring.snapshots()`

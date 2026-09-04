@@ -58,6 +58,33 @@ let operation = client.start(
 )
 ```
 
+Starting in the additive 6.1 candidate, a buffered operation can also own one
+end-to-end monotonic deadline:
+
+```swift
+let operation = client.start(
+    GetProfile(),
+    deadline: NetworkOperationDeadline(after: .seconds(2))
+)
+
+do {
+    let profile = try await operation.value()
+    _ = profile
+} catch {
+    if let stage = error.deadlineStage {
+        recordDeadlineExhaustion(stage)
+    }
+}
+```
+
+This budget includes policy admission, authentication, retry delay, transport,
+and response decoding. It is distinct from URLSession request and resource
+timeouts. Deadline expiry cancels built-in client work; a custom
+``NetworkClient`` used through ``OperationNetworkClient`` must cooperate with
+Swift task cancellation. The operation-first surface is buffered, so this API
+does not claim to bound the lifetime of a separately returned streaming
+sequence.
+
 The automatic `IdempotencyKeyPolicy` uses the logical request identifier. A
 new `NetworkOperation` receives a new identifier, so that policy alone does
 not prove that an application-level restart is safe. A 401 maps to

@@ -40,6 +40,7 @@ extension RequestExecutor {
         var replayedAfterRefresh = false
 
         while true {
+            NetworkOperationDeadlineContext.mark(.cacheLookup)
             // Interceptors and token applicators can replace the entire
             // request, and a 401 refresh creates another adapted request on
             // replay. Re-run admission for every transport iteration before
@@ -98,6 +99,7 @@ extension RequestExecutor {
             // Every pre-transport header must be covered by canonical
             // signatures. Signed requests conservatively bypass cache sharing
             // because their principal does not exist in the unsigned key.
+            NetworkOperationDeadlineContext.mark(.transport)
             let networkResponse = try await performSignedTransport(
                 request: request,
                 bodySource: bodySource,
@@ -151,6 +153,7 @@ extension RequestExecutor {
                 await refreshCoordinator.shouldRefresh(statusCode: networkResponse.statusCode, request: request),
                 !replayedAfterRefresh
             {
+                NetworkOperationDeadlineContext.mark(.authentication)
                 // Replay from the fully adapted request so session and
                 // endpoint interceptors keep their headers/signatures while
                 // the auth policy replaces only the Authorization value.
@@ -195,6 +198,7 @@ extension RequestExecutor {
     ) async throws -> Response {
         let eventHub = self.eventHub
         let baseNext = RequestExecutionNext {
+            NetworkOperationDeadlineContext.mark(.transport)
             let result = try await performTransportResult(
                 request: request,
                 identityRequest: identityRequest,
@@ -231,6 +235,7 @@ extension RequestExecutor {
             eventObservers: context.eventObservers
         )
 
+        NetworkOperationDeadlineContext.mark(.policyAdmission)
         let chain = configuration.customExecutionPolicies.reversed().reduce(baseNext) { next, policy in
             RequestExecutionNext {
                 try await policy.execute(

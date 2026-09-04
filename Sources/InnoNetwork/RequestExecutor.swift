@@ -111,6 +111,7 @@ package struct RequestExecutor {
         retryIndex: Int,
         requestID: UUID
     ) async throws -> PreparedExecutionRequest {
+        NetworkOperationDeadlineContext.mark(.requestPreparation)
         try validateSessionAuthentication(executable, configuration: configuration)
         let built = try requestBuilder.build(executable, configuration: configuration)
         var request = built.request
@@ -142,6 +143,7 @@ package struct RequestExecutor {
                 refreshCoordinator = nil
                 refreshGeneration = nil
             case .optional:
+                NetworkOperationDeadlineContext.mark(.authentication)
                 refreshCoordinator = runtime.refreshCoordinator
                 if let refreshCoordinator {
                     let application = try await refreshCoordinator.applyCurrentTokenWithGeneration(to: request)
@@ -151,6 +153,7 @@ package struct RequestExecutor {
                     refreshGeneration = nil
                 }
             case .required:
+                NetworkOperationDeadlineContext.mark(.authentication)
                 // The synchronous preflight above guarantees this coordinator.
                 guard let requiredCoordinator = runtime.refreshCoordinator else {
                     throw NetworkError.configuration(
@@ -164,6 +167,8 @@ package struct RequestExecutor {
                 request = application.request
                 refreshGeneration = application.generation
             }
+
+            NetworkOperationDeadlineContext.mark(.requestPreparation)
 
             let requestSigners = configuration.requestSigners + executable.requestSigners
             await notifyRequestAdapted(
@@ -223,6 +228,7 @@ package struct RequestExecutor {
             runtime: runtime,
             requestID: requestID
         )
+        NetworkOperationDeadlineContext.mark(.responseDecoding)
 
         // Onion unwinds inner→outer: per-request interceptors first,
         // session-level interceptors last. A session-level response
@@ -270,6 +276,7 @@ package struct RequestExecutor {
         response networkResponse: Response,
         configuration: NetworkConfiguration
     ) async throws -> D.APIResponse {
+        NetworkOperationDeadlineContext.mark(.responseDecoding)
         // willDecode runs after response interceptors have settled so adapters
         // that mutate the response observe the same payload the decoder will see.
         var decodableData = networkResponse.data

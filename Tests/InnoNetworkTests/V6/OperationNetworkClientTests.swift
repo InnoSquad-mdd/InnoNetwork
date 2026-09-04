@@ -189,6 +189,157 @@ struct OperationNetworkClientTests {
 
         _ = preview.legacyConfiguration
     }
+
+    @Test("An expired operation deadline fails before a delayed request completes")
+    func expiresOperationDeadline() async throws {
+        let endpoint = PreviewEndpoint()
+        let stub = StubNetworkClient()
+        stub.register(
+            PreviewResponse(id: "late"),
+            for: endpoint,
+            behavior: .delayed(seconds: 60)
+        )
+        let operation = OperationNetworkClient(client: stub).start(
+            endpoint,
+            deadline: NetworkOperationDeadline(after: .zero)
+        )
+
+        let failure = await failure(from: operation)
+
+        #expect(failure.kind == .timeout)
+        #expect(failure.code == NetworkErrorCode.timeout.rawValue)
+        #expect(failure.deadlineStage == .requestPreparation)
+        #expect(failure.recovery == .retry)
+    }
+
+    @Test("Unsafe operations keep deadline recovery terminal")
+    func deadlineRecoveryRespectsReplaySafety() async throws {
+        let endpoint = RecoveryEndpoint(method: .post)
+        let stub = StubNetworkClient()
+        stub.register(
+            PreviewResponse(id: "late"),
+            for: endpoint,
+            behavior: .delayed(seconds: 60)
+        )
+        let operation = OperationNetworkClient(client: stub).start(
+            endpoint,
+            deadline: NetworkOperationDeadline(after: .zero)
+        )
+
+        let failure = await failure(from: operation)
+
+        #expect(failure.kind == .timeout)
+        #expect(failure.recovery == .doNotRetry)
+    }
+
+    @Test("A successful operation cancels its pending deadline wait")
+    func successCancelsDeadlineWait() async throws {
+        let endpoint = PreviewEndpoint()
+        let stub = StubNetworkClient()
+        stub.register(PreviewResponse(id: "42"), for: endpoint)
+        let clock = TestClock()
+        let client = OperationNetworkClient(client: stub, deadlineClock: clock)
+
+        let value = try await client.start(
+            endpoint,
+            deadline: NetworkOperationDeadline(after: .seconds(60))
+        ).value()
+
+        #expect(value == PreviewResponse(id: "42"))
+        #expect(clock.waiterCount == 0)
+    }
+
+    @Test("Deadline reports retry-delay exhaustion")
+    func reportsRetryDelayStage() async throws {
+        let clock = TestClock()
+        let session = DeadlineFailingURLSession()
+        let base = DefaultNetworkClient(
+            configuration: makeTestNetworkConfiguration(
+                baseURL: "https://api.example.test",
+                retryPolicy: ExponentialBackoffRetryPolicy(
+                    maxRetries: 1,
+                    retryDelay: 5,
+                    jitterRatio: 0
+                )
+            ),
+            session: session,
+            clock: clock
+        )
+        let client = OperationNetworkClient(client: base, deadlineClock: clock)
+        let operation = client.start(
+            PreviewEndpoint(),
+            deadline: NetworkOperationDeadline(after: .seconds(2))
+        )
+
+        #expect(await clock.waitForWaiters(count: 2))
+        clock.advance(by: .seconds(2))
+        let failure = await failure(from: operation)
+
+        #expect(failure.kind == .timeout)
+        #expect(failure.deadlineStage == .retryDelay)
+        #expect(await session.requestCount == 1)
+    }
+
+    @Test("Caller cancellation wins over a pending operation deadline")
+    func cancellationWinsPendingDeadline() async throws {
+        let endpoint = PreviewEndpoint()
+        let stub = StubNetworkClient()
+        stub.register(
+            PreviewResponse(id: "late"),
+            for: endpoint,
+            behavior: .delayed(seconds: 60)
+        )
+        let clock = TestClock()
+        let operation = OperationNetworkClient(client: stub, deadlineClock: clock).start(
+            endpoint,
+            deadline: NetworkOperationDeadline(after: .seconds(60))
+        )
+
+        operation.cancel()
+        let failure = await failure(from: operation)
+
+        #expect(failure.kind == .cancelled)
+        #expect(failure.deadlineStage == nil)
+        #expect(clock.waiterCount == 0)
+    }
+
+    @Test("Coalesced callers keep independent operation deadlines")
+    func coalescedCallersKeepIndependentDeadlines() async throws {
+        let clock = TestClock()
+        let session = DeadlineBlockingURLSession()
+        let base = DefaultNetworkClient(
+            configuration: makeTestNetworkConfiguration(
+                baseURL: "https://api.example.test",
+                requestCoalescingPolicy: .getOnly
+            ),
+            session: session,
+            clock: clock
+        )
+        let client = OperationNetworkClient(client: base, deadlineClock: clock)
+        let short = client.start(
+            PreviewEndpoint(),
+            deadline: NetworkOperationDeadline(after: .seconds(1))
+        )
+        let long = client.start(
+            PreviewEndpoint(),
+            deadline: NetworkOperationDeadline(after: .seconds(10))
+        )
+
+        #expect(await session.waitUntilStarted())
+        #expect(await clock.waitForWaiters(count: 2))
+        clock.advance(by: .seconds(1))
+        let shortFailure = await failure(from: short)
+
+        #expect(shortFailure.deadlineStage == .transport)
+        #expect(await session.requestCount == 1)
+
+        try await session.succeed(with: PreviewResponse(id: "shared"))
+        let longValue = try await long.value()
+
+        #expect(longValue == PreviewResponse(id: "shared"))
+        #expect(await session.requestCount == 1)
+        #expect(clock.waiterCount == 0)
+    }
 }
 
 private func failure<Value: Sendable>(
@@ -232,6 +383,53 @@ private struct FailingNetworkClient: NetworkClient {
         tag _: CancellationTag?
     ) async throws(NetworkError) -> Request.APIResponse {
         throw error
+    }
+}
+
+private actor DeadlineFailingURLSession: URLSessionProtocol {
+    private(set) var requestCount = 0
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        _ = request
+        requestCount += 1
+        throw URLError(.timedOut)
+    }
+}
+
+private actor DeadlineBlockingURLSession: URLSessionProtocol {
+    private var continuations: [CheckedContinuation<(Data, URLResponse), Error>] = []
+    private(set) var requestCount = 0
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        _ = request
+        requestCount += 1
+        return try await withCheckedThrowingContinuation { continuation in
+            continuations.append(continuation)
+        }
+    }
+
+    func waitUntilStarted() async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(1))
+        while requestCount == 0, clock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        return requestCount > 0
+    }
+
+    func succeed(with response: PreviewResponse) throws {
+        let data = try JSONEncoder().encode(response)
+        let urlResponse = HTTPURLResponse(
+            url: URL(string: "https://api.example.test/preview")!,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: nil
+        )!
+        let pending = continuations
+        continuations.removeAll(keepingCapacity: false)
+        for continuation in pending {
+            continuation.resume(returning: (data, urlResponse))
+        }
     }
 }
 

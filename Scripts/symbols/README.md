@@ -22,12 +22,12 @@ Stable compatibility promise.
 ## Current sizes (InnoNetwork 6 development baseline)
 
 The 5.0.0 release baseline remains the compatibility reference for the
-currently tagged 5.x line; this table tracks the planned 6.0 boundary with
-1,407 public declarations in the root package.
+currently tagged 5.x line; this table tracks the 6.1 candidate layered after
+the planned 6.0 boundary with 1,424 public declarations in the root package.
 
 | Product | Public declarations |
 |---|---:|
-| `InnoNetwork` (core) | 892 |
+| `InnoNetwork` (core) | 909 |
 | `InnoNetworkWebSocket` | 164 |
 | `InnoNetworkDownload` | 94 |
 | `InnoNetworkUpload` | 59 |
@@ -36,20 +36,21 @@ currently tagged 5.x line; this table tracks the planned 6.0 boundary with
 | `InnoNetworkOpenAPI` | 36 |
 | `InnoNetworkTrust` | 17 |
 | `InnoNetworkAuthAWS` | 10 |
-| **Total** | **1,407** |
+| **Total** | **1,424** |
 
 | Compatibility tier | Public declarations |
 |---|---:|
 | Stable consumer API | 306 |
-| Provisionally Stable consumer API | 1,068 |
+| Provisionally Stable consumer API | 1,085 |
 | `@_spi(GeneratedClientSupport)` | 33 |
-| **Total** | **1,407** |
+| **Total** | **1,424** |
 
 ## Why this matters
 
 The 6.0 split reduced this repository's machine-checked surface from 3,254 to
 1,407 declarations by moving the four HLS modules to InnoStream and folding
-the temporary `InnoNetworkNext` module into the root product.
+the temporary `InnoNetworkNext` module into the root product. The additive 6.1
+deadline candidate raises the development snapshot to 1,424 declarations.
 
 At release, every public symbol becomes:
 

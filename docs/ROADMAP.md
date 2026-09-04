@@ -33,15 +33,16 @@ value, not by implementation convenience.
    preserved, malformed dates fail closed, and `304` substitution follows the
    same bounded path after persistent-cache reopen. Unsafe methods and Vary
    mismatches continue to bypass conditional reuse.
-2. **Add an end-to-end operation deadline.** The existing request and resource
-   timeouts bound individual URLSession work, but reachability admission,
-   authentication refresh, retry backoff, and repeated transport attempts can
-   outlive one caller-owned latency budget. Evaluate an additive deadline that
-   propagates a monotonic remaining budget through every stage, cancels pending
-   waits, and reports which stage exhausted it without exposing request data.
-   Cover already-expired input, retry and `Retry-After`, refresh single-flight,
-   reachability waits, coalesced callers with different budgets, streaming
-   handoff, and cancellation races.
+2. **End-to-end operation deadline — implemented for the 6.1 candidate.**
+   `NetworkOperationDeadline` applies one monotonic budget across request
+   preparation, authentication, cache lookup, policy admission, reachability,
+   retry delay, transport, and decoding. Expiry cancels built-in client work
+   and reports a payload-free `NetworkOperationDeadlineStage`; recovery still
+   obeys method and explicit replay safety. Deterministic tests cover expired
+   input, retry delay, caller cancellation, successful timer cleanup, and
+   coalesced callers with different budgets. The operation-first API returns a
+   buffered value, so separately returned streaming sequences are explicitly
+   outside this deadline contract rather than receiving a partial promise.
 3. **Promote only proven remaining provisional surfaces.** Use each surface's
    relevant app and companion-package consumers to identify declarations used
    without wrappers or SPI. `@APIDefinition` is the deliberate 6.0 promotion;
