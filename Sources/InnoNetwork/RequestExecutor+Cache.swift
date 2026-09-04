@@ -106,12 +106,12 @@ extension RequestExecutor {
                         // RFC 9110 §13.1.3 permits sending both validators
                         // together — origins MAY use whichever they have a
                         // strong preference for.
-                        if let lastModified = cached.lastModified {
+                        if let lastModified = validatedLastModified(cached) {
                             revalidationRequest.setValue(
                                 lastModified, forHTTPHeaderField: "If-Modified-Since")
                         }
                         revalidation = ConditionalRevalidationContext(cached: cached)
-                    } else if let lastModified = cached.lastModified {
+                    } else if let lastModified = validatedLastModified(cached) {
                         revalidationRequest.setValue(
                             lastModified, forHTTPHeaderField: "If-Modified-Since")
                         revalidation = ConditionalRevalidationContext(cached: cached)
@@ -262,7 +262,7 @@ extension RequestExecutor {
             request.setValue(etag, forHTTPHeaderField: "If-None-Match")
             attached = true
         }
-        if let lastModified = candidate.lastModified {
+        if let lastModified = validatedLastModified(candidate) {
             request.setValue(lastModified, forHTTPHeaderField: "If-Modified-Since")
             attached = true
         }
@@ -270,6 +270,15 @@ extension RequestExecutor {
             return nil
         }
         return ConditionalRevalidationContext(cached: candidate)
+    }
+
+    private func validatedLastModified(_ cached: CachedResponse) -> String? {
+        guard let value = cached.lastModified,
+            HTTPDateParser.parse(value, requiresGMTZone: true) != nil
+        else {
+            return nil
+        }
+        return value
     }
 
     func convertNotModifiedIfNeeded(

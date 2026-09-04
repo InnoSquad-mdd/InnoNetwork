@@ -2,7 +2,7 @@
 
 This RFC pins the exact subset of [RFC 9111: HTTP Caching](https://www.rfc-editor.org/rfc/rfc9111)
 that `InnoNetworkPersistentCache` and the in-memory `ResponseCachePolicy`
-honour in the released 5.x contract. The intent is to give operators a single sheet
+honour in the 6.x contract. The intent is to give operators a single sheet
 to reason about cache-driven behavior without re-reading the executor or
 the cache actor.
 
@@ -10,10 +10,10 @@ the cache actor.
 
 The cache module always reads requests and responses through the
 `ResponseCacheKey` / `CachedResponse` value types; this matrix maps RFC
-9111 directives to whether the 5.x line consumes, persists, or ignores
+9111 directives to whether the 6.x line consumes, persists, or ignores
 them.
 
-| RFC 9111 directive / header | Status | Behavior in 5.x |
+| RFC 9111 directive / header | Status | Behavior in 6.x |
 | --- | --- | --- |
 | `Cache-Control: no-store` (request and response) | ✅ Honored | Skips writes, invalidates an existing key. Applied in `RequestExecutor.storeCacheIfNeeded`. When the policy is wrapped via `ResponseCachePolicy.rfc9111Compliant(wrapping:)`, the directive additionally suppresses cache reads against an entry that was somehow persisted before the wrap (defence in depth). |
 | `Cache-Control: no-cache` | ✅ Honored | Stored but flagged as `requiresRevalidation`; the next read forces conditional revalidation. |
@@ -31,7 +31,7 @@ them.
 | `Set-Cookie` | ✅ Honored | Refused by default (`storesSetCookieResponses = false`); operators can opt in. |
 | `Authorization` (request key) | ✅ Honored | Refused by default (`storesAuthenticatedResponses = false`). Even after opt-in, storage requires `Cache-Control: public`, `must-revalidate`, or `s-maxage` per RFC 9111 §3.5. |
 | `ETag` | ✅ Honored | Captured for conditional revalidation via `If-None-Match`. |
-| `Last-Modified` | ⚠️ Adapter-only freshness / partial revalidation | When `max-age` and `Expires` are absent, `ResponseCachePolicy.rfc9111Compliant(wrapping:)` applies the RFC 9111 §4.2.2 10% heuristic freshness calculation capped at 24 hours. Conditional revalidation in 5.x still keys on `If-None-Match` rather than `If-Modified-Since`. |
+| `Last-Modified` | ✅ Honored | When `max-age` and `Expires` are absent, `ResponseCachePolicy.rfc9111Compliant(wrapping:)` applies the RFC 9111 §4.2.2 10% heuristic freshness calculation capped at 24 hours. Stale entries carrying a valid HTTP-date emit `If-Modified-Since`; when `ETag` is also present the request sends both validators. Malformed values are preserved as response metadata but never emitted as conditional request headers. |
 | `Age` | ❌ Not emitted | The cache does not synthesize an `Age` header on cached responses. |
 
 ## Unsafe Method Invalidation
@@ -119,7 +119,7 @@ since the actor was constructed; the counters seed from the open-time
 scrubbing pipeline so the eviction count covers the entire actor
 lifetime, not only post-init activity.
 
-## Deviations Tracked Beyond 5.0
+## Deviations Tracked Beyond 6.0
 
 1. **`Cache-Control: max-age` consumption.** A future major could treat the
    response directive as a freshness signal, with `ResponseCachePolicy`
@@ -128,10 +128,7 @@ lifetime, not only post-init activity.
    already exist; a future major could also accept the response directive
    directly so APIs that emit it transparently get stale-while-revalidate
    behavior.
-3. **`Last-Modified` based revalidation.** Heuristic freshness is already
-   implemented by the adapter, but a future conditional revalidation path
-   should emit `If-Modified-Since` when no `ETag` is present.
-4. **`Age` header synthesis.** Some downstream caches (or operator tools)
+3. **`Age` header synthesis.** Some downstream caches (or operator tools)
    inspect the `Age` header to detect stale-while-revalidate hits; a future
    release could emit it on cache hits.
 

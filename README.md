@@ -1063,6 +1063,10 @@ automatically (RFC 9111 §4.1):
   cache key and skip writes, including quoted directives such as
   `private="Set-Cookie, Authorization"`. `Cache-Control: no-cache` stores the
   response but forces revalidation before every reuse.
+- Stale entries with a valid `Last-Modified` emit `If-Modified-Since`; entries
+  carrying both `ETag` and `Last-Modified` emit both validators. A `304`
+  response restores the bounded cached representation, while malformed dates
+  are never copied into a conditional request header.
 - Responses to requests carrying `Authorization` are stored only when the
   origin explicitly permits it with `Cache-Control: public`, `must-revalidate`,
   or `s-maxage`.

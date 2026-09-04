@@ -287,6 +287,30 @@ extension PersistentResponseCacheTests {
         #expect(await session.requestCount == 0)
     }
 
+    @Test("Persistent reopen preserves Last-Modified for conditional revalidation")
+    func persistentReopenPreservesLastModifiedValidator() async throws {
+        let directory = makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let configuration = PersistentResponseCacheConfiguration(directoryURL: directory)
+        let key = ResponseCacheKey(method: "GET", url: "https://example.com/users/1")
+        let lastModified = "Wed, 21 Oct 2015 07:28:00 GMT"
+        let writer = try PersistentResponseCache(configuration: configuration)
+        await writer.set(
+            key,
+            CachedResponse(
+                data: Data("cached".utf8),
+                headers: ["Last-Modified": lastModified],
+                storedAt: Date(timeIntervalSince1970: 0)
+            )
+        )
+
+        let reopened = try PersistentResponseCache(configuration: configuration)
+        let cached = try #require(await reopened.get(key))
+
+        #expect(cached.lastModified == lastModified)
+        #expect(cached.storedAt == Date(timeIntervalSince1970: 0))
+    }
+
     @Test("Default policy rejects authenticated and Set-Cookie responses")
     func rejectsPrivateResponsesByDefault() async throws {
         let directory = makeDirectory()

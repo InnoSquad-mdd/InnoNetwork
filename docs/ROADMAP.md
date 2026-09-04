@@ -28,11 +28,11 @@ value, not by implementation convenience.
 
 ### Priority 0 — correctness and adoption evidence
 
-1. **Complete conditional cache revalidation.** When a cached response has no
-   `ETag` but does have a valid `Last-Modified`, emit `If-Modified-Since` and
-   merge a `304` response through the same bounded, authenticated, and
-   observable path as `If-None-Match`. Cover malformed dates, dual validators,
-   unsafe methods, coalesced reads, and persistent-cache reopen behavior.
+1. **Conditional cache revalidation — completed for the 6.0 boundary.** A
+   valid `Last-Modified` now emits `If-Modified-Since`, dual validators are
+   preserved, malformed dates fail closed, and `304` substitution follows the
+   same bounded path after persistent-cache reopen. Unsafe methods and Vary
+   mismatches continue to bypass conditional reuse.
 2. **Add an end-to-end operation deadline.** The existing request and resource
    timeouts bound individual URLSession work, but reachability admission,
    authentication refresh, retry backoff, and repeated transport attempts can

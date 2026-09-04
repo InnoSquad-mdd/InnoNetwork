@@ -36,6 +36,9 @@ These changes form the unreleased `6.0.0` draft and have not been tagged.
 
 ### Fixed
 
+- Conditional cache revalidation now validates and emits `If-Modified-Since`
+  for `Last-Modified` entries, including persistent-cache reopen and dual
+  validator paths. Malformed dates are never replayed as request headers.
 - Restored background uploads that are still suspended now resume only after
   URL and sensitive-header admission succeeds. Upload shutdown also stops
   waiting after a bounded internal invalidation deadline if Foundation does
