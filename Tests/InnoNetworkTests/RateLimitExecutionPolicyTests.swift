@@ -14,6 +14,50 @@ struct RateLimitExecutionPolicyTests {
         #expect(policy.interval == .milliseconds(1))
     }
 
+    @Test("Copied policy values share one request budget")
+    func copiedValuesShareLimiter() {
+        let policy = RateLimitExecutionPolicy(maximumRequests: 2, per: .seconds(1))
+        let copy = policy
+
+        #expect(policy.limiter === copy.limiter)
+    }
+
+    @Test("Policy forwards the executor-owned request through the chain")
+    func forwardsThroughPolicyChain() async throws {
+        let policy = RateLimitExecutionPolicy(maximumRequests: 2, per: .seconds(1))
+        let requestID = UUID()
+        let url = URL(string: "https://api.example.test/rate-limited")!
+        let response = try await policy.execute(
+            input: RequestExecutionInput(
+                request: URLRequest(url: url),
+                requestID: requestID,
+                retryIndex: 1
+            ),
+            context: RequestExecutionContext(
+                requestID: requestID,
+                retryIndex: 1,
+                metricsReporter: nil,
+                trustPolicy: .systemDefault,
+                eventObservers: []
+            ),
+            next: RequestExecutionNext {
+                Response(
+                    statusCode: 202,
+                    data: Data(),
+                    request: URLRequest(url: url),
+                    response: HTTPURLResponse(
+                        url: url,
+                        statusCode: 202,
+                        httpVersion: nil,
+                        headerFields: nil
+                    )!
+                )
+            }
+        )
+
+        #expect(response.statusCode == 202)
+    }
+
     @Test("Limiter admits only the configured count before the next window")
     func enforcesFixedWindow() async throws {
         let clock = RateLimitTestClock()
