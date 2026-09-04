@@ -68,6 +68,43 @@ struct AuthenticationRealmTests {
         #expect(try await coordinator.applyCurrentToken(to: request) == request)
         #expect(await !coordinator.shouldRefresh(statusCode: 401, request: request))
     }
+
+    @Test("One realm's refresh cooldown does not block another realm")
+    func cooldownIsIsolatedByRealm() async throws {
+        let calls = RealmRefreshCalls()
+        let now = Date(timeIntervalSince1970: 1_000)
+        let policy = RefreshTokenPolicy(
+            realmForRequest: { request in
+                request.url?.host == "a.example.test" ? "a" : "b"
+            },
+            failureCooldown: .exponentialBackoff(base: 60, max: 60),
+            currentToken: { _ in nil },
+            refreshToken: { realm in
+                await calls.record(realm)
+                if realm == "a" { throw RealmRefreshFailure.denied }
+                return "fresh-\(realm.rawValue)"
+            }
+        )
+        let coordinator = RefreshTokenCoordinator(policy: policy, now: { now })
+        let aRequest = URLRequest(url: URL(string: "https://a.example.test/value")!)
+        let bRequest = URLRequest(url: URL(string: "https://b.example.test/value")!)
+
+        await #expect(throws: RealmRefreshFailure.self) {
+            _ = try await coordinator.refreshAndApply(to: aRequest)
+        }
+
+        let refreshedB = try await coordinator.refreshAndApply(to: bRequest)
+        #expect(refreshedB.value(forHTTPHeaderField: "Authorization") == "Bearer fresh-b")
+
+        await #expect(throws: RealmRefreshFailure.self) {
+            _ = try await coordinator.refreshAndApply(to: aRequest)
+        }
+        #expect(await calls.snapshot() == ["a": 1, "b": 1])
+    }
+}
+
+private enum RealmRefreshFailure: Error, Sendable {
+    case denied
 }
 
 private actor RealmRefreshCalls {
