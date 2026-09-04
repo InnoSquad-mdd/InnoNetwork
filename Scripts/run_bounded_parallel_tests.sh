@@ -93,6 +93,32 @@ if [[ -n "$duplicate_modules" ]]; then
   exit 1
 fi
 expected_modules="$(sort -u "$inventory_file")"
+declared_modules="$(
+  xcrun swift package describe --type json \
+    | python3 -c '
+import json
+import sys
+
+package = json.load(sys.stdin)
+for target in package.get("targets", []):
+    if target.get("type") == "test":
+        print(target["name"])
+' \
+    | sort -u
+)"
+if [[ -z "$declared_modules" ]]; then
+  echo "bounded-tests: Package.swift declares no test targets" >&2
+  exit 1
+fi
+if [[ "$declared_modules" != "$expected_modules" ]]; then
+  echo "bounded-tests: shard inventory does not match Package.swift test targets" >&2
+  echo "Expected from shards:" >&2
+  printf '%s\n' "$expected_modules" >&2
+  echo "Declared by Package.swift:" >&2
+  printf '%s\n' "$declared_modules" >&2
+  exit 1
+fi
+
 discovered_bundles="$(
   for bundle in "$bin_path"/*.xctest; do
     if [[ -d "$bundle" ]]; then
@@ -100,6 +126,7 @@ discovered_bundles="$(
     fi
   done | sort -u
 )"
+all_discovered_bundles="$discovered_bundles"
 
 if [[ -z "$discovered_bundles" ]]; then
   echo "bounded-tests: SwiftPM produced no discoverable test bundles in $bin_path" >&2
@@ -109,15 +136,33 @@ fi
 package_bundle=""
 # Swift 6.2 emits one package-wide bundle, while newer toolchains emit one
 # bundle per test target. Preserve the same logical module shards for both.
-if [[ "$discovered_bundles" == "InnoNetworkPackageTests" ]]; then
+# The bin directory can retain bundles removed by a branch switch or package
+# graph change, so select only bundles declared by the current Package.swift.
+target_bundles="$(comm -12 <(printf '%s\n' "$all_discovered_bundles") <(printf '%s\n' "$declared_modules"))"
+if [[ "$target_bundles" == "$expected_modules" ]]; then
+  discovered_bundles="$target_bundles"
+elif grep -Fxq "InnoNetworkPackageTests" <<< "$all_discovered_bundles"; then
   package_bundle="InnoNetworkPackageTests"
-elif [[ "$discovered_bundles" != "$expected_modules" ]]; then
-  echo "bounded-tests: shard inventory does not match discovered test targets" >&2
-  echo "Expected:" >&2
+else
+  echo "bounded-tests: current test bundles do not match Package.swift targets" >&2
+  echo "Expected current targets:" >&2
   printf '%s\n' "$expected_modules" >&2
-  echo "Discovered:" >&2
-  printf '%s\n' "$discovered_bundles" >&2
+  echo "Current target bundles:" >&2
+  printf '%s\n' "$target_bundles" >&2
+  echo "All bundles in bin path:" >&2
+  printf '%s\n' "$all_discovered_bundles" >&2
   exit 1
+fi
+
+stale_bundles="$(comm -23 <(printf '%s\n' "$all_discovered_bundles") <(printf '%s\n' "$declared_modules"))"
+if [[ -n "$package_bundle" ]]; then
+  stale_bundles="$(printf '%s\n' "$stale_bundles" | grep -Fvx "$package_bundle" || true)"
+fi
+if [[ -n "$stale_bundles" ]]; then
+  echo "Ignoring stale test bundles not declared by the current Package.swift:" >&2
+  while IFS= read -r bundle; do
+    printf '  %s\n' "$bundle" >&2
+  done <<< "$stale_bundles"
 fi
 
 test_list="$work_dir/test-list.txt"
