@@ -4,6 +4,67 @@ import Testing
 
 @Suite("RFC 9111 Compliant Cache Policy Tests")
 struct RFC9111ComplianceTests {
+    @Test("stale-if-error accepts a valid origin window through either wrapper order")
+    func staleIfErrorAcceptsValidWindowAcrossWrapperOrder() {
+        let storedAt = Date()
+        let cached = CachedResponse(
+            data: Data("payload".utf8),
+            headers: ["Cache-Control": "max-age=5, stale-if-error=30"],
+            storedAt: storedAt
+        )
+        let policies: [ResponseCachePolicy] = [
+            .staleIfError(
+                wrapping: .rfc9111Compliant(
+                    wrapping: .cacheFirst(maxAge: .seconds(10))
+                )
+            ),
+            .rfc9111Compliant(
+                wrapping: .staleIfError(
+                    wrapping: .cacheFirst(maxAge: .seconds(10))
+                )
+            ),
+        ]
+
+        for policy in policies {
+            #expect(
+                policy.staleIfErrorFallback(
+                    cached: cached,
+                    now: storedAt.addingTimeInterval(20)
+                ) == cached
+            )
+        }
+    }
+
+    @Test("stale-if-error fails closed for malformed duplicate expired and must-revalidate directives")
+    func staleIfErrorRejectsUnsafeDirectiveShapes() {
+        let storedAt = Date()
+        let policy = ResponseCachePolicy.staleIfError(
+            wrapping: .cacheFirst(maxAge: .seconds(5))
+        )
+        let cases: [(String, TimeInterval)] = [
+            ("stale-if-error", 10),
+            ("stale-if-error=-1", 10),
+            ("stale-if-error=20, stale-if-error=30", 10),
+            ("stale-if-error=5", 11),
+            ("must-revalidate, stale-if-error=30", 10),
+        ]
+
+        for (cacheControl, age) in cases {
+            let cached = CachedResponse(
+                data: Data("payload".utf8),
+                headers: ["Cache-Control": cacheControl],
+                storedAt: storedAt
+            )
+            #expect(
+                policy.staleIfErrorFallback(
+                    cached: cached,
+                    now: storedAt.addingTimeInterval(age)
+                ) == nil,
+                "Unexpected fallback for \(cacheControl)"
+            )
+        }
+    }
+
 
     // MARK: - no-store
 

@@ -68,7 +68,11 @@ package extension ResponseCachePolicy {
         case .staleWhileRevalidate(let maxAge, let staleWindow):
             return .staleWhileRevalidate(maxAge: min(maxAge, serverDuration), staleWindow: staleWindow)
         case .rfc9111Compliant(let inner):
-            return inner.applyingMaxAge(serverMaxAge: serverMaxAge)
+            return .rfc9111Compliant(wrapping: inner.applyingMaxAge(serverMaxAge: serverMaxAge))
+        case .staleIfError(let inner):
+            return .staleIfError(wrapping: inner.applyingMaxAge(serverMaxAge: serverMaxAge))
+        case .requestOnlyIfCached(let inner):
+            return .requestOnlyIfCached(wrapping: inner.applyingMaxAge(serverMaxAge: serverMaxAge))
         }
     }
 
@@ -78,8 +82,12 @@ package extension ResponseCachePolicy {
             return .bypass
         case .revalidate(let entry):
             return .revalidate(entry)
+        case .revalidateWithStaleIfError(let entry):
+            return .revalidateWithStaleIfError(entry)
         case .returnCached, .returnStaleAndRevalidate:
             return .revalidate(cached)
+        case .onlyIfCachedMiss:
+            return .onlyIfCachedMiss
         }
     }
 }
@@ -100,6 +108,8 @@ struct RFC9111CacheControlDirectives: Sendable, Equatable {
     let mustRevalidate: Bool
     let maxAgeSeconds: TimeInterval?
     let hasInvalidMaxAge: Bool
+    let staleIfErrorSeconds: TimeInterval?
+    let hasInvalidStaleIfError: Bool
 
     init(headers: [String: String]) {
         let combined =
@@ -112,6 +122,8 @@ struct RFC9111CacheControlDirectives: Sendable, Equatable {
             self.mustRevalidate = false
             self.maxAgeSeconds = nil
             self.hasInvalidMaxAge = false
+            self.staleIfErrorSeconds = nil
+            self.hasInvalidStaleIfError = false
             return
         }
 
@@ -120,6 +132,9 @@ struct RFC9111CacheControlDirectives: Sendable, Equatable {
         var maxAge: TimeInterval?
         var maxAgeCount = 0
         var hasInvalidMaxAge = false
+        var staleIfError: TimeInterval?
+        var staleIfErrorCount = 0
+        var hasInvalidStaleIfError = false
         for element in HTTPListParser.split(combined) {
             let name = HTTPListParser.directiveName(of: element)
             switch name {
@@ -140,6 +155,17 @@ struct RFC9111CacheControlDirectives: Sendable, Equatable {
                 } else {
                     hasInvalidMaxAge = true
                 }
+            case "stale-if-error":
+                staleIfErrorCount += 1
+                if staleIfErrorCount > 1 {
+                    hasInvalidStaleIfError = true
+                } else if let value = Self.directiveValue(of: element),
+                    let seconds = Self.parseDeltaSeconds(value)
+                {
+                    staleIfError = seconds
+                } else {
+                    hasInvalidStaleIfError = true
+                }
             default:
                 continue
             }
@@ -148,6 +174,8 @@ struct RFC9111CacheControlDirectives: Sendable, Equatable {
         self.mustRevalidate = mustRevalidate
         self.maxAgeSeconds = hasInvalidMaxAge ? nil : maxAge
         self.hasInvalidMaxAge = hasInvalidMaxAge
+        self.staleIfErrorSeconds = hasInvalidStaleIfError ? nil : staleIfError
+        self.hasInvalidStaleIfError = hasInvalidStaleIfError
     }
 
     func freshnessLifetime(headers: [String: String], storedAt: Date) -> FreshnessLifetime {
@@ -213,6 +241,7 @@ struct RFC9111CacheControlDirectives: Sendable, Equatable {
         guard !trimmed.isEmpty, trimmed.allSatisfy({ $0.isASCII && $0.isNumber }) else {
             return nil
         }
-        return TimeInterval(trimmed)
+        guard let seconds = TimeInterval(trimmed), seconds.isFinite else { return nil }
+        return seconds
     }
 }

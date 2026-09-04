@@ -57,6 +57,7 @@ package struct RequestExecutor {
 
         var retryRequest: URLRequest?
         var attemptStartedAt: Date?
+        var preparedForRecovery: PreparedExecutionRequest?
         do {
             let prepared = try await prepareRequestStage(
                 executable,
@@ -66,6 +67,7 @@ package struct RequestExecutor {
                 retryIndex: retryIndex,
                 requestID: requestID
             )
+            preparedForRecovery = prepared
             defer {
                 if let cleanupFileURL = prepared.cleanupFileURL {
                     try? FileManager.default.removeItem(at: cleanupFileURL)
@@ -85,6 +87,65 @@ package struct RequestExecutor {
                 response: networkResponse,
                 configuration: configuration
             )
+        } catch let recovery as StaleIfErrorRecovery {
+            let surfaced =
+                configuration.captureFailurePayload
+                ? recovery.failure
+                : recovery.failure.redactingFailurePayload()
+            executable.logger.log(error: surfaced)
+            await notifyFailure(surfaced, requestID: requestID, configuration: configuration)
+            guard let prepared = preparedForRecovery else {
+                throw RequestExecutionFailure(
+                    error: surfaced,
+                    request: retryRequest ?? surfaced.underlyingRequest
+                )
+            }
+            let executor = self
+            let recoveryAttemptStartedAt = attemptStartedAt
+            throw RequestExecutionFailureWithFallback(
+                error: surfaced,
+                request: retryRequest ?? surfaced.underlyingRequest
+            ) {
+                do {
+                    let recoveredResponse = try await executor.finalizeResponseStage(
+                        executable,
+                        networkResponse: recovery.fallback,
+                        prepared: prepared,
+                        configuration: configuration,
+                        requestID: requestID
+                    )
+                    return try await executor.decodeStage(
+                        executable,
+                        response: recoveredResponse,
+                        configuration: configuration
+                    )
+                } catch let error as NetworkError {
+                    let fallbackFailure =
+                        configuration.captureFailurePayload
+                        ? error
+                        : error.redactingFailurePayload()
+                    executable.logger.log(error: fallbackFailure)
+                    await executor.notifyFailure(
+                        fallbackFailure,
+                        requestID: requestID,
+                        configuration: configuration
+                    )
+                    throw fallbackFailure
+                } catch {
+                    let mapped = Self.mapTransportError(error, startedAt: recoveryAttemptStartedAt)
+                    let fallbackFailure =
+                        configuration.captureFailurePayload
+                        ? mapped
+                        : mapped.redactingFailurePayload()
+                    executable.logger.log(error: fallbackFailure)
+                    await executor.notifyFailure(
+                        fallbackFailure,
+                        requestID: requestID,
+                        configuration: configuration
+                    )
+                    throw fallbackFailure
+                }
+            }
         } catch let error as NetworkError {
             let surfaced = configuration.captureFailurePayload ? error : error.redactingFailurePayload()
             executable.logger.log(error: surfaced)
@@ -217,7 +278,8 @@ package struct RequestExecutor {
         runtime: RequestExecutionRuntime,
         requestID: UUID
     ) async throws -> Response {
-        var networkResponse = try await executeWithPolicies(
+        let acceptable = executable.acceptableStatusCodes ?? configuration.acceptableStatusCodes
+        let networkResponse = try await executeWithPolicies(
             request: prepared.request,
             refreshGeneration: prepared.refreshGeneration,
             refreshCoordinator: prepared.refreshCoordinator,
@@ -226,8 +288,27 @@ package struct RequestExecutor {
             configuration: configuration,
             context: prepared.context,
             runtime: runtime,
+            requestID: requestID,
+            acceptableStatusCodes: acceptable
+        )
+        return try await finalizeResponseStage(
+            executable,
+            networkResponse: networkResponse,
+            prepared: prepared,
+            configuration: configuration,
             requestID: requestID
         )
+    }
+
+    @inline(__always)
+    private func finalizeResponseStage<D: SingleRequestExecutable>(
+        _ executable: D,
+        networkResponse initialResponse: Response,
+        prepared: PreparedExecutionRequest,
+        configuration: NetworkConfiguration,
+        requestID: UUID
+    ) async throws -> Response {
+        var networkResponse = initialResponse
         NetworkOperationDeadlineContext.mark(.responseDecoding)
 
         // Onion unwinds inner→outer: per-request interceptors first,

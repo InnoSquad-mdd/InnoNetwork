@@ -52,6 +52,24 @@ public enum ResponseCachePolicy: Sendable, Equatable {
     /// each layer, so consumers should not assume the case nests at most
     /// once.
     indirect case rfc9111Compliant(wrapping: ResponseCachePolicy)
+    /// Allows a stale cached response to recover a transient transport or
+    /// server failure when the stored response explicitly advertises a valid
+    /// `Cache-Control: stale-if-error=N` window. Recovery is considered only
+    /// after the active retry policy declines another retry. Cancellation,
+    /// trust, configuration, decoding, and response-body-limit failures never
+    /// fall back to stale data.
+    ///
+    /// This wrapper is opt-in and does not weaken the inner policy's cache
+    /// admission, identity partitioning, or freshness ceiling.
+    indirect case staleIfError(wrapping: ResponseCachePolicy)
+    /// Honors a request's `Cache-Control: only-if-cached` directive. When the
+    /// directive is present, an immediately reusable entry is returned without
+    /// transport; a miss or an entry that requires network revalidation fails
+    /// locally with ``NetworkError/configuration(reason:)``.
+    ///
+    /// The wrapper is opt-in so existing clients continue forwarding the
+    /// directive to their origin without InnoNetwork changing request flow.
+    indirect case requestOnlyIfCached(wrapping: ResponseCachePolicy)
 }
 
 
@@ -88,6 +106,7 @@ public struct ResponseCacheKey: Hashable, Sendable {
     // localize representations without changing the URL.
     private static let excludedHeaderNames: Set<String> = [
         "accept-encoding",
+        "cache-control",
         "content-type",
         "date",
         "if-modified-since",
@@ -436,7 +455,9 @@ package enum CachePreparation: Sendable {
     case bypass
     case returnCached(CachedResponse)
     case revalidate(CachedResponse?)
+    case revalidateWithStaleIfError(CachedResponse)
     case returnStaleAndRevalidate(CachedResponse)
+    case onlyIfCachedMiss
 }
 
 
@@ -447,7 +468,9 @@ package extension ResponseCachePolicy {
             return false
         case .networkOnly, .cacheFirst, .staleWhileRevalidate:
             return true
-        case .rfc9111Compliant(let inner):
+        case .rfc9111Compliant(let inner),
+            .staleIfError(let inner),
+            .requestOnlyIfCached(let inner):
             return inner.isEnabled
         }
     }
@@ -458,7 +481,9 @@ package extension ResponseCachePolicy {
             return true
         case .disabled, .networkOnly:
             return false
-        case .rfc9111Compliant(let inner):
+        case .rfc9111Compliant(let inner),
+            .staleIfError(let inner),
+            .requestOnlyIfCached(let inner):
             return inner.allowsConditionalRevalidation
         }
     }
@@ -471,7 +496,9 @@ package extension ResponseCachePolicy {
             return true
         case .disabled, .networkOnly:
             return false
-        case .rfc9111Compliant(let inner):
+        case .rfc9111Compliant(let inner),
+            .staleIfError(let inner),
+            .requestOnlyIfCached(let inner):
             return inner.allowsCacheRead
         }
     }
@@ -485,7 +512,9 @@ package extension ResponseCachePolicy {
             return true
         case .disabled, .networkOnly:
             return false
-        case .rfc9111Compliant(let inner):
+        case .rfc9111Compliant(let inner),
+            .staleIfError(let inner),
+            .requestOnlyIfCached(let inner):
             return inner.allowsCacheWrite
         }
     }
@@ -513,6 +542,77 @@ package extension ResponseCachePolicy {
             return .revalidate(cached)
         case .rfc9111Compliant(let inner):
             return prepareWithRFC9111(inner: inner, cached: cached, now: now)
+        case .staleIfError(let inner), .requestOnlyIfCached(let inner):
+            return inner.prepare(cached: cached, now: now)
+        }
+    }
+
+    var honorsRequestOnlyIfCached: Bool {
+        switch self {
+        case .requestOnlyIfCached:
+            return true
+        case .rfc9111Compliant(let inner), .staleIfError(let inner):
+            return inner.honorsRequestOnlyIfCached
+        case .disabled, .networkOnly, .cacheFirst, .staleWhileRevalidate:
+            return false
+        }
+    }
+
+    private var containsStaleIfErrorOptIn: Bool {
+        switch self {
+        case .staleIfError:
+            return true
+        case .rfc9111Compliant(let inner), .requestOnlyIfCached(let inner):
+            return inner.containsStaleIfErrorOptIn
+        case .disabled, .networkOnly, .cacheFirst, .staleWhileRevalidate:
+            return false
+        }
+    }
+
+    /// Returns the stale entry only when both sides of the contract agree:
+    /// the caller opted in and the origin supplied a valid stale-if-error
+    /// allowance that still covers the entry's current staleness.
+    func staleIfErrorFallback(
+        cached: CachedResponse,
+        now: Date
+    ) -> CachedResponse? {
+        guard containsStaleIfErrorOptIn, allowsCacheRead else { return nil }
+        let directives = RFC9111CacheControlDirectives(headers: cached.headers)
+        guard !directives.noStore,
+            !directives.mustRevalidate,
+            !directives.hasInvalidStaleIfError,
+            let staleWindow = directives.staleIfErrorSeconds,
+            let freshnessLifetime = effectiveFreshnessLifetime(for: cached),
+            case .revalidate(let candidate) = prepare(cached: cached, now: now),
+            candidate != nil
+        else {
+            return nil
+        }
+        let staleness = max(0, cached.age(since: now) - freshnessLifetime)
+        return staleness <= staleWindow ? cached : nil
+    }
+
+    private func effectiveFreshnessLifetime(for cached: CachedResponse) -> TimeInterval? {
+        switch self {
+        case .disabled, .networkOnly:
+            return nil
+        case .cacheFirst(let maxAge), .staleWhileRevalidate(let maxAge, _):
+            return max(0, maxAge.timeInterval)
+        case .staleIfError(let inner), .requestOnlyIfCached(let inner):
+            return inner.effectiveFreshnessLifetime(for: cached)
+        case .rfc9111Compliant(let inner):
+            guard let innerLifetime = inner.effectiveFreshnessLifetime(for: cached) else {
+                return nil
+            }
+            let directives = RFC9111CacheControlDirectives(headers: cached.headers)
+            switch directives.freshnessLifetime(headers: cached.headers, storedAt: cached.storedAt) {
+            case .invalidOrExpired:
+                return 0
+            case .lifetime(let serverLifetime):
+                return min(innerLifetime, max(0, serverLifetime))
+            case .unspecified:
+                return innerLifetime
+            }
         }
     }
 }

@@ -11,6 +11,13 @@ package struct RequestExecutionFailure: Error {
 }
 
 
+package struct RequestExecutionFailureWithFallback: Error, Sendable {
+    let error: NetworkError
+    let request: URLRequest?
+    let recover: @Sendable () async throws -> any Sendable
+}
+
+
 package struct RetryCoordinator {
     private let eventHub: NetworkEventHub
     private let clock: any InnoNetworkClock
@@ -115,8 +122,8 @@ package struct RetryCoordinator {
             do {
                 try Task.checkCancellation()
                 return try await operation(retryIndex, requestID)
-            } catch let failure as RequestExecutionFailure {
-                let outcome = try await processRetryDecision(
+            } catch let failure as RequestExecutionFailureWithFallback {
+                if let outcome = try await processRetryDecision(
                     error: failure.error,
                     request: failure.request ?? failure.error.underlyingRequest,
                     retryPolicy: retryPolicy,
@@ -126,22 +133,56 @@ package struct RetryCoordinator {
                     retryIndex: retryIndex,
                     totalRetries: totalRetries,
                     snapshot: snapshot
-                )
+                ) {
+                    retryIndex = outcome.nextRetryIndex
+                    totalRetries = outcome.nextTotalRetries
+                    snapshot = outcome.snapshot
+                } else {
+                    let recovered = try await failure.recover()
+                    // Only RequestExecutor constructs this package-scoped
+                    // failure, and its recovery closure returns the same
+                    // SingleRequestExecutable.APIResponse as `operation`.
+                    // Fail closed if that internal invariant ever drifts.
+                    guard let response = recovered as? Response else {
+                        throw failure.error
+                    }
+                    return response
+                }
+            } catch let failure as RequestExecutionFailure {
+                guard
+                    let outcome = try await processRetryDecision(
+                        error: failure.error,
+                        request: failure.request ?? failure.error.underlyingRequest,
+                        retryPolicy: retryPolicy,
+                        networkMonitor: networkMonitor,
+                        requestID: requestID,
+                        eventObservers: eventObservers,
+                        retryIndex: retryIndex,
+                        totalRetries: totalRetries,
+                        snapshot: snapshot
+                    )
+                else {
+                    throw failure.error
+                }
                 retryIndex = outcome.nextRetryIndex
                 totalRetries = outcome.nextTotalRetries
                 snapshot = outcome.snapshot
             } catch let error as NetworkError {
-                let outcome = try await processRetryDecision(
-                    error: error,
-                    request: error.underlyingRequest,
-                    retryPolicy: retryPolicy,
-                    networkMonitor: networkMonitor,
-                    requestID: requestID,
-                    eventObservers: eventObservers,
-                    retryIndex: retryIndex,
-                    totalRetries: totalRetries,
-                    snapshot: snapshot
-                )
+                guard
+                    let outcome = try await processRetryDecision(
+                        error: error,
+                        request: error.underlyingRequest,
+                        retryPolicy: retryPolicy,
+                        networkMonitor: networkMonitor,
+                        requestID: requestID,
+                        eventObservers: eventObservers,
+                        retryIndex: retryIndex,
+                        totalRetries: totalRetries,
+                        snapshot: snapshot
+                    )
+                else {
+                    throw error
+                }
                 retryIndex = outcome.nextRetryIndex
                 totalRetries = outcome.nextTotalRetries
                 snapshot = outcome.snapshot
@@ -164,17 +205,21 @@ package struct RetryCoordinator {
                 // matches the path taken by the typed `NetworkError` catch
                 // arm above.
                 let normalized = NetworkError.mapTransportError(error)
-                let outcome = try await processRetryDecision(
-                    error: normalized,
-                    request: normalized.underlyingRequest,
-                    retryPolicy: retryPolicy,
-                    networkMonitor: networkMonitor,
-                    requestID: requestID,
-                    eventObservers: eventObservers,
-                    retryIndex: retryIndex,
-                    totalRetries: totalRetries,
-                    snapshot: snapshot
-                )
+                guard
+                    let outcome = try await processRetryDecision(
+                        error: normalized,
+                        request: normalized.underlyingRequest,
+                        retryPolicy: retryPolicy,
+                        networkMonitor: networkMonitor,
+                        requestID: requestID,
+                        eventObservers: eventObservers,
+                        retryIndex: retryIndex,
+                        totalRetries: totalRetries,
+                        snapshot: snapshot
+                    )
+                else {
+                    throw normalized
+                }
                 retryIndex = outcome.nextRetryIndex
                 totalRetries = outcome.nextTotalRetries
                 snapshot = outcome.snapshot
@@ -198,8 +243,8 @@ package struct RetryCoordinator {
         retryIndex: Int,
         totalRetries: Int,
         snapshot: NetworkSnapshot?
-    ) async throws -> RetryStepOutcome {
-        guard let policy = retryPolicy else { throw error }
+    ) async throws -> RetryStepOutcome? {
+        guard let policy = retryPolicy else { return nil }
         let policyDecision = policy.shouldRetry(
             error: error,
             retryIndex: retryIndex,
@@ -222,10 +267,10 @@ package struct RetryCoordinator {
             idempotency: policy.idempotencyPolicy
         )
         if case .noRetry = decision {
-            throw error
+            return nil
         }
         guard totalRetries < policy.maxTotalRetries else {
-            throw error
+            return nil
         }
 
         let computedDelay = policy.retryDelay(for: retryIndex)

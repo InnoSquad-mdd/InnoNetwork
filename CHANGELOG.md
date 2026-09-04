@@ -25,6 +25,13 @@ that cut and are not part of the 6.0 contract.
   logical task only for failed attempts, requires explicit refreshed inputs,
   and verifies that the original application-owned `Idempotency-Key` is
   unchanged.
+- `ResponseCachePolicy.staleIfError(wrapping:)` recovers eligible `500`,
+  `502`, `503`, `504`, timeout, and reachability failures from an origin-
+  authorized stale response only after the retry policy reaches a terminal
+  decision. `requestOnlyIfCached(wrapping:)` honors request
+  `Cache-Control: only-if-cached` without transport or background
+  revalidation. Both controls are opt-in; cancellation, trust,
+  configuration, decoding, and body-limit failures remain non-recoverable.
 
 ### Added for 6.0.0
 

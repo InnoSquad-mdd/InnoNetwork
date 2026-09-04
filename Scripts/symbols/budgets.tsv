@@ -1,11 +1,11 @@
 # allowlist	maximum public declarations
 authaws.allowlist	10
 cache.allowlist	51
-core.allowlist	909
+core.allowlist	911
 download.allowlist	94
 openapi.allowlist	36
 testsupport.allowlist	84
 trust.allowlist	17
 upload.allowlist	63
 websocket.allowlist	164
-TOTAL	1428
+TOTAL	1430

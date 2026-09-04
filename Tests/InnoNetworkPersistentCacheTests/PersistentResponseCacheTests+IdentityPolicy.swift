@@ -15,6 +15,35 @@ import Security
 #endif
 
 extension PersistentResponseCacheTests {
+    @Test("stale-if-error metadata remains enforceable after persistent-cache reopen")
+    func staleIfErrorMetadataSurvivesReopen() async throws {
+        let directory = makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let configuration = PersistentResponseCacheConfiguration(directoryURL: directory)
+        let key = ResponseCacheKey(method: "GET", url: "https://example.com/resilient")
+        let storedAt = Date(timeIntervalSinceNow: -30)
+        let writer = try PersistentResponseCache(configuration: configuration)
+        await writer.set(
+            key,
+            CachedResponse(
+                data: Data("fallback".utf8),
+                headers: ["Cache-Control": "stale-if-error=60"],
+                storedAt: storedAt
+            )
+        )
+
+        let reopened = try PersistentResponseCache(configuration: configuration)
+        let cached = try #require(await reopened.get(key))
+        let policy = ResponseCachePolicy.staleIfError(
+            wrapping: .cacheFirst(maxAge: .seconds(1))
+        )
+
+        #expect(
+            policy.staleIfErrorFallback(cached: cached, now: storedAt.addingTimeInterval(30))
+                == cached
+        )
+    }
+
     @Test("Cache persists entries across actor instances")
     func persistsAcrossInstances() async throws {
         let directory = makeDirectory()

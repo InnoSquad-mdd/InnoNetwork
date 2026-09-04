@@ -166,6 +166,10 @@ acquiring a 6.x Stable compatibility promise.
   and the `VCRCassette` / `VCRURLSession` record-and-replay family)
 - `AnyEncodable`, `NetworkContext`, and `CorrelationIDInterceptor`
 - `RefreshTokenPolicy`, `RequestCoalescingPolicy`, retry, response cache, redirect, encoding utility, and circuit breaker policy surfaces
+  This includes the additive 6.1
+  `ResponseCachePolicy.staleIfError(wrapping:)` and
+  `requestOnlyIfCached(wrapping:)` cases; both remain explicitly opt-in and
+  Provisionally Stable
 - `MultipartResponseDecoder` buffered multipart response parsing surface
 - `MultipartStreamingResponseDecoder` streaming multipart response parsing surface
 - `InnoNetworkOpenAPI` companion product
@@ -195,6 +199,9 @@ acquiring a 6.x Stable compatibility promise.
 - `MultipartUploadStrategy.inMemory(maxBytes:)` (4.0.0 baseline) — the explicit cap and encoder accumulator guard are part of the contract
 - `DownloadTransferPack.init(...taskInactivityTimeout:...)` and `DownloadTask.lastProgressAt` (4.0.0 behavior carried into the 5.0 pack contract)
 - `ResponseCachePolicy.rfc9111Compliant(wrapping:)` directive-aware adapter (4.0.0 baseline)
+  This also includes the additive
+  `ResponseCachePolicy.staleIfError(wrapping:)` and
+  `requestOnlyIfCached(wrapping:)` opt-in cache-control adapters (6.1 candidate)
 - `DownloadPersistencePack.init(...sharedContainerIdentifier:...)` (4.0.0 behavior carried into the 5.0 pack contract)
 - `ResponseCache.invalidateTargetURI(_:)` and RFC 9111 unsafe-method target URI invalidation (4.0.0 baseline)
 - `TransportPack.init(...streamingLineByteLimit:...)` (4.0.0 behavior carried into the 5.0 pack contract)
@@ -355,6 +362,13 @@ Promotion from Provisionally Stable to Stable requires all of the following:
   remains higher priority than `Expires`, which remains higher priority than
   the `Last-Modified` heuristic; invalid or duplicate freshness directives
   are treated as stale rather than extending cache reuse.
+- `ResponseCachePolicy.staleIfError(wrapping:)` — recovery remains limited to
+  origin-authorized stale windows after retry exhaustion. Eligible HTTP
+  statuses may grow only additively; cancellation, trust, configuration,
+  decoding, and body-limit failures remain excluded.
+- `ResponseCachePolicy.requestOnlyIfCached(wrapping:)` — the request directive
+  is consumed only under this wrapper. A miss or forced revalidation remains
+  a local typed failure and never starts transport or background refresh.
 - `NetworkErrorCode` — raw values use the
   `com.innosquad.innonetwork.NetworkError` domain exclusively; Foundation
   `URLError` codes are preserved only as underlying metadata.
@@ -456,8 +470,8 @@ below keeps the high-level compatibility classification readable. Historical
 5.x HLS sections document the migration source but are no longer included in
 the current machine-checked inventory.
 
-The machine-checked snapshot currently partitions all 1,428 declarations into
-306 Stable consumer declarations, 1,089 Provisionally Stable consumer
+The machine-checked snapshot currently partitions all 1,430 declarations into
+306 Stable consumer declarations, 1,091 Provisionally Stable consumer
 declarations, and 33 opt-in SPI declarations. The three sets are disjoint and
 exhaustive. `Scripts/symbols/stable-rules.tsv` maps the Stable ledger to symbol
 paths, while the compiler-authored SPI flag is snapshotted in

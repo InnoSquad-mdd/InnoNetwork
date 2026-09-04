@@ -51,11 +51,17 @@ value, not by implementation convenience.
 
 ### Priority 1 — explicit opt-in capabilities
 
-1. **Directive-aware cache controls.** Evaluate additive, opt-in handling for
-   `stale-if-error` and request `only-if-cached`. `immutable`, synthesized
-   `Age`, and default-policy consumption remain separate decisions. The minor
-   must not silently change existing caller-owned freshness windows or serve
-   stale authenticated data outside an explicit policy.
+1. **Directive-aware cache controls — implemented for the 6.1 candidate.**
+   `staleIfError(wrapping:)` requires both an explicit caller wrapper and a
+   valid response `stale-if-error=N` directive, preserves caller/server
+   freshness ceilings, and returns stale data only after the retry policy
+   declines another attempt. `requestOnlyIfCached(wrapping:)` consumes the
+   request directive only when opted in, returns an immediately reusable
+   entry without transport, and fails locally when revalidation would be
+   required. Cancellation, trust, configuration, decoding, and body-limit
+   failures never use stale data; authenticated entries still follow the
+   existing admission and identity rules. `immutable`, synthesized `Age`, and
+   default-policy consumption remain separate decisions.
 2. **Managed-upload controls — implemented for the 6.1 candidate.** Pause and
    resume are idempotent, background restoration persists user-paused intent,
    and retry requires the original stable `Idempotency-Key` plus an explicitly

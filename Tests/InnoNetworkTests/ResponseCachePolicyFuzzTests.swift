@@ -85,7 +85,7 @@ struct ResponseCachePolicyFuzzTests {
                 if !requiresRevalidation {
                     #expect(ageSeconds > maxAgeSeconds, "cacheFirst revalidated within freshness window unexpectedly")
                 }
-            case .returnStaleAndRevalidate, .bypass:
+            case .returnStaleAndRevalidate, .bypass, .revalidateWithStaleIfError, .onlyIfCachedMiss:
                 Issue.record("cacheFirst produced unexpected \(result)")
             }
         }
@@ -128,8 +128,8 @@ struct ResponseCachePolicyFuzzTests {
                         "swr revalidated inside stale window without cause"
                     )
                 }
-            case .bypass:
-                Issue.record("swr produced unexpected .bypass")
+            case .bypass, .revalidateWithStaleIfError, .onlyIfCachedMiss:
+                Issue.record("swr produced unexpected \(result)")
             }
         }
     }

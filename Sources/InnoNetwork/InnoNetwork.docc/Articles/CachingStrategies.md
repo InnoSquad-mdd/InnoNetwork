@@ -24,6 +24,40 @@ Available modes:
 - `.networkOnly` always goes to the network and skips both cache reads and writes, so an existing cache stays untouched while callers still get fresh data.
 - `.cacheFirst(maxAge:)` returns fresh cached data and revalidates stale cached data with `If-None-Match` when an ETag is present.
 - `.staleWhileRevalidate(maxAge:staleWindow:)` returns stale data inside the stale window and refreshes it in the background.
+- `.staleIfError(wrapping:)` permits an otherwise stale entry to recover an
+  eligible transient failure only when the stored response carries a valid
+  `stale-if-error=N` directive.
+- `.requestOnlyIfCached(wrapping:)` consumes request `only-if-cached` and
+  guarantees that the request will either use a reusable entry or fail locally
+  without transport.
+
+The two cache-control wrappers are additive opt-ins and may be nested with the
+freshness policies in either order. For example:
+
+```swift
+let policy = ResponseCachePolicy.requestOnlyIfCached(
+    wrapping: .staleIfError(
+        wrapping: .rfc9111Compliant(
+            wrapping: .cacheFirst(maxAge: .seconds(60))
+        )
+    )
+)
+```
+
+`only-if-cached` accepts a fresh cache-first result or a response inside an
+explicit stale-while-revalidate window; the latter is returned without its
+usual background revalidation. A miss, an expired entry, or an entry marked
+for mandatory revalidation throws a typed `NetworkError.configuration` before
+signing or transport. Without the wrapper, InnoNetwork leaves the directive
+origin-controlled and follows the normal cache/network path.
+
+`stale-if-error` is evaluated after the configured retry policy reaches a
+terminal decision. It covers only unacceptable `500`, `502`, `503`, and `504`
+responses plus typed timeout and reachability failures. A later successful
+retry always wins. Cancellation, trust, configuration, decoding,
+response-interceptor, and response-body-limit failures never use the fallback.
+Malformed, missing, or duplicate `stale-if-error` values fail closed, as do
+`no-store`, `must-revalidate`, and entries beyond the advertised window.
 
 When the server responds with `304 Not Modified`, InnoNetwork substitutes the
 cached body before status validation and decoding for conditional cache modes.
@@ -40,6 +74,9 @@ cross-pollute. URL fragments are ignored because they are not sent to the server
 Responses to requests carrying `Authorization` are stored only when the origin
 explicitly permits it with `Cache-Control: public`, `must-revalidate`, or
 `s-maxage`.
+The cache-control wrappers do not relax this admission rule or cache-key
+partitioning: authenticated stale recovery still requires an admitted entry
+for the same credential identity and an explicit origin directive.
 
 ## Scope and offline storage
 

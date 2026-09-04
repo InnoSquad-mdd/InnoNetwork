@@ -580,15 +580,20 @@ func resilienceRecordedRevalidationEvents(
 func resilienceMakeLocalizedCacheConfiguration(
     responseCachePolicy: ResponseCachePolicy,
     responseCache: any ResponseCache,
+    retryPolicy: (any RetryPolicy)? = nil,
+    acceptableStatusCodes: Set<Int> = NetworkConfiguration.defaultAcceptableStatusCodes,
+    requestInterceptors additionalRequestInterceptors: [RequestInterceptor] = [],
     responseInterceptors: [ResponseInterceptor] = [],
     eventObservers: [any NetworkEventObserving] = []
 ) -> NetworkConfiguration {
     NetworkConfiguration(
         baseURL: URL(string: "https://api.example.com")!,
+        retryPolicy: retryPolicy,
         eventObservers: eventObservers,
+        acceptableStatusCodes: acceptableStatusCodes,
         requestInterceptors: [
             ResilienceHeaderSettingInterceptor(field: "Accept-Language", value: cacheFixtureAcceptLanguage)
-        ],
+        ] + additionalRequestInterceptors,
         responseInterceptors: responseInterceptors,
         responseCachePolicy: responseCachePolicy,
         responseCache: responseCache,

@@ -1,5 +1,10 @@
 import Foundation
 
+struct StaleIfErrorRecovery: Error {
+    let failure: NetworkError
+    let fallback: Response
+}
+
 // MARK: - Pipeline stage
 //
 // Outer pipeline that the entrypoint `RequestExecutor.execute(...)` delegates
@@ -33,7 +38,8 @@ extension RequestExecutor {
         configuration: NetworkConfiguration,
         context: NetworkRequestContext,
         runtime: RequestExecutionRuntime,
-        requestID: UUID
+        requestID: UUID,
+        acceptableStatusCodes: Set<Int>
     ) async throws -> Response {
         var request = adaptedRequest
         var refreshGeneration = initialRefreshGeneration
@@ -74,6 +80,10 @@ extension RequestExecutor {
                 configuration: configuration,
                 runtime: runtime
             )
+            let staleIfErrorFallback = staleIfErrorResponse(
+                preparation: cachePreparation,
+                request: request
+            )
             if let cachedResponse = try await cachedResponseIfAvailable(
                 preparation: cachePreparation,
                 cacheKey: cacheKey,
@@ -100,16 +110,30 @@ extension RequestExecutor {
             // signatures. Signed requests conservatively bypass cache sharing
             // because their principal does not exist in the unsigned key.
             NetworkOperationDeadlineContext.mark(.transport)
-            let networkResponse = try await performSignedTransport(
-                request: request,
-                bodySource: bodySource,
-                requestSigners: requestSigners,
-                configuration: configuration,
-                context: context,
-                runtime: runtime,
-                requestID: requestID,
-                allowsRequestCoalescing: allowsRequestSharing
-            )
+            let networkResponse: Response
+            do {
+                networkResponse = try await performSignedTransport(
+                    request: request,
+                    bodySource: bodySource,
+                    requestSigners: requestSigners,
+                    configuration: configuration,
+                    context: context,
+                    runtime: runtime,
+                    requestID: requestID,
+                    allowsRequestCoalescing: allowsRequestSharing
+                )
+            } catch {
+                let mapped = error as? NetworkError ?? NetworkError.mapTransportError(error)
+                if let staleIfErrorFallback,
+                    Self.isEligibleStaleIfErrorTransportFailure(mapped)
+                {
+                    throw StaleIfErrorRecovery(
+                        failure: mapped,
+                        fallback: staleIfErrorFallback
+                    )
+                }
+                throw error
+            }
 
             if let substitution = try await convertNotModifiedIfNeeded(
                 networkResponse,
@@ -168,6 +192,16 @@ extension RequestExecutor {
                 continue
             }
 
+            if let staleIfErrorFallback,
+                !acceptableStatusCodes.contains(networkResponse.statusCode),
+                Self.isEligibleStaleIfErrorStatus(networkResponse.statusCode)
+            {
+                throw StaleIfErrorRecovery(
+                    failure: .statusCode(networkResponse),
+                    fallback: staleIfErrorFallback
+                )
+            }
+
             await invalidateUnsafeTargetURIIfNeeded(
                 networkResponse,
                 request: request,
@@ -184,6 +218,19 @@ extension RequestExecutor {
                 networkResponse, cacheKey: cacheKey, request: request, configuration: configuration)
             return networkResponse
         }
+    }
+
+    private static func isEligibleStaleIfErrorTransportFailure(_ error: NetworkError) -> Bool {
+        switch error {
+        case .timeout, .reachability:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func isEligibleStaleIfErrorStatus(_ statusCode: Int) -> Bool {
+        statusCode == 500 || statusCode == 502 || statusCode == 503 || statusCode == 504
     }
 
     func executeCustomPolicies(

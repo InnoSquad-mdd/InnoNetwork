@@ -15,12 +15,15 @@ extension RequestExecutor {
         configuration: NetworkConfiguration,
         runtime: RequestExecutionRuntime
     ) async -> CachePreparation {
+        let onlyIfCached =
+            configuration.responseCachePolicy.honorsRequestOnlyIfCached
+            && requestRequestsOnlyIfCached(request)
         guard let cacheKey,
             request.httpMethod == HTTPMethod.get.rawValue,
             let cache = configuration.responseCache,
             configuration.responseCachePolicy.allowsCacheRead
         else {
-            return .bypass
+            return onlyIfCached ? .onlyIfCachedMiss : .bypass
         }
 
         let cached = await cachedRespectingVary(
@@ -29,10 +32,30 @@ extension RequestExecutor {
             request: request,
             sensitiveHeaderNames: configuration.responseCacheSensitiveHeaderNames
         )
-        return configuration.responseCachePolicy.prepare(
+        let preparation = configuration.responseCachePolicy.prepare(
             cached: cached,
             now: runtime.clock.now()
         )
+        if onlyIfCached {
+            switch preparation {
+            case .returnCached(let entry), .returnStaleAndRevalidate(let entry):
+                // only-if-cached explicitly forbids the background network
+                // leg that stale-while-revalidate would normally schedule.
+                return .returnCached(entry)
+            case .bypass, .revalidate, .revalidateWithStaleIfError, .onlyIfCachedMiss:
+                return .onlyIfCachedMiss
+            }
+        }
+        if case .revalidate(let candidate) = preparation,
+            let candidate,
+            let fallback = configuration.responseCachePolicy.staleIfErrorFallback(
+                cached: candidate,
+                now: runtime.clock.now()
+            )
+        {
+            return .revalidateWithStaleIfError(fallback)
+        }
+        return preparation
     }
 
     func cachedResponseIfAvailable(
@@ -47,26 +70,20 @@ extension RequestExecutor {
         originalRequestID: UUID
     ) async throws -> Response? {
         switch preparation {
-        case .bypass, .revalidate:
+        case .bypass, .revalidate, .revalidateWithStaleIfError:
             return nil
-        case .returnCached(let cached):
-            guard let httpResponse = cached.response(for: request) else { return nil }
-            let response = Response(
-                statusCode: cached.statusCode,
-                data: cached.data,
-                request: request,
-                response: httpResponse
+        case .onlyIfCachedMiss:
+            throw NetworkError.configuration(
+                reason: .invalidRequest(
+                    "Cache-Control: only-if-cached could not be satisfied without network access."
+                )
             )
+        case .returnCached(let cached):
+            guard let response = response(from: cached, for: request) else { return nil }
             try enforceResponseBodyLimit(response, configuration: configuration)
             return response
         case .returnStaleAndRevalidate(let cached):
-            guard let httpResponse = cached.response(for: request) else { return nil }
-            let staleResponse = Response(
-                statusCode: cached.statusCode,
-                data: cached.data,
-                request: request,
-                response: httpResponse
-            )
+            guard let staleResponse = response(from: cached, for: request) else { return nil }
             try enforceResponseBodyLimit(staleResponse, configuration: configuration)
 
             guard let cacheKey else { return nil }
@@ -216,6 +233,35 @@ extension RequestExecutor {
         }
     }
 
+    func staleIfErrorResponse(
+        preparation: CachePreparation,
+        request: URLRequest
+    ) -> Response? {
+        guard case .revalidateWithStaleIfError(let cached) = preparation else {
+            return nil
+        }
+        return response(from: cached, for: request)
+    }
+
+    private func response(from cached: CachedResponse, for request: URLRequest) -> Response? {
+        guard let httpResponse = cached.response(for: request) else { return nil }
+        return Response(
+            statusCode: cached.statusCode,
+            data: cached.data,
+            request: request,
+            response: httpResponse
+        )
+    }
+
+    private func requestRequestsOnlyIfCached(_ request: URLRequest) -> Bool {
+        guard let value = request.value(forHTTPHeaderField: "Cache-Control") else {
+            return false
+        }
+        return HTTPListParser.split(value).contains {
+            HTTPListParser.directiveName(of: $0) == "only-if-cached"
+        }
+    }
+
     func revalidateInBackground(
         request: URLRequest,
         bodySource: BodySource,
@@ -250,10 +296,18 @@ extension RequestExecutor {
         preparation: CachePreparation,
         configuration: NetworkConfiguration
     ) -> ConditionalRevalidationContext? {
+        let candidate: CachedResponse?
+        switch preparation {
+        case .revalidate(let revalidationCandidate):
+            candidate = revalidationCandidate
+        case .revalidateWithStaleIfError(let revalidationCandidate):
+            candidate = revalidationCandidate
+        case .bypass, .returnCached, .returnStaleAndRevalidate, .onlyIfCachedMiss:
+            candidate = nil
+        }
         guard configuration.responseCachePolicy.isEnabled,
             configuration.responseCachePolicy.allowsConditionalRevalidation,
-            case .revalidate(let revalidationCandidate) = preparation,
-            let candidate = revalidationCandidate
+            let candidate
         else {
             return nil
         }

@@ -1805,6 +1805,10 @@ for symbol in "${expected_provisionally[@]}"; do
     '`ResponseCachePolicy.rfc9111Compliant(wrapping:)` directive-aware adapter (4.0.0 baseline)')
       require_contains 'indirect case rfc9111Compliant(wrapping: ResponseCachePolicy)' \
         "$repo_root/Sources/InnoNetwork/Cache/ResponseCachePolicy.swift"
+      require_contains 'indirect case staleIfError(wrapping: ResponseCachePolicy)' \
+        "$repo_root/Sources/InnoNetwork/Cache/ResponseCachePolicy.swift"
+      require_contains 'indirect case requestOnlyIfCached(wrapping: ResponseCachePolicy)' \
+        "$repo_root/Sources/InnoNetwork/Cache/ResponseCachePolicy.swift"
       require_contains 'func prepareWithRFC9111' \
         "$repo_root/Sources/InnoNetwork/Cache/RFC9111CompliantCachePolicy.swift"
       require_contains 'HTTPDateParser.parse(expiresValue, requiresGMTZone: true)' \
