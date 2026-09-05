@@ -74,6 +74,9 @@ that cut and are not part of the 6.0 contract.
   after decoding completes. Retried attempts no longer terminate logical spans,
   and final non-cancellation failures retain guaranteed event admission under
   partition saturation.
+- Circuit-breaker idle cleanup retains open and half-open safety state, so a
+  long-running probe or delayed follow-up cannot silently reopen unrestricted
+  traffic after the five-minute closed-state reclamation interval.
 - Origin-scoped admission, quota, redirect, and circuit-breaker keys now
   canonicalize scheme and host casing, implicit default ports, and IPv6
   authority formatting before comparing or allocating state.

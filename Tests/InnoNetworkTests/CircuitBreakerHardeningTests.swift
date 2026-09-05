@@ -1,4 +1,5 @@
 import Foundation
+import InnoNetworkTestSupport
 import Testing
 
 @testable import InnoNetwork
@@ -177,6 +178,33 @@ struct CircuitBreakerRegistryHardeningTests {
         #expect(results.1 == 31)
         await registry.recordStatus(request: request, policy: policy, statusCode: 200, probe: results.2)
         try await registry.prepare(request: request, policy: policy)
+    }
+
+    @Test("A live half-open probe survives idle-state pruning")
+    func liveProbeSurvivesIdlePruning() async throws {
+        let clock = TestClock()
+        let registry = CircuitBreakerRegistry(clock: clock)
+        let policy = CircuitBreakerPolicy(
+            failureThreshold: 1,
+            windowSize: 1,
+            resetAfter: .seconds(1)
+        )
+        let request = URLRequest(url: URL(string: "https://api.example.com/probe")!)
+
+        await registry.recordFailure(
+            request: request,
+            policy: policy,
+            error: URLError(.timedOut)
+        )
+        clock.advance(by: .seconds(1))
+        let probe = try #require(try await registry.prepare(request: request, policy: policy))
+        clock.advance(by: .seconds(301))
+
+        await #expect(throws: NetworkError.self) {
+            _ = try await registry.prepare(request: request, policy: policy)
+        }
+
+        await registry.abandon(probe)
     }
 
     @Test("Multiple 4xx probes honor half-open hysteresis before closing")

@@ -356,7 +356,15 @@ package actor CircuitBreakerRegistry {
 
     private func garbageCollect(now: Date) {
         states = states.filter { _, entry in
-            now.timeIntervalSince(entry.lastAccessAt) <= Self.stateIdleTTL
+            switch entry.mode {
+            case .closed:
+                now.timeIntervalSince(entry.lastAccessAt) <= Self.stateIdleTTL
+            case .open, .halfOpen:
+                // These modes carry a safety decision that must be advanced by
+                // `prepare` or a probe outcome. Dropping either one would turn
+                // the next request into an unrestricted closed-state attempt.
+                true
+            }
         }
     }
 
