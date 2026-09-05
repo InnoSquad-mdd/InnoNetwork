@@ -34,26 +34,50 @@ public struct AdvancedRateLimitPolicy: Sendable, Equatable {
         maximumScopes: Int = 128,
         serverFeedback: RateLimitServerFeedbackPolicy = .disabled
     ) {
-        self.algorithm = Self.normalized(algorithm)
-        self.defaultRequestCost = max(Double.leastNonzeroMagnitude, defaultRequestCost)
+        self.algorithm = algorithm
+        self.defaultRequestCost = defaultRequestCost
         self.maximumPendingRequests = max(0, maximumPendingRequests)
         self.scope = scope
         self.maximumScopes = max(1, maximumScopes)
         self.serverFeedback = serverFeedback
     }
 
-    private static func normalized(_ algorithm: AdvancedRateLimitAlgorithm) -> AdvancedRateLimitAlgorithm {
+    package func validate(requestCost: Double? = nil) throws {
+        let cost = requestCost ?? defaultRequestCost
+        guard cost.isFinite, cost > 0 else {
+            throw RateLimitAdmissionFailure.invalidConfiguration(
+                "Rate-limit request cost must be finite and greater than zero."
+            )
+        }
         switch algorithm {
         case .tokenBucket(let capacity, let refill):
-            return .tokenBucket(
-                capacity: max(Double.leastNonzeroMagnitude, capacity),
-                refillPerSecond: max(Double.leastNonzeroMagnitude, refill)
-            )
+            guard capacity.isFinite, capacity > 0,
+                refill.isFinite, refill > 0,
+                capacity / refill <= Double(Int64.max),
+                cost <= capacity
+            else {
+                throw RateLimitAdmissionFailure.invalidConfiguration(
+                    "Token-bucket capacity, refill, and request cost must be finite, positive, representable, and cost must not exceed capacity."
+                )
+            }
         case .slidingWindow(let limit, let interval):
-            return .slidingWindow(
-                limit: max(Double.leastNonzeroMagnitude, limit),
-                interval: interval > .zero ? interval : .milliseconds(1)
-            )
+            guard limit.isFinite, limit > 0, interval > .zero, cost <= limit else {
+                throw RateLimitAdmissionFailure.invalidConfiguration(
+                    "Sliding-window limit, interval, and request cost must be positive and finite, and cost must not exceed the limit."
+                )
+            }
+        }
+        switch serverFeedback {
+        case .disabled:
+            break
+        case .retryAfter(let maximumDelay), .ietfDraft11(let maximumDelay):
+            guard maximumDelay.isFinite, maximumDelay >= 0,
+                maximumDelay <= Double(Int64.max)
+            else {
+                throw RateLimitAdmissionFailure.invalidConfiguration(
+                    "Server-feedback maximum delay must be finite, nonnegative, and representable."
+                )
+            }
         }
     }
 }
@@ -61,6 +85,7 @@ public struct AdvancedRateLimitPolicy: Sendable, Equatable {
 package enum RateLimitAdmissionFailure: Error, Sendable, Equatable {
     case queueFull
     case scopeLimitReached
+    case invalidConfiguration(String)
 }
 
 package struct RateLimitReservation: Sendable {
@@ -81,6 +106,9 @@ package actor AdvancedRateLimitCoordinator {
         var tokens: Double?
         var lastRefill: Duration?
         var slidingEntries: [SlidingEntry] = []
+        var dispatchTokens: Double?
+        var lastDispatchRefill: Duration?
+        var dispatchedSlidingEntries: [(instant: Duration, cost: Double)] = []
         var cooldownUntil: Duration?
         var uncommittedReservations: Set<UUID> = []
     }
@@ -98,9 +126,11 @@ package actor AdvancedRateLimitCoordinator {
     package func reserve(for request: URLRequest, cost requestedCost: Double? = nil) async throws
         -> RateLimitReservation
     {
+        try policy.validate(requestCost: requestedCost)
         let scope = scopeKey(for: request)
-        let cost = normalizedCost(requestedCost ?? policy.defaultRequestCost)
+        let cost = requestedCost ?? policy.defaultRequestCost
         if scopes[scope] == nil {
+            pruneDormantScopes(at: clock.monotonicNow())
             guard scopes.count < policy.maximumScopes else {
                 throw RateLimitAdmissionFailure.scopeLimitReached
             }
@@ -138,8 +168,23 @@ package actor AdvancedRateLimitCoordinator {
         }
     }
 
-    package func commit(_ reservation: RateLimitReservation) {
+    /// Commits a reservation at the actual dispatch boundary. A non-nil
+    /// duration means the reservation remains valid, but transport must release
+    /// its concurrency slot and wait before trying to commit again.
+    package func commit(_ reservation: RateLimitReservation) -> Duration? {
+        guard scopes[reservation.scope]?.uncommittedReservations.contains(reservation.id) == true else {
+            return nil
+        }
+        let now = clock.monotonicNow()
+        if let wait = dispatchWaitIfNeeded(
+            scope: reservation.scope,
+            cost: reservation.cost,
+            now: now
+        ) {
+            return wait
+        }
         scopes[reservation.scope]?.uncommittedReservations.remove(reservation.id)
+        return nil
     }
 
     package func refund(_ reservation: RateLimitReservation) {
@@ -229,12 +274,94 @@ package actor AdvancedRateLimitCoordinator {
         }
     }
 
-    private func normalizedCost(_ cost: Double) -> Double {
-        let positive = max(Double.leastNonzeroMagnitude, cost)
-        switch policy.algorithm {
-        case .tokenBucket(let capacity, _): return min(capacity, positive)
-        case .slidingWindow(let limit, _): return min(limit, positive)
+    private func dispatchWaitIfNeeded(
+        scope: String,
+        cost: Double,
+        now: Duration
+    ) -> Duration? {
+        guard var state = scopes[scope] else { return .zero }
+        if let cooldown = state.cooldownUntil, cooldown > now {
+            return cooldown - now
         }
+
+        switch policy.algorithm {
+        case .tokenBucket(let capacity, let refillPerSecond):
+            let previous = state.lastDispatchRefill ?? now
+            let elapsed = max(0, (now - previous).rateLimitSeconds)
+            let available = min(
+                capacity,
+                (state.dispatchTokens ?? capacity) + elapsed * refillPerSecond
+            )
+            state.lastDispatchRefill = now
+            if available >= cost {
+                state.dispatchTokens = available - cost
+                scopes[scope] = state
+                return nil
+            }
+            state.dispatchTokens = available
+            scopes[scope] = state
+            return .seconds((cost - available) / refillPerSecond)
+
+        case .slidingWindow(let limit, let interval):
+            state.dispatchedSlidingEntries.removeAll { now - $0.instant >= interval }
+            let used = state.dispatchedSlidingEntries.reduce(0) { $0 + $1.cost }
+            if used + cost <= limit {
+                state.dispatchedSlidingEntries.append((now, cost))
+                scopes[scope] = state
+                return nil
+            }
+            guard let oldest = state.dispatchedSlidingEntries.first else { return .zero }
+            scopes[scope] = state
+            return oldest.instant + interval - now
+        }
+    }
+
+    /// Reclaims only scope state whose reservation and dispatch ledgers both
+    /// represent a fully available quota. Partially refilled buckets, live
+    /// windows, cooldowns, and outstanding reservations retain their scope so
+    /// eviction can never increase the configured allowance.
+    private func pruneDormantScopes(at now: Duration) {
+        var removable: [String] = []
+        var refreshed: [String: ScopeState] = [:]
+        for (scope, var state) in scopes {
+            guard state.uncommittedReservations.isEmpty,
+                state.cooldownUntil.map({ $0 <= now }) ?? true
+            else { continue }
+
+            switch policy.algorithm {
+            case .tokenBucket(let capacity, let refillPerSecond):
+                let reservationElapsed = max(
+                    0,
+                    (now - (state.lastRefill ?? now)).rateLimitSeconds
+                )
+                let dispatchElapsed = max(
+                    0,
+                    (now - (state.lastDispatchRefill ?? now)).rateLimitSeconds
+                )
+                let reservationTokens = min(
+                    capacity,
+                    (state.tokens ?? capacity) + reservationElapsed * refillPerSecond
+                )
+                let dispatchTokens = min(
+                    capacity,
+                    (state.dispatchTokens ?? capacity) + dispatchElapsed * refillPerSecond
+                )
+                if reservationTokens >= capacity, dispatchTokens >= capacity {
+                    removable.append(scope)
+                }
+
+            case .slidingWindow(_, let interval):
+                state.slidingEntries.removeAll { now - $0.instant >= interval }
+                state.dispatchedSlidingEntries.removeAll { now - $0.instant >= interval }
+                if state.slidingEntries.isEmpty, state.dispatchedSlidingEntries.isEmpty {
+                    removable.append(scope)
+                } else {
+                    refreshed[scope] = state
+                }
+            }
+        }
+        for scope in removable { scopes.removeValue(forKey: scope) }
+        for (scope, state) in refreshed { scopes[scope] = state }
     }
 
     private func retryAfterDelay(response: HTTPURLResponse, maximumDelay: TimeInterval) -> TimeInterval? {

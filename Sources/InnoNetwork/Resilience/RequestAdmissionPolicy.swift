@@ -94,17 +94,17 @@ package actor RequestAdmissionCoordinator {
     package func acquire(for request: URLRequest) async throws -> RequestAdmissionGrant {
         try Task.checkCancellation()
         let scope = scopeKey(for: request)
-        if waiters.isEmpty, hasCapacity(for: scope) {
+        let scopeIsKnown = knownScopes.contains(scope)
+        guard scopeIsKnown || knownScopes.count < policy.maximumScopes else {
+            throw RequestAdmissionFailure.queueFull
+        }
+        if hasCapacity(for: scope), !waiters.contains(where: { $0.scope == scope }) {
             grant(scope: scope)
             return RequestAdmissionGrant(scope: scope, wasQueued: false)
         }
         guard waiters.count < policy.maximumPendingRequests else {
             throw RequestAdmissionFailure.queueFull
         }
-        guard knownScopes.contains(scope) || knownScopes.count < policy.maximumScopes else {
-            throw RequestAdmissionFailure.queueFull
-        }
-
         let id = UUID()
         let maximumQueueWait = policy.maximumQueueWait
         let timeoutClock = clock

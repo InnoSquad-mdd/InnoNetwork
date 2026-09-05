@@ -192,25 +192,53 @@ extension RequestExecutor {
                 ),
                 nil
             )
+        } catch RateLimitAdmissionFailure.invalidConfiguration(let message) {
+            throw NetworkError.configuration(reason: .invalidRequest(message))
         }
 
-        let admissionGrant: RequestAdmissionGrant?
+        var admissionGrant: RequestAdmissionGrant?
         do {
-            admissionGrant = try await runtime.requestAdmission?.acquire(for: request)
-            if let admissionGrant {
+            while true {
+                admissionGrant = try await runtime.requestAdmission?.acquire(for: request)
+                if let admissionGrant {
+                    await eventHub.publish(
+                        .decision(
+                            NetworkDecision(
+                                requestID: context.requestID,
+                                attemptIndex: context.retryIndex,
+                                kind: .admission,
+                                outcome: admissionGrant.wasQueued ? .delayed : .allowed,
+                                reason: .policyAllowed
+                            )
+                        ),
+                        requestID: context.requestID,
+                        observers: context.eventObservers
+                    )
+                }
+
+                guard let rateReservation,
+                    let dispatchWait = await runtime.rateLimit?.commit(rateReservation)
+                else {
+                    break
+                }
+                if let grant = admissionGrant {
+                    await runtime.requestAdmission?.release(scope: grant.scope)
+                    admissionGrant = nil
+                }
                 await eventHub.publish(
                     .decision(
                         NetworkDecision(
                             requestID: context.requestID,
                             attemptIndex: context.retryIndex,
-                            kind: .admission,
-                            outcome: admissionGrant.wasQueued ? .delayed : .allowed,
-                            reason: .policyAllowed
+                            kind: .rateLimit,
+                            outcome: .delayed,
+                            reason: .localQuota
                         )
                     ),
                     requestID: context.requestID,
                     observers: context.eventObservers
                 )
+                try await runtime.clock.sleep(for: dispatchWait)
             }
         } catch RequestAdmissionFailure.queueFull {
             if let rateReservation { await runtime.rateLimit?.refund(rateReservation) }
@@ -263,9 +291,21 @@ extension RequestExecutor {
             throw error
         }
 
-        if let rateReservation { await runtime.rateLimit?.commit(rateReservation) }
-
         do {
+            await eventHub.publish(
+                .decision(
+                    NetworkDecision(
+                        requestID: context.requestID,
+                        attemptIndex: context.retryIndex,
+                        kind: .dispatch,
+                        outcome: .allowed,
+                        reason: .policyAllowed,
+                        occurredAt: runtime.clock.now()
+                    )
+                ),
+                requestID: context.requestID,
+                observers: context.eventObservers
+            )
             let result = try await transport(
                 request: request,
                 bodySource: bodySource,

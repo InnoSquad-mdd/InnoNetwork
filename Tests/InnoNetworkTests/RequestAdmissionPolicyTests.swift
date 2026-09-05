@@ -84,6 +84,55 @@ struct RequestAdmissionPolicyTests {
         await coordinator.release(scope: secondScope)
     }
 
+    @Test("Immediate admission respects the origin registry bound")
+    func immediateAdmissionRespectsScopeBound() async throws {
+        let coordinator = RequestAdmissionCoordinator(
+            policy: RequestAdmissionPolicy(
+                maximumConcurrentRequests: 2,
+                maximumPendingRequests: 2,
+                scope: .origin,
+                maximumScopes: 1
+            ),
+            clock: TestClock()
+        )
+        let first = URLRequest(url: URL(string: "https://a.example.test/path")!)
+        let second = URLRequest(url: URL(string: "https://b.example.test/path")!)
+        let firstScope = try await coordinator.acquire(for: first).scope
+
+        await #expect(throws: RequestAdmissionFailure.queueFull) {
+            _ = try await coordinator.acquire(for: second)
+        }
+        #expect(await coordinator.snapshot.scopes == 1)
+        await coordinator.release(scope: firstScope)
+    }
+
+    @Test("A blocked origin does not queue work for an origin with free capacity")
+    func newOriginBypassesBlockedScope() async throws {
+        let coordinator = RequestAdmissionCoordinator(
+            policy: RequestAdmissionPolicy(
+                maximumConcurrentRequests: 2,
+                maximumPendingRequests: 3,
+                scope: .origin,
+                maximumConcurrentRequestsPerScope: 1
+            ),
+            clock: TestClock()
+        )
+        let first = URLRequest(url: URL(string: "https://a.example.test/path")!)
+        let second = URLRequest(url: URL(string: "https://b.example.test/path")!)
+        let firstScope = try await coordinator.acquire(for: first).scope
+        let blocked = Task { try await coordinator.acquire(for: first) }
+        await waitForPending(1, coordinator: coordinator)
+
+        let secondGrant = try await coordinator.acquire(for: second)
+        #expect(!secondGrant.wasQueued)
+        #expect(await coordinator.snapshot.active == 2)
+
+        blocked.cancel()
+        _ = try? await blocked.value
+        await coordinator.release(scope: firstScope)
+        await coordinator.release(scope: secondGrant.scope)
+    }
+
     private func waitForPending(
         _ count: Int,
         coordinator: RequestAdmissionCoordinator

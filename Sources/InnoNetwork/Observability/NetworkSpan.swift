@@ -73,11 +73,17 @@ public actor NetworkSpanObserver: NetworkEventObserving {
     public func handle(_ event: NetworkEvent) async {
         let timestamp = now()
         switch event {
-        case .requestStart(let requestID, _, _, let retryIndex):
+        case .requestStart(let requestID, _, _, _):
             if requests[requestID] == nil {
                 requests[requestID] = RequestState(spanID: UUID(), startedAt: timestamp)
             }
-            requests[requestID]?.attempts[retryIndex] = (UUID(), timestamp)
+
+        case .decision(let decision)
+        where decision.kind == .dispatch && decision.outcome == .allowed:
+            guard requests[decision.requestID] != nil else { return }
+            requests[decision.requestID]?.attempts[decision.attemptIndex] = (
+                UUID(), decision.occurredAt ?? timestamp
+            )
 
         case .retryScheduled(let requestID, let retryIndex, _, _):
             finishAttempt(requestID: requestID, attemptIndex: retryIndex, outcome: .retried, at: timestamp)

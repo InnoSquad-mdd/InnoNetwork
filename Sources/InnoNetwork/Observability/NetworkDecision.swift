@@ -2,6 +2,7 @@ import Foundation
 
 /// A policy boundary that made an observable execution decision.
 public enum NetworkDecisionKind: String, Sendable, Equatable {
+    case dispatch
     case retry
     case cache
     case streamingResume
@@ -46,6 +47,7 @@ public struct NetworkDecision: Sendable, Equatable {
     public let outcome: NetworkDecisionOutcome
     public let reason: NetworkDecisionReason
     public let delay: TimeInterval?
+    package let occurredAt: Date?
 
     public init(
         requestID: UUID,
@@ -61,5 +63,24 @@ public struct NetworkDecision: Sendable, Equatable {
         self.outcome = outcome
         self.reason = reason
         self.delay = delay
+        self.occurredAt = nil
+    }
+
+    package init(
+        requestID: UUID,
+        attemptIndex: Int,
+        kind: NetworkDecisionKind,
+        outcome: NetworkDecisionOutcome,
+        reason: NetworkDecisionReason,
+        delay: TimeInterval? = nil,
+        occurredAt: Date
+    ) {
+        self.requestID = requestID
+        self.attemptIndex = attemptIndex
+        self.kind = kind
+        self.outcome = outcome
+        self.reason = reason
+        self.delay = delay
+        self.occurredAt = occurredAt
     }
 }

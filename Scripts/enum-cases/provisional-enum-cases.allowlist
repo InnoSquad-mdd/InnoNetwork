@@ -41,6 +41,8 @@ NetworkErrorCode.timeout
 NetworkErrorCode.trustEvaluationFailed
 NetworkErrorCode.underlying
 
+NetworkDecisionKind.dispatch
+
 NetworkOperationDeadlineStage.authentication
 NetworkOperationDeadlineStage.cacheLookup
 NetworkOperationDeadlineStage.connectivityWait

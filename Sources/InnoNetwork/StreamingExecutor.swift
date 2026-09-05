@@ -268,15 +268,24 @@ package struct StreamingExecutor: Sendable {
                 observers: configuration.eventObservers
             )
 
-            urlRequest = try await applyRequestInterceptors(
-                urlRequest,
-                sessionInterceptors: configuration.requestInterceptors,
-                endpointInterceptors: request.requestInterceptors,
-                sessionSigners: configuration.requestSigners,
-                endpointSigners: request.requestSigners,
-                sessionAuthentication: request.sessionAuthentication,
-                refreshCoordinator: executionRuntime.refreshCoordinator
-            )
+            let requestBeforeInterceptors = urlRequest
+            urlRequest = try await withStreamingTimeout(
+                phase: .total,
+                phaseBudget: nil,
+                totalBudget: timeoutPolicy.total,
+                logicalStart: logicalStart,
+                clock: executionRuntime.clock
+            ) {
+                try await applyRequestInterceptors(
+                    requestBeforeInterceptors,
+                    sessionInterceptors: configuration.requestInterceptors,
+                    endpointInterceptors: request.requestInterceptors,
+                    sessionSigners: configuration.requestSigners,
+                    endpointSigners: request.requestSigners,
+                    sessionAuthentication: request.sessionAuthentication,
+                    refreshCoordinator: executionRuntime.refreshCoordinator
+                )
+            }
             retryRequest = urlRequest
 
             // Streaming applies endpoint/session interceptors, auth tokens,
@@ -315,130 +324,108 @@ package struct StreamingExecutor: Sendable {
             let context =
                 hasRequestSigners ? baseContext.restrictingSignedRequestSharing() : baseContext
             let transportRequest = urlRequest
-            let rateReservation = try await executionRuntime.rateLimit?.reserve(for: transportRequest)
-            if let rateReservation {
+            let streamGrant = try await acquireStreamingTransportPermit(
+                request: transportRequest,
+                requestID: requestID,
+                retryIndex: retryIndex,
+                configuration: configuration,
+                executionRuntime: executionRuntime,
+                totalBudget: timeoutPolicy.total,
+                logicalStart: logicalStart
+            )
+            do {
+                attemptStartedAt = executionRuntime.clock.now()
                 await eventHub.publish(
                     .decision(
                         NetworkDecision(
                             requestID: requestID,
                             attemptIndex: retryIndex,
-                            kind: .rateLimit,
-                            outcome: rateReservation.wasDelayed ? .delayed : .allowed,
-                            reason: rateReservation.wasDelayed ? .localQuota : .policyAllowed
-                        )),
+                            kind: .dispatch,
+                            outcome: .allowed,
+                            reason: .policyAllowed,
+                            occurredAt: attemptStartedAt ?? executionRuntime.clock.now()
+                        )
+                    ),
                     requestID: requestID,
                     observers: configuration.eventObservers
                 )
-                await executionRuntime.rateLimit?.commit(rateReservation)
-            }
-            attemptStartedAt = Date()
-            let bytes: URLSession.AsyncBytes
-            let response: URLResponse
-            do {
-                (bytes, response) = try await withStreamingTimeout(
-                    phase: .firstResponse,
-                    phaseBudget: timeoutPolicy.firstResponse,
-                    totalBudget: timeoutPolicy.total,
-                    logicalStart: logicalStart,
-                    clock: executionRuntime.clock
-                ) {
-                    try await session.bytes(for: transportRequest, context: context)
-                }
-            } catch {
-                throw StreamingAttemptFailure(
-                    error: error,
-                    startedAt: attemptStartedAt,
-                    phase: .handshake,
-                    request: retryRequest
-                )
-            }
-            // Stop rejected handshakes and abandoned/erroring decoders too.
-            // Receiving headers does not mean the response body has completed.
-            defer { bytes.task.cancel() }
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw NetworkError.underlying(
-                    SendableUnderlyingError(
-                        domain: NetworkError.errorDomain,
-                        code: NetworkErrorCode.nonHTTPResponse.rawValue,
-                        message:
-                            "Received a non-HTTP response on streaming request to \(NetworkError.diagnosticURLString(for: urlRequest.url)); response was \(type(of: response))."
-                    ),
-                    nil
-                )
-            }
-            await executionRuntime.rateLimit?.observe(response: httpResponse, for: transportRequest)
-            await eventHub.publish(
-                .responseReceived(
-                    requestID: requestID,
-                    statusCode: httpResponse.statusCode,
-                    byteCount: 0
-                ),
-                requestID: requestID,
-                observers: configuration.eventObservers
-            )
-
-            var networkResponse = Response(
-                statusCode: httpResponse.statusCode,
-                data: Data(),
-                request: urlRequest,
-                response: httpResponse,
-                kind: .headersOnly
-            )
-            for interceptor in configuration.responseInterceptors {
-                networkResponse = try await interceptor.adapt(networkResponse, request: urlRequest)
-            }
-
-            let acceptable = request.acceptableStatusCodes ?? configuration.acceptableStatusCodes
-            guard acceptable.contains(networkResponse.statusCode) else {
-                // Handshake failure: surface the status before consuming body
-                // bytes so the outer loop can consult RetryPolicy without
-                // mixing this budget with Last-Event-ID resume.
-                throw StreamingAttemptFailure(
-                    error: NetworkError.statusCode(networkResponse),
-                    startedAt: attemptStartedAt,
-                    phase: .handshake,
-                    request: urlRequest
-                )
-            }
-
-
-            let streamGrant: RequestAdmissionGrant?
-            do {
-                streamGrant = try await executionRuntime.streamAdmission?.acquire(for: transportRequest)
-                if let streamGrant {
-                    await eventHub.publish(
-                        .decision(
-                            NetworkDecision(
-                                requestID: requestID,
-                                attemptIndex: retryIndex,
-                                kind: .admission,
-                                outcome: streamGrant.wasQueued ? .delayed : .allowed,
-                                reason: .policyAllowed
-                            )),
-                        requestID: requestID,
-                        observers: configuration.eventObservers
+                let bytes: URLSession.AsyncBytes
+                let response: URLResponse
+                do {
+                    (bytes, response) = try await withStreamingTimeout(
+                        phase: .firstResponse,
+                        phaseBudget: timeoutPolicy.firstResponse,
+                        totalBudget: timeoutPolicy.total,
+                        logicalStart: logicalStart,
+                        clock: executionRuntime.clock
+                    ) {
+                        try await session.bytes(for: transportRequest, context: context)
+                    }
+                } catch {
+                    throw StreamingAttemptFailure(
+                        error: error,
+                        startedAt: attemptStartedAt,
+                        phase: .handshake,
+                        request: retryRequest
                     )
                 }
-            } catch RequestAdmissionFailure.queueFull {
-                throw NetworkError.underlying(
-                    SendableUnderlyingError(
-                        domain: NetworkError.errorDomain,
-                        code: NetworkErrorCode.requestAdmissionRejected.rawValue,
-                        message: "The bounded streaming admission queue is full."
-                    ), nil
+                // Stop rejected handshakes and abandoned/erroring decoders too.
+                // Receiving headers does not mean the response body has completed.
+                defer { bytes.task.cancel() }
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw NetworkError.underlying(
+                        SendableUnderlyingError(
+                            domain: NetworkError.errorDomain,
+                            code: NetworkErrorCode.nonHTTPResponse.rawValue,
+                            message:
+                                "Received a non-HTTP response on streaming request to \(NetworkError.diagnosticURLString(for: urlRequest.url)); response was \(type(of: response))."
+                        ),
+                        nil
+                    )
+                }
+                await executionRuntime.rateLimit?.observe(response: httpResponse, for: transportRequest)
+                await eventHub.publish(
+                    .responseReceived(
+                        requestID: requestID,
+                        statusCode: httpResponse.statusCode,
+                        byteCount: 0
+                    ),
+                    requestID: requestID,
+                    observers: configuration.eventObservers
                 )
-            } catch RequestAdmissionFailure.queueWaitExpired {
-                throw NetworkError.underlying(
-                    SendableUnderlyingError(
-                        domain: NetworkError.errorDomain,
-                        code: NetworkErrorCode.requestAdmissionWaitExpired.rawValue,
-                        message: "The streaming admission wait expired."
-                    ), nil
-                )
-            }
 
-            let streamingLineByteLimit = max(1, configuration.streamingLineByteLimit)
-            do {
+                var networkResponse = Response(
+                    statusCode: httpResponse.statusCode,
+                    data: Data(),
+                    request: urlRequest,
+                    response: httpResponse,
+                    kind: .headersOnly
+                )
+                let interceptedRequest = urlRequest
+                for interceptor in configuration.responseInterceptors {
+                    let response = networkResponse
+                    networkResponse = try await withStreamingTimeout(
+                        phase: .total,
+                        phaseBudget: nil,
+                        totalBudget: timeoutPolicy.total,
+                        logicalStart: logicalStart,
+                        clock: executionRuntime.clock
+                    ) {
+                        try await interceptor.adapt(response, request: interceptedRequest)
+                    }
+                }
+
+                let acceptable = request.acceptableStatusCodes ?? configuration.acceptableStatusCodes
+                guard acceptable.contains(networkResponse.statusCode) else {
+                    throw StreamingAttemptFailure(
+                        error: NetworkError.statusCode(networkResponse),
+                        startedAt: attemptStartedAt,
+                        phase: .handshake,
+                        request: urlRequest
+                    )
+                }
+
+                let streamingLineByteLimit = max(1, configuration.streamingLineByteLimit)
                 let result = try await consumeAttemptBytes(
                     bytes,
                     request: request,
@@ -466,6 +453,152 @@ package struct StreamingExecutor: Sendable {
             throw failure
         } catch {
             throw StreamingAttemptFailure(error: error, startedAt: attemptStartedAt)
+        }
+    }
+
+    private func acquireStreamingTransportPermit(
+        request: URLRequest,
+        requestID: UUID,
+        retryIndex: Int,
+        configuration: NetworkConfiguration,
+        executionRuntime: RequestExecutionRuntime,
+        totalBudget: Duration?,
+        logicalStart: Duration
+    ) async throws -> RequestAdmissionGrant? {
+        let rateReservation: RateLimitReservation?
+        do {
+            rateReservation = try await withStreamingTimeout(
+                phase: .total,
+                phaseBudget: nil,
+                totalBudget: totalBudget,
+                logicalStart: logicalStart,
+                clock: executionRuntime.clock
+            ) {
+                try await executionRuntime.rateLimit?.reserve(for: request)
+            }
+        } catch RateLimitAdmissionFailure.queueFull {
+            throw NetworkError.underlying(
+                SendableUnderlyingError(
+                    domain: NetworkError.errorDomain,
+                    code: NetworkErrorCode.rateLimitQueueRejected.rawValue,
+                    message: "The bounded rate-limit queue is full."
+                ), nil
+            )
+        } catch RateLimitAdmissionFailure.scopeLimitReached {
+            throw NetworkError.underlying(
+                SendableUnderlyingError(
+                    domain: NetworkError.errorDomain,
+                    code: NetworkErrorCode.rateLimitScopeRejected.rawValue,
+                    message: "The bounded rate-limit scope registry is full."
+                ), nil
+            )
+        } catch RateLimitAdmissionFailure.invalidConfiguration(let message) {
+            throw NetworkError.configuration(reason: .invalidRequest(message))
+        }
+
+        if let rateReservation {
+            await eventHub.publish(
+                .decision(
+                    NetworkDecision(
+                        requestID: requestID,
+                        attemptIndex: retryIndex,
+                        kind: .rateLimit,
+                        outcome: rateReservation.wasDelayed ? .delayed : .allowed,
+                        reason: rateReservation.wasDelayed ? .localQuota : .policyAllowed
+                    )
+                ),
+                requestID: requestID,
+                observers: configuration.eventObservers
+            )
+        }
+
+        var grant: RequestAdmissionGrant?
+        do {
+            while true {
+                grant = try await withStreamingTimeout(
+                    phase: .total,
+                    phaseBudget: nil,
+                    totalBudget: totalBudget,
+                    logicalStart: logicalStart,
+                    clock: executionRuntime.clock
+                ) {
+                    try await executionRuntime.streamAdmission?.acquire(for: request)
+                }
+                if let grant {
+                    await eventHub.publish(
+                        .decision(
+                            NetworkDecision(
+                                requestID: requestID,
+                                attemptIndex: retryIndex,
+                                kind: .admission,
+                                outcome: grant.wasQueued ? .delayed : .allowed,
+                                reason: .policyAllowed
+                            )
+                        ),
+                        requestID: requestID,
+                        observers: configuration.eventObservers
+                    )
+                }
+
+                guard let rateReservation,
+                    let dispatchWait = await executionRuntime.rateLimit?.commit(rateReservation)
+                else {
+                    return grant
+                }
+                if let currentGrant = grant {
+                    await executionRuntime.streamAdmission?.release(scope: currentGrant.scope)
+                    grant = nil
+                }
+                await eventHub.publish(
+                    .decision(
+                        NetworkDecision(
+                            requestID: requestID,
+                            attemptIndex: retryIndex,
+                            kind: .rateLimit,
+                            outcome: .delayed,
+                            reason: .localQuota
+                        )
+                    ),
+                    requestID: requestID,
+                    observers: configuration.eventObservers
+                )
+                try await withStreamingTimeout(
+                    phase: .total,
+                    phaseBudget: nil,
+                    totalBudget: totalBudget,
+                    logicalStart: logicalStart,
+                    clock: executionRuntime.clock
+                ) {
+                    try await executionRuntime.clock.sleep(for: dispatchWait)
+                }
+            }
+        } catch {
+            if let grant {
+                await executionRuntime.streamAdmission?.release(scope: grant.scope)
+            }
+            if let rateReservation {
+                await executionRuntime.rateLimit?.refund(rateReservation)
+            }
+            switch error {
+            case RequestAdmissionFailure.queueFull:
+                throw NetworkError.underlying(
+                    SendableUnderlyingError(
+                        domain: NetworkError.errorDomain,
+                        code: NetworkErrorCode.requestAdmissionRejected.rawValue,
+                        message: "The bounded streaming admission queue is full."
+                    ), nil
+                )
+            case RequestAdmissionFailure.queueWaitExpired:
+                throw NetworkError.underlying(
+                    SendableUnderlyingError(
+                        domain: NetworkError.errorDomain,
+                        code: NetworkErrorCode.requestAdmissionWaitExpired.rawValue,
+                        message: "The streaming admission wait expired."
+                    ), nil
+                )
+            default:
+                throw error
+            }
         }
     }
 

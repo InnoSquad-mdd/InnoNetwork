@@ -344,6 +344,7 @@ InnoNetwork	swift.enum.case	AdvancedRateLimitAlgorithm.slidingWindow(limit:inter
 InnoNetwork	swift.enum.case	AdvancedRateLimitAlgorithm.tokenBucket(capacity:refillPerSecond:)
 InnoNetwork	swift.enum.case	NetworkDecisionKind.admission
 InnoNetwork	swift.enum.case	NetworkDecisionKind.cache
+InnoNetwork	swift.enum.case	NetworkDecisionKind.dispatch
 InnoNetwork	swift.enum.case	NetworkDecisionKind.rateLimit
 InnoNetwork	swift.enum.case	NetworkDecisionKind.retry
 InnoNetwork	swift.enum.case	NetworkDecisionKind.streamingResume
