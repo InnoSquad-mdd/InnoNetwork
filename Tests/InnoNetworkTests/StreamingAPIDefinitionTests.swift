@@ -610,8 +610,8 @@ private func streamingEventName(_ event: NetworkEvent) -> String {
         return "failed"
     case .cacheRevalidation:
         return "cache_revalidation"
-    case .decision:
-        return "decision"
+    case .decision(let decision):
+        return decision.kind.rawValue
     }
 }
 
@@ -688,8 +688,8 @@ struct StreamingAPIDefinitionTests {
         }
 
         #expect(values == ["one", "two"])
-        let events = await waitForStreamingEvents(store: store, minimumCount: 4)
-        #expect(events.map(streamingEventName) == ["start", "adapted", "response", "finished"])
+        let events = await waitForStreamingEvents(store: store, minimumCount: 5)
+        #expect(events.map(streamingEventName) == ["start", "adapted", "dispatch", "response", "finished"])
         let finishedByteCounts = events.compactMap { event -> Int? in
             if case .requestFinished(_, _, let byteCount) = event { return byteCount }
             return nil
@@ -1108,7 +1108,7 @@ struct StreamingAPIDefinitionTests {
         let captured = SequencedStreamingURLProtocol.capturedRequests(for: streamURL)
         #expect(values == ["recovered"])
         #expect(captured.count == 2)
-        let events = await waitForStreamingEvents(store: store, minimumCount: 8)
+        let events = await waitForStreamingEvents(store: store, minimumCount: 10)
         let retryDelays = events.compactMap { event -> TimeInterval? in
             if case .retryScheduled(_, _, let delay, _) = event { return delay }
             return nil
@@ -1123,10 +1123,12 @@ struct StreamingAPIDefinitionTests {
             events.map(streamingEventName) == [
                 "start",
                 "adapted",
+                "dispatch",
                 "response",
                 "retry",
                 "start",
                 "adapted",
+                "dispatch",
                 "response",
                 "finished",
             ])
@@ -1170,14 +1172,16 @@ struct StreamingAPIDefinitionTests {
         let captured = SequencedStreamingURLProtocol.capturedRequests(for: streamURL)
         #expect(values == ["recovered"])
         #expect(captured.count == 2)
-        let events = await waitForStreamingEvents(store: store, minimumCount: 7)
+        let events = await waitForStreamingEvents(store: store, minimumCount: 9)
         #expect(
             events.map(streamingEventName) == [
                 "start",
                 "adapted",
+                "dispatch",
                 "retry",
                 "start",
                 "adapted",
+                "dispatch",
                 "response",
                 "finished",
             ])

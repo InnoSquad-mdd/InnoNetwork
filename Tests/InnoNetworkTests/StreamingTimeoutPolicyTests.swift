@@ -10,17 +10,22 @@ struct StreamingTimeoutPolicyTests {
     @Test("First-event budget cancels an accepted response exactly once")
     func firstEventTimeout() async throws {
         let clock = TestClock()
+        let cancellationSignal = AsyncStream<Void>.makeStream()
         let cancellations = OSAllocatedUnfairLock(initialState: 0)
         let watchdog = StreamingTimeoutWatchdog(
             policy: StreamingTimeoutPolicy(firstEvent: .seconds(5)),
             logicalStart: .zero,
             clock: clock,
-            cancelTransport: { cancellations.withLock { $0 += 1 } }
+            cancelTransport: {
+                cancellations.withLock { $0 += 1 }
+                cancellationSignal.continuation.yield()
+            }
         )
 
         #expect(await clock.waitForWaiters(count: 1))
         clock.advance(by: .seconds(5))
-        await Task.yield()
+        var cancellationIterator = cancellationSignal.stream.makeAsyncIterator()
+        _ = await cancellationIterator.next()
 
         #expect(cancellations.withLock { $0 } == 1)
         #expect(watchdog.timeoutError != nil)
@@ -30,12 +35,16 @@ struct StreamingTimeoutPolicyTests {
     @Test("Byte activity extends the idle deadline without creating a task per byte")
     func activityExtendsIdleDeadline() async throws {
         let clock = TestClock()
+        let cancellationSignal = AsyncStream<Void>.makeStream()
         let cancellations = OSAllocatedUnfairLock(initialState: 0)
         let watchdog = StreamingTimeoutWatchdog(
             policy: StreamingTimeoutPolicy(idle: .seconds(5)),
             logicalStart: .zero,
             clock: clock,
-            cancelTransport: { cancellations.withLock { $0 += 1 } }
+            cancelTransport: {
+                cancellations.withLock { $0 += 1 }
+                cancellationSignal.continuation.yield()
+            }
         )
 
         #expect(await clock.waitForEnqueuedCount(atLeast: 1))
@@ -46,7 +55,8 @@ struct StreamingTimeoutPolicyTests {
         #expect(cancellations.withLock { $0 } == 0)
 
         clock.advance(by: .seconds(4))
-        await Task.yield()
+        var cancellationIterator = cancellationSignal.stream.makeAsyncIterator()
+        _ = await cancellationIterator.next()
         #expect(cancellations.withLock { $0 } == 1)
         watchdog.finish()
     }
@@ -55,19 +65,22 @@ struct StreamingTimeoutPolicyTests {
     func totalBudgetDoesNotResetAtAcceptance() async throws {
         let clock = TestClock()
         clock.advance(by: .seconds(3))
+        let cancellationSignal = AsyncStream<Void>.makeStream()
         let cancellations = OSAllocatedUnfairLock(initialState: 0)
         let watchdog = StreamingTimeoutWatchdog(
             policy: StreamingTimeoutPolicy(total: .seconds(5)),
             logicalStart: .zero,
             clock: clock,
-            cancelTransport: { cancellations.withLock { $0 += 1 } }
+            cancelTransport: {
+                cancellations.withLock { $0 += 1 }
+                cancellationSignal.continuation.yield()
+            }
         )
 
         #expect(await clock.waitForWaiters(count: 1))
         clock.advance(by: .seconds(2))
-        for _ in 0..<20 where cancellations.withLock({ $0 }) == 0 {
-            await Task.yield()
-        }
+        var cancellationIterator = cancellationSignal.stream.makeAsyncIterator()
+        _ = await cancellationIterator.next()
         #expect(cancellations.withLock { $0 } == 1)
         watchdog.finish()
     }
