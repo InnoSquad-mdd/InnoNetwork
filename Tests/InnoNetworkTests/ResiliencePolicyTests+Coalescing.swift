@@ -77,9 +77,10 @@ extension ResiliencePolicyTests {
         }
 
         let original = Task { try await execute() }
-        #expect(await eventHubWaitForCondition(timeout: 1) {
-            await session.requestCount == 1
-        })
+        #expect(
+            await eventHubWaitForCondition(timeout: 1) {
+                await session.requestCount == 1
+            })
 
         await runtime.circuitBreakers.recordStatus(
             request: request,
@@ -89,9 +90,10 @@ extension ResiliencePolicyTests {
         clock.advance(by: .seconds(1))
         let probe = Task { try await execute() }
 
-        #expect(await eventHubWaitForCondition(timeout: 1) {
-            await session.requestCount == 2
-        })
+        #expect(
+            await eventHubWaitForCondition(timeout: 1) {
+                await session.requestCount == 2
+            })
         await session.release()
         _ = try await original.value
         _ = try await probe.value

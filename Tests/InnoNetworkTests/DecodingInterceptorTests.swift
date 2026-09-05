@@ -3,6 +3,38 @@ import Testing
 
 @testable import InnoNetwork
 
+private actor DecodeCancellationGate {
+    let entered = AsyncStream<Void>.makeStream()
+    let cancelled = AsyncStream<Void>.makeStream()
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                self.continuation = continuation
+                entered.continuation.yield()
+            }
+        } onCancel: {
+            cancelled.continuation.yield()
+        }
+    }
+
+    func waitUntilEntered() async {
+        var iterator = entered.stream.makeAsyncIterator()
+        _ = await iterator.next()
+    }
+
+    func waitUntilCancelled() async {
+        var iterator = cancelled.stream.makeAsyncIterator()
+        _ = await iterator.next()
+    }
+
+    func release() {
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
 @Suite("Decoding Interceptor Tests")
 struct DecodingInterceptorTests {
 
@@ -50,6 +82,31 @@ struct DecodingInterceptorTests {
         }
     }
 
+    private struct HeldDidDecode: DecodingInterceptor {
+        let gate: DecodeCancellationGate
+
+        func didDecode<APIResponse>(
+            _ value: APIResponse,
+            response: Response
+        ) async throws -> APIResponse where APIResponse: Sendable {
+            await gate.wait()
+            return value
+        }
+    }
+
+    private func makeHeldClient(gate: DecodeCancellationGate) -> DefaultNetworkClient {
+        let session = MockURLSession()
+        session.setMockResponse(statusCode: 200, data: #"{"value":1}"#.data(using: .utf8)!)
+        return DefaultNetworkClient(
+            configuration: NetworkConfiguration(
+                baseURL: URL(string: "https://api.example.com/v1")!,
+                networkMonitor: nil,
+                decodingInterceptors: [HeldDidDecode(gate: gate)]
+            ),
+            session: session
+        )
+    }
+
     @Test("willDecode unwraps envelope and didDecode observes typed value")
     func envelopeUnwrap() async throws {
         let payload = #"{"data":{"value":42}}"#.data(using: .utf8)!
@@ -68,6 +125,68 @@ struct DecodingInterceptorTests {
         #expect(received == EnvelopeBody(value: 42))
         #expect(counter.willDecode == 1)
         #expect(counter.didDecode == 1)
+    }
+
+    @Test("Caller cancellation during didDecode cannot return success")
+    func callerCancellationDuringDidDecode() async {
+        let gate = DecodeCancellationGate()
+        let client = makeHeldClient(gate: gate)
+        let task = Task { try await client.request(GetEnvelope()) }
+
+        await gate.waitUntilEntered()
+        task.cancel()
+        await gate.waitUntilCancelled()
+        await gate.release()
+
+        switch await task.result {
+        case .success(let value):
+            Issue.record("Cancelled request returned success: \(value)")
+        case .failure(let error):
+            #expect(NetworkError.isCancellation(error))
+        }
+        await client.shutdown()
+    }
+
+    @Test("Tagged cancellation during didDecode cannot return success")
+    func taggedCancellationDuringDidDecode() async {
+        let gate = DecodeCancellationGate()
+        let client = makeHeldClient(gate: gate)
+        let tag = CancellationTag("decode")
+        let task = Task { try await client.request(GetEnvelope(), tag: tag) }
+
+        await gate.waitUntilEntered()
+        await client.cancelAll(matching: tag)
+        await gate.waitUntilCancelled()
+        await gate.release()
+
+        switch await task.result {
+        case .success(let value):
+            Issue.record("Tag-cancelled request returned success: \(value)")
+        case .failure(let error):
+            #expect(NetworkError.isCancellation(error))
+        }
+        await client.shutdown()
+    }
+
+    @Test("Operation cancellation during didDecode returns a cancelled failure")
+    func operationCancellationDuringDidDecode() async {
+        let gate = DecodeCancellationGate()
+        let base = makeHeldClient(gate: gate)
+        let operation = OperationNetworkClient(client: base).start(GetEnvelope())
+
+        await gate.waitUntilEntered()
+        operation.cancel()
+        await gate.waitUntilCancelled()
+        await gate.release()
+
+        do {
+            _ = try await operation.value()
+            Issue.record("Cancelled operation returned success")
+        } catch {
+            #expect(error.kind == .cancelled)
+            #expect(error.recovery == .none)
+        }
+        await base.shutdown()
     }
 
     private struct ThrowingInterceptor: DecodingInterceptor {

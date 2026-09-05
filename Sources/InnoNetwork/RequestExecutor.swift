@@ -359,7 +359,14 @@ package struct RequestExecutor {
         var decoded = try executable.decode(data: decodableData, response: networkResponse)
         for interceptor in configuration.decodingInterceptors {
             decoded = try await interceptor.didDecode(decoded, response: networkResponse)
+            // An async post-decoder may observe cancellation without throwing
+            // (for example, a callback bridge that finishes normally). Do not
+            // let that late value cross the terminal success boundary.
+            try Task.checkCancellation()
         }
+        // Keep the no-interceptor path consistent and close the narrow race
+        // between synchronous decoding and the caller receiving success.
+        try Task.checkCancellation()
         return decoded
     }
 
