@@ -28,8 +28,12 @@ public protocol NetworkSpanExporting: Sendable {
 /// the exporter. When saturated, the oldest completed span is discarded.
 public actor NetworkSpanObserver: NetworkEventObserving {
     public struct Policy: Sendable, Equatable {
-        public var maximumBufferedSpans: Int
-        public var batchSize: Int
+        public var maximumBufferedSpans: Int {
+            didSet { maximumBufferedSpans = max(1, maximumBufferedSpans) }
+        }
+        public var batchSize: Int {
+            didSet { batchSize = max(1, batchSize) }
+        }
 
         public init(maximumBufferedSpans: Int = 1_024, batchSize: Int = 32) {
             self.maximumBufferedSpans = max(1, maximumBufferedSpans)
@@ -56,7 +60,10 @@ public actor NetworkSpanObserver: NetworkEventObserving {
         policy: Policy = Policy()
     ) {
         self.exporter = exporter
-        self.policy = policy
+        self.policy = Policy(
+            maximumBufferedSpans: policy.maximumBufferedSpans,
+            batchSize: policy.batchSize
+        )
         self.now = Date.init
     }
 
@@ -66,7 +73,10 @@ public actor NetworkSpanObserver: NetworkEventObserving {
         now: @escaping @Sendable () -> Date
     ) {
         self.exporter = exporter
-        self.policy = policy
+        self.policy = Policy(
+            maximumBufferedSpans: policy.maximumBufferedSpans,
+            batchSize: policy.batchSize
+        )
         self.now = now
     }
 
@@ -180,7 +190,7 @@ public actor NetworkSpanObserver: NetworkEventObserving {
     }
 
     private func enqueue(_ span: NetworkSpan) {
-        if buffer.count == policy.maximumBufferedSpans {
+        if buffer.count >= policy.maximumBufferedSpans {
             buffer.removeFirst()
             droppedSpanCount += 1
         }

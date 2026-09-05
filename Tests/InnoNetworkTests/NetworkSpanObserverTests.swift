@@ -5,7 +5,11 @@ import Testing
 
 private actor SpanCollector: NetworkSpanExporting {
     private(set) var spans: [NetworkSpan] = []
-    func export(_ spans: [NetworkSpan]) async { self.spans.append(contentsOf: spans) }
+    private(set) var batchSizes: [Int] = []
+    func export(_ spans: [NetworkSpan]) async {
+        batchSizes.append(spans.count)
+        self.spans.append(contentsOf: spans)
+    }
 }
 
 @Suite("Network Span Observer Tests", .serialized)
@@ -86,6 +90,35 @@ struct NetworkSpanObserverTests {
         #expect(spans.filter { $0.kind == .request }.count == 2)
         #expect(spans.filter { $0.kind == .attempt }.count == 1)
         #expect(spans.first { $0.kind == .attempt }?.requestID == firstID)
+    }
+
+    @Test("Mutated invalid buffer values are normalized before draining")
+    func mutatedPolicyCannotHangDrain() async {
+        var policy = NetworkSpanObserver.Policy()
+        policy.maximumBufferedSpans = 0
+        policy.batchSize = -1
+        #expect(policy.maximumBufferedSpans == 1)
+        #expect(policy.batchSize == 1)
+
+        let exporter = SpanCollector()
+        let dates = LockIsolatedDates()
+        let observer = NetworkSpanObserver(
+            exporter: exporter,
+            policy: policy,
+            now: { dates.next() }
+        )
+        let requestID = UUID()
+
+        await observer.handle(
+            .requestStart(requestID: requestID, method: "GET", url: "", retryIndex: 0)
+        )
+        await observer.handle(
+            .requestFinished(requestID: requestID, statusCode: 204, byteCount: 0)
+        )
+        await observer.flush()
+
+        #expect(await exporter.spans.count == 1)
+        #expect(await exporter.batchSizes == [1])
     }
 }
 
