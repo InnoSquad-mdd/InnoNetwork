@@ -1340,6 +1340,32 @@ struct StreamingAPIDefinitionTests {
         #expect(disabled.retryDelay == 0)
     }
 
+    @Test("EventSource policy reconnects once after a clean EOF")
+    func eventSourceReconnectsAfterEOF() async throws {
+        let baseURL = uniqueStreamingBaseURL()
+        let definition = ResumableStream(
+            resumePolicy: .serverSentEvents(maxAttempts: 1, retryDelay: 0)
+        )
+        let streamURL = baseURL.appendingPathComponent(definition.path)
+        SequencedStreamingURLProtocol.enqueue(
+            url: streamURL,
+            steps: [
+                .success(statusCode: 200, data: Data("1|alpha\n".utf8)),
+                .success(statusCode: 200, data: Data("2|beta\n".utf8)),
+            ]
+        )
+        let client = DefaultNetworkClient(
+            configuration: NetworkConfiguration(baseURL: baseURL, timeout: 5),
+            session: makeSequencedStreamingURLSession()
+        )
+
+        var values: [ResumableEvent] = []
+        for try await value in client.stream(definition) { values.append(value) }
+
+        #expect(values.map(\.id) == ["1", "2"])
+        #expect(SequencedStreamingURLProtocol.capturedRequests(for: streamURL).count == 2)
+    }
+
     @Test("StreamingResumePolicy clamps negative parameters")
     func resumePolicyClampsNegatives() {
         let policy = StreamingResumePolicy.lastEventID(maxAttempts: -3, retryDelay: -1)

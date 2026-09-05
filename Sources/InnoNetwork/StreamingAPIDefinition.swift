@@ -32,6 +32,15 @@ public enum StreamingResumePolicy: Sendable, Equatable {
     /// attempt.
     case lastEventID(maxAttempts: Int, retryDelay: TimeInterval = 1.0)
 
+    /// EventSource-style reconnect behavior. In addition to transport failures,
+    /// a clean EOF reconnects while attempts remain. `retry:` control fields may
+    /// replace `retryDelay` for subsequent attempts.
+    case serverSentEvents(
+        maxAttempts: Int,
+        retryDelay: TimeInterval = 1.0,
+        reconnectOnEOF: Bool = true
+    )
+
     /// Resume an application-defined line stream (for example NDJSON) using
     /// the cursor from ``StreamingAPIDefinition/eventID(from:)`` in `header`.
     /// The server must explicitly support cursor-based replay for this endpoint;
@@ -50,6 +59,7 @@ public enum StreamingResumePolicy: Sendable, Equatable {
         switch self {
         case .disabled: return 0
         case .lastEventID(let maxAttempts, _): return max(0, maxAttempts)
+        case .serverSentEvents(let maxAttempts, _, _): return max(0, maxAttempts)
         case .cursor(_, let maxAttempts, _): return max(0, maxAttempts)
         }
     }
@@ -58,6 +68,7 @@ public enum StreamingResumePolicy: Sendable, Equatable {
         switch self {
         case .disabled: return 0
         case .lastEventID(_, let delay): return max(0, delay)
+        case .serverSentEvents(_, let delay, _): return max(0, delay)
         case .cursor(_, _, let delay): return max(0, delay)
         }
     }
@@ -65,7 +76,7 @@ public enum StreamingResumePolicy: Sendable, Equatable {
     package var headerName: String? {
         switch self {
         case .disabled: nil
-        case .lastEventID: "Last-Event-ID"
+        case .lastEventID, .serverSentEvents: "Last-Event-ID"
         case .cursor(let header, _, _): header
         }
     }
@@ -74,7 +85,7 @@ public enum StreamingResumePolicy: Sendable, Equatable {
         let delay: TimeInterval
         switch self {
         case .disabled: return
-        case .lastEventID(_, let value), .cursor(_, _, let value): delay = value
+        case .lastEventID(_, let value), .serverSentEvents(_, let value, _), .cursor(_, _, let value): delay = value
         }
         guard delay.isFinite else {
             throw NetworkError.configuration(reason: .invalidRequest("Streaming resume delay must be finite."))
@@ -141,7 +152,7 @@ extension StreamingResumePolicy {
             // The consumer has opted out of resume entirely, so a bounded
             // buffer cannot mask lost recovery state.
             return true
-        case .lastEventID, .cursor:
+        case .lastEventID, .serverSentEvents, .cursor:
             // Last-Event-ID resume re-issues against the most recent id the
             // consumer has actually observed. A bounded buffer can drop a
             // not-yet-consumed frame that carried the next id, so the
@@ -149,6 +160,47 @@ extension StreamingResumePolicy {
             // unsafe.
             return !bufferingPolicy.maySilentlyDropOutputs
         }
+    }
+}
+
+public extension StreamingResumePolicy {
+    var reconnectsAfterEOF: Bool {
+        if case .serverSentEvents(_, _, let reconnect) = self { return reconnect }
+        return false
+    }
+
+    var permitsCursorlessReconnect: Bool {
+        if case .serverSentEvents = self { return true }
+        return false
+    }
+}
+
+/// Cursor mutation carried by a protocol control frame.
+public enum StreamingCursorUpdate: Sendable, Equatable {
+    case unchanged
+    case set(String)
+    case clear
+}
+
+/// Protocol metadata that must be applied even when no application output is emitted.
+public struct StreamingFrameControl: Sendable, Equatable {
+    public var cursor: StreamingCursorUpdate
+    public var retryDelay: TimeInterval?
+
+    public init(cursor: StreamingCursorUpdate = .unchanged, retryDelay: TimeInterval? = nil) {
+        self.cursor = cursor
+        self.retryDelay = retryDelay
+    }
+}
+
+/// A decoded application output plus independently actionable protocol metadata.
+public struct StreamingDecodedFrame<Output: Sendable>: Sendable {
+    public var output: Output?
+    public var control: StreamingFrameControl
+
+    public init(output: Output? = nil, control: StreamingFrameControl = .init()) {
+        self.output = output
+        self.control = control
     }
 }
 
@@ -201,6 +253,10 @@ public protocol StreamingAPIDefinition: Sendable {
     /// The default forwards to ``decode(line:)`` for stateless definitions.
     func makeDecoder() -> @Sendable (String) throws -> Output?
 
+    /// Creates a response-scoped decoder that can surface cursor/retry control
+    /// metadata independently from an application output.
+    func makeFrameDecoder() -> @Sendable (String) throws -> StreamingDecodedFrame<Output>
+
     /// Decode a single line (without trailing newline) into an `Output`,
     /// or return `nil` to skip it.
     ///
@@ -222,6 +278,20 @@ public protocol StreamingAPIDefinition: Sendable {
 
 
 public extension StreamingAPIDefinition {
+    func makeFrameDecoder() -> @Sendable (String) throws -> StreamingDecodedFrame<Output> {
+        let decode = makeDecoder()
+        return { line in
+            let output = try decode(line)
+            let cursor: StreamingCursorUpdate
+            if let output, let eventID = self.eventID(from: output) {
+                cursor = eventID.isEmpty ? .clear : .set(eventID)
+            } else {
+                cursor = .unchanged
+            }
+            return StreamingDecodedFrame(output: output, control: .init(cursor: cursor))
+        }
+    }
+
     func makeDecoder() -> @Sendable (String) throws -> Output? {
         { try self.decode(line: $0) }
     }

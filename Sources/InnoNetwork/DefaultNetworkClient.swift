@@ -191,6 +191,7 @@ package struct StreamingResumeState: Sendable {
     }
 
     package private(set) var lastSeenEventID: String?
+    package private(set) var serverRetryDelay: TimeInterval?
     private var attemptCursorObservation = AttemptCursorObservation.unobserved
 
     package init() {}
@@ -213,6 +214,11 @@ package struct StreamingResumeState: Sendable {
     package mutating func rejectEventID() {
         lastSeenEventID = nil
         attemptCursorObservation = .invalid
+    }
+
+    package mutating func observe(retryDelay: TimeInterval?) {
+        guard let retryDelay, retryDelay.isFinite, retryDelay >= 0 else { return }
+        serverRetryDelay = retryDelay
     }
 
     package func canResume(maxAttempts: Int, completedResumeAttempts: Int) -> Bool {

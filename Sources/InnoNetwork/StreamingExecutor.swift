@@ -63,7 +63,6 @@ package struct StreamingExecutor: Sendable {
         }
 
         let resumeBudget = resumePolicy.maxAttempts
-        let resumeDelay = resumePolicy.retryDelay
         var resumeState = StreamingResumeState()
         var resumeAttempts = 0
         var handshakeRetryState = StreamingHandshakeRetryState(
@@ -94,12 +93,14 @@ package struct StreamingExecutor: Sendable {
                     // - attempt budget remains
                     // - this attempt observed a safe cursor (empty cursor
                     //   explicitly resets Last-Event-ID)
+                    let hasBudget = resumeAttempts < resumeBudget
                     let canResume = resumeState.canResume(
                         maxAttempts: resumeBudget,
                         completedResumeAttempts: resumeAttempts
-                    )
+                    ) || (resumePolicy.permitsCursorlessReconnect && hasBudget)
                     if canResume && Self.isResumableTransportError(streamError) {
                         resumeAttempts += 1
+                        let reconnectDelay = resumeState.serverRetryDelay ?? resumePolicy.retryDelay
                         try await withStreamingTimeout(
                             phase: .total,
                             phaseBudget: nil,
@@ -108,7 +109,7 @@ package struct StreamingExecutor: Sendable {
                             clock: executionRuntime.clock
                         ) {
                             try await Self.waitBeforeResume(
-                                delay: resumeDelay,
+                                delay: reconnectDelay,
                                 executionRuntime: executionRuntime
                             )
                         }
@@ -118,6 +119,25 @@ package struct StreamingExecutor: Sendable {
                     throw StreamingAttemptFailure(error: streamError, startedAt: attemptStartedAt)
 
                 case .completed(let networkResponse, let streamedByteCount):
+                    if resumePolicy.reconnectsAfterEOF,
+                        resumeAttempts < resumeBudget
+                    {
+                        resumeAttempts += 1
+                        let reconnectDelay = resumeState.serverRetryDelay ?? resumePolicy.retryDelay
+                        try await withStreamingTimeout(
+                            phase: .total,
+                            phaseBudget: nil,
+                            totalBudget: timeoutPolicy.total,
+                            logicalStart: logicalStart,
+                            clock: executionRuntime.clock
+                        ) {
+                            try await Self.waitBeforeResume(
+                                delay: reconnectDelay,
+                                executionRuntime: executionRuntime
+                            )
+                        }
+                        continue
+                    }
                     // Stream completed cleanly.
                     await eventHub.publish(
                         .requestFinished(
@@ -400,7 +420,7 @@ package struct StreamingExecutor: Sendable {
         var streamedByteCount = 0
         var iterator = bytes.makeAsyncIterator()
         var skipsLeadingLF = false
-        let decode = request.makeDecoder()
+        let decode = request.makeFrameDecoder()
         let watchdog = StreamingTimeoutWatchdog(
             policy: timeoutPolicy,
             logicalStart: logicalStart,
@@ -437,7 +457,7 @@ package struct StreamingExecutor: Sendable {
             let line = frame.line
             try Task.checkCancellation()
             streamedByteCount += frame.byteCount
-            let decoded: T.Output?
+            let decoded: StreamingDecodedFrame<T.Output>
             do {
                 decoded = try decode(line)
             } catch {
@@ -452,18 +472,22 @@ package struct StreamingExecutor: Sendable {
                     )
                 )
             }
-            if let output = decoded {
-                watchdog.recordFirstEvent()
-                if let eventID = request.eventID(from: output) {
-                    if eventID.isEmpty || Self.isValidLastEventIDCursor(eventID) {
-                        resumeState.observe(eventID: eventID)
-                    } else {
-                        // Do not keep sending a stale cursor after a malformed
-                        // custom id. An unsafe cursor makes this attempt
-                        // non-resumable instead of replaying from an older id.
-                        resumeState.rejectEventID()
-                    }
+            switch decoded.control.cursor {
+            case .unchanged:
+                break
+            case .clear:
+                resumeState.observe(eventID: "")
+            case .set(let eventID):
+                if Self.isValidLastEventIDCursor(eventID) {
+                    resumeState.observe(eventID: eventID)
+                } else {
+                    resumeState.rejectEventID()
                 }
+            }
+            resumeState.observe(retryDelay: decoded.control.retryDelay)
+
+            if let output = decoded.output {
+                watchdog.recordFirstEvent()
                 try await withStreamingTimeout(
                     phase: .total,
                     phaseBudget: nil,

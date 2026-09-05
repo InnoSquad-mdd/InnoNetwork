@@ -64,6 +64,8 @@ public final class ServerSentEventDecoder: Sendable {
 
     private struct State {
         var current = ServerSentEvent()
+        var pendingCursor: StreamingCursorUpdate = .unchanged
+        var pendingRetryDelay: TimeInterval?
         var hasProcessedFirstLine = false
         var dataByteCount = 0
         var exceededLimit = false
@@ -89,7 +91,7 @@ public final class ServerSentEventDecoder: Sendable {
     /// - Returns: A dispatched event, or `nil` while still aggregating
     ///   the current frame.
     public func decode(line inputLine: String) -> ServerSentEvent? {
-        try? process(line: inputLine, maximumEventBytes: nil)
+        try? process(line: inputLine, maximumEventBytes: nil).output
     }
 
     /// Decode with a positive UTF-8 byte cap on retained data and ID/event
@@ -103,6 +105,19 @@ public final class ServerSentEventDecoder: Sendable {
         guard maximumEventBytes > 0 else {
             throw Self.limitError("SSE event byte limit must be positive.")
         }
+        return try process(line: line, maximumEventBytes: maximumEventBytes).output
+    }
+
+    /// Decodes both dispatched data events and metadata-only SSE blocks.
+    /// Use this from ``StreamingAPIDefinition/makeFrameDecoder()`` so `id:`
+    /// resets and `retry:` hints are retained even when the block has no data.
+    public func decodeFrame(
+        line: String,
+        maximumEventBytes: Int = 1024 * 1024
+    ) throws -> StreamingDecodedFrame<ServerSentEvent> {
+        guard maximumEventBytes > 0 else {
+            throw Self.limitError("SSE event byte limit must be positive.")
+        }
         return try process(line: line, maximumEventBytes: maximumEventBytes)
     }
 
@@ -110,7 +125,10 @@ public final class ServerSentEventDecoder: Sendable {
         .dataCorrupted(.init(codingPath: [], debugDescription: message))
     }
 
-    private func process(line inputLine: String, maximumEventBytes: Int?) throws -> ServerSentEvent? {
+    private func process(
+        line inputLine: String,
+        maximumEventBytes: Int?
+    ) throws -> StreamingDecodedFrame<ServerSentEvent> {
         try state.withLock { state in
             guard !state.exceededLimit else {
                 throw Self.limitError("SSE event byte limit exceeded; reset required.")
@@ -141,8 +159,14 @@ public final class ServerSentEventDecoder: Sendable {
                 let frame = state.current
                 state.current = ServerSentEvent(id: frame.id)
                 state.dataByteCount = 0
+                let control = StreamingFrameControl(
+                    cursor: state.pendingCursor,
+                    retryDelay: state.pendingRetryDelay
+                )
+                state.pendingCursor = .unchanged
+                state.pendingRetryDelay = nil
                 if frame.data.isEmpty {
-                    return nil
+                    return StreamingDecodedFrame(control: control)
                 }
                 var dispatched = frame
                 // SSE spec: strip a single trailing newline appended by
@@ -151,12 +175,12 @@ public final class ServerSentEventDecoder: Sendable {
                 if dispatched.data.hasSuffix("\n") {
                     dispatched.data.removeLast()
                 }
-                return dispatched
+                return StreamingDecodedFrame(output: dispatched, control: control)
             }
 
             // Lines starting with ":" are comments per spec.
             if line.hasPrefix(":") {
-                return nil
+                return StreamingDecodedFrame()
             }
 
             let field: String
@@ -186,6 +210,7 @@ public final class ServerSentEventDecoder: Sendable {
                 if Self.isSanitizedSSEID(value) {
                     try checkCapacity(adding: value.utf8.count, replacing: state.current.id?.utf8.count ?? 0)
                     state.current.id = value
+                    state.pendingCursor = value.isEmpty ? .clear : .set(value)
                 }
             case "event":
                 try checkCapacity(adding: value.utf8.count, replacing: state.current.event?.utf8.count ?? 0)
@@ -199,12 +224,13 @@ public final class ServerSentEventDecoder: Sendable {
             case "retry":
                 if value.allSatisfy(\.isASCIIDigit), let ms = Int(value) {
                     state.current.retry = ms
+                    state.pendingRetryDelay = TimeInterval(ms) / 1_000
                 }
             default:
                 // Unknown fields are ignored per spec.
                 break
             }
-            return nil
+            return StreamingDecodedFrame()
         }
     }
 

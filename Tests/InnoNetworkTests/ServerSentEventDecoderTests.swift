@@ -231,4 +231,29 @@ struct ServerSentEventDecoderTests {
         let withSpace = decoder.decode(line: "")
         #expect(withSpace?.data == "with-space")
     }
+
+    @Test("Control-aware decoding preserves metadata-only ID reset and retry hint")
+    func controlOnlyFrame() throws {
+        let decoder = ServerSentEventDecoder()
+        _ = try decoder.decodeFrame(line: "id: previous")
+        _ = try decoder.decodeFrame(line: "")
+        _ = try decoder.decodeFrame(line: "id:")
+        _ = try decoder.decodeFrame(line: "retry: 2500")
+        let frame = try decoder.decodeFrame(line: "")
+
+        #expect(frame.output == nil)
+        #expect(frame.control.cursor == .clear)
+        #expect(frame.control.retryDelay == 2.5)
+    }
+
+    @Test("Control-aware decoding dispatches output and cursor together")
+    func dataAndControlFrame() throws {
+        let decoder = ServerSentEventDecoder()
+        _ = try decoder.decodeFrame(line: "id: 42")
+        _ = try decoder.decodeFrame(line: "data: payload")
+        let frame = try decoder.decodeFrame(line: "")
+
+        #expect(frame.output == ServerSentEvent(id: "42", data: "payload"))
+        #expect(frame.control.cursor == .set("42"))
+    }
 }
