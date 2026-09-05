@@ -86,7 +86,7 @@ struct AdvancedRateLimitPolicyTests {
                 headerFields: ["RateLimit": "\"default\";r=0;t=30"]
             )
         )
-        await limiter.observe(response: response, for: request)
+        await limiter.observe(response: response, for: request, reservation: first)
 
         let next = Task { try await limiter.reserve(for: request) }
         #expect(await clock.waitForWaiters(count: 1))
@@ -174,6 +174,7 @@ struct AdvancedRateLimitPolicyTests {
         )
         let first = try await limiter.reserve(for: request(host: "a.example.test"))
         #expect(await limiter.commit(first) == nil)
+        await limiter.finish(first)
 
         clock.advance(by: .seconds(1))
         let second = try await limiter.reserve(for: request(host: "b.example.test"))
@@ -228,7 +229,9 @@ struct AdvancedRateLimitPolicyTests {
             clock: clock
         )
         let firstRequest = request(host: "a.example.test")
-        #expect(await limiter.commit(try await limiter.reserve(for: firstRequest)) == nil)
+        let first = try await limiter.reserve(for: firstRequest)
+        #expect(await limiter.commit(first) == nil)
+        await limiter.finish(first)
         let suspended = Task { try await limiter.reserve(for: firstRequest) }
         #expect(await clock.waitForWaiters(count: 1))
 
@@ -256,7 +259,9 @@ struct AdvancedRateLimitPolicyTests {
             clock: clock
         )
         let firstRequest = request(host: "a.example.test")
-        #expect(await limiter.commit(try await limiter.reserve(for: firstRequest)) == nil)
+        let first = try await limiter.reserve(for: firstRequest)
+        #expect(await limiter.commit(first) == nil)
+        await limiter.finish(first)
         let suspended = Task { try await limiter.reserve(for: firstRequest) }
         #expect(await clock.waitForWaiters(count: 1))
 
@@ -270,6 +275,42 @@ struct AdvancedRateLimitPolicyTests {
         let delayed = try await suspended.value
         #expect(delayed.wasDelayed)
         #expect(await limiter.commit(delayed) == nil)
+    }
+
+    @Test("An in-flight response retains its origin and server cooldown")
+    func inFlightResponseRetainsServerFeedback() async throws {
+        let clock = TestClock()
+        let limiter = AdvancedRateLimitCoordinator(
+            policy: AdvancedRateLimitPolicy(
+                algorithm: .tokenBucket(capacity: 1, refillPerSecond: 1),
+                maximumPendingRequests: 0,
+                maximumScopes: 1,
+                serverFeedback: .retryAfter(maximumDelay: 60)
+            ),
+            clock: clock
+        )
+        let firstRequest = request(host: "a.example.test")
+        let first = try await limiter.reserve(for: firstRequest)
+        #expect(await limiter.commit(first) == nil)
+        clock.advance(by: .seconds(1))
+
+        await #expect(throws: RateLimitAdmissionFailure.scopeLimitReached) {
+            _ = try await limiter.reserve(for: request(host: "b.example.test"))
+        }
+
+        let response = try #require(
+            HTTPURLResponse(
+                url: firstRequest.url!,
+                statusCode: 429,
+                httpVersion: nil,
+                headerFields: ["Retry-After": "60"]
+            )
+        )
+        await limiter.observe(response: response, for: firstRequest, reservation: first)
+
+        await #expect(throws: RateLimitAdmissionFailure.queueFull) {
+            _ = try await limiter.reserve(for: firstRequest)
+        }
     }
 
     private func request(host: String) -> URLRequest {

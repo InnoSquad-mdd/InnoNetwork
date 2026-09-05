@@ -351,7 +351,7 @@ package struct StreamingExecutor: Sendable {
             let context =
                 hasRequestSigners ? baseContext.restrictingSignedRequestSharing() : baseContext
             let transportRequest = urlRequest
-            let streamGrant = try await acquireStreamingTransportPermit(
+            let streamPermit = try await acquireStreamingTransportPermit(
                 request: transportRequest,
                 requestID: requestID,
                 retryIndex: retryIndex,
@@ -360,6 +360,7 @@ package struct StreamingExecutor: Sendable {
                 totalBudget: timeoutPolicy.total,
                 logicalStart: logicalStart
             )
+            let streamGrant = streamPermit.admissionGrant
             do {
                 attemptStartedAt = executionRuntime.clock.now()
                 await eventHub.publish(
@@ -410,7 +411,13 @@ package struct StreamingExecutor: Sendable {
                         nil
                     )
                 }
-                await executionRuntime.rateLimit?.observe(response: httpResponse, for: transportRequest)
+                if let rateReservation = streamPermit.rateReservation {
+                    await executionRuntime.rateLimit?.observe(
+                        response: httpResponse,
+                        for: transportRequest,
+                        reservation: rateReservation
+                    )
+                }
                 await eventHub.publish(
                     .responseReceived(
                         requestID: requestID,
@@ -474,6 +481,9 @@ package struct StreamingExecutor: Sendable {
                 if let streamGrant {
                     await executionRuntime.streamAdmission?.release(scope: streamGrant.scope)
                 }
+                if let rateReservation = streamPermit.rateReservation {
+                    await executionRuntime.rateLimit?.finish(rateReservation)
+                }
                 throw error
             }
         } catch let failure as StreamingAttemptFailure {
@@ -481,6 +491,11 @@ package struct StreamingExecutor: Sendable {
         } catch {
             throw StreamingAttemptFailure(error: error, startedAt: attemptStartedAt)
         }
+    }
+
+    private struct StreamingTransportPermit {
+        let admissionGrant: RequestAdmissionGrant?
+        let rateReservation: RateLimitReservation?
     }
 
     private func acquireStreamingTransportPermit(
@@ -491,7 +506,7 @@ package struct StreamingExecutor: Sendable {
         executionRuntime: RequestExecutionRuntime,
         totalBudget: Duration?,
         logicalStart: Duration
-    ) async throws -> RequestAdmissionGrant? {
+    ) async throws -> StreamingTransportPermit {
         let rateReservation: RateLimitReservation?
         do {
             rateReservation = try await withStreamingTimeout(
@@ -570,7 +585,10 @@ package struct StreamingExecutor: Sendable {
                 guard let rateReservation,
                     let dispatchWait = await executionRuntime.rateLimit?.commit(rateReservation)
                 else {
-                    return grant
+                    return StreamingTransportPermit(
+                        admissionGrant: grant,
+                        rateReservation: rateReservation
+                    )
                 }
                 if let currentGrant = grant {
                     await executionRuntime.streamAdmission?.release(scope: currentGrant.scope)

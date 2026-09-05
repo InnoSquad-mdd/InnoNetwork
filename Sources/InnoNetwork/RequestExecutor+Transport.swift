@@ -310,11 +310,20 @@ extension RequestExecutor {
             if let admissionGrant {
                 await runtime.requestAdmission?.release(scope: admissionGrant.scope)
             }
-            await runtime.rateLimit?.observe(response: result.response, for: request)
+            if let rateReservation {
+                await runtime.rateLimit?.observe(
+                    response: result.response,
+                    for: request,
+                    reservation: rateReservation
+                )
+            }
             return result
         } catch {
             if let admissionGrant {
                 await runtime.requestAdmission?.release(scope: admissionGrant.scope)
+            }
+            if let rateReservation {
+                await runtime.rateLimit?.finish(rateReservation)
             }
             if NetworkError.isCancellation(error) {
                 await runtime.circuitBreakers.abandon(circuitProbe)

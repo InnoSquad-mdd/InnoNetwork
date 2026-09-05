@@ -77,6 +77,10 @@ that cut and are not part of the 6.0 contract.
 - Circuit-breaker idle cleanup retains open and half-open safety state, so a
   long-running probe or delayed follow-up cannot silently reopen unrestricted
   traffic after the five-minute closed-state reclamation interval.
+- Advanced rate-limit scope reclamation now treats committed transports as
+  active leases until a response or terminal transport error arrives, ensuring
+  late `Retry-After` and RateLimit feedback cannot be discarded after origin
+  churn.
 - Origin-scoped admission, quota, redirect, and circuit-breaker keys now
   canonicalize scheme and host casing, implicit default ports, and IPv6
   authority formatting before comparing or allocating state.

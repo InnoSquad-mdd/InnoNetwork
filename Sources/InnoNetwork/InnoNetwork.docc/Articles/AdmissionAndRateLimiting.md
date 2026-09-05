@@ -28,7 +28,9 @@ slots and cannot exhaust the ordinary request pool. Every queue and origin
 registry is bounded; cancellation and pre-dispatch failures release capacity.
 An origin blocked by its own cap does not prevent another origin from using
 available global capacity. Fully replenished, inactive quota scopes are
-reclaimed when the registry needs room for a new origin.
+reclaimed when the registry needs room for a new origin. A committed transport
+keeps its scope active until response headers or a terminal transport error are
+observed, so late server feedback cannot be discarded during origin churn.
 
 Choose a token bucket for bursts with a steady refill, or an exact sliding
 window when the server contract is expressed as requests per interval. The

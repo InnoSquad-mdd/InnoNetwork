@@ -111,6 +111,7 @@ package actor AdvancedRateLimitCoordinator {
         var dispatchedSlidingEntries: [(instant: Duration, cost: Double)] = []
         var cooldownUntil: Duration?
         var uncommittedReservations: Set<UUID> = []
+        var committedReservations: Set<UUID> = []
         var activeReserveCalls = 0
     }
 
@@ -187,6 +188,7 @@ package actor AdvancedRateLimitCoordinator {
             return wait
         }
         scopes[reservation.scope]?.uncommittedReservations.remove(reservation.id)
+        scopes[reservation.scope]?.committedReservations.insert(reservation.id)
         return nil
     }
 
@@ -203,9 +205,19 @@ package actor AdvancedRateLimitCoordinator {
         }
     }
 
-    package func observe(response: HTTPURLResponse, for request: URLRequest) {
+    package func finish(_ reservation: RateLimitReservation) {
+        scopes[reservation.scope]?.committedReservations.remove(reservation.id)
+    }
+
+    package func observe(
+        response: HTTPURLResponse,
+        for request: URLRequest,
+        reservation: RateLimitReservation
+    ) {
         let scope = scopeKey(for: request)
-        guard scopes[scope] != nil else { return }
+        guard scope == reservation.scope,
+            scopes[scope]?.committedReservations.remove(reservation.id) != nil
+        else { return }
         let maximumDelay: TimeInterval
         let delay: TimeInterval?
         switch policy.serverFeedback {
@@ -333,6 +345,7 @@ package actor AdvancedRateLimitCoordinator {
         for (scope, var state) in scopes {
             guard state.activeReserveCalls == 0,
                 state.uncommittedReservations.isEmpty,
+                state.committedReservations.isEmpty,
                 state.cooldownUntil.map({ $0 <= now }) ?? true
             else { continue }
 
