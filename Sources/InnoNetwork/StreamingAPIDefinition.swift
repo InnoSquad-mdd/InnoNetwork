@@ -190,6 +190,10 @@ public protocol StreamingAPIDefinition: Sendable {
     /// Default is ``StreamingResumePolicy/disabled``.
     var resumePolicy: StreamingResumePolicy { get }
 
+    /// Independent first-response, first-event, idle, and total budgets.
+    /// Disabled by default.
+    var timeoutPolicy: StreamingTimeoutPolicy { get }
+
     /// Create isolated line-decoder state for one accepted HTTP response.
     /// Called once per response, including reconnects, never shared by separate
     /// calls to `stream`. Stateful SSE decoders should be allocated inside this
@@ -234,5 +238,6 @@ public extension StreamingAPIDefinition {
     var requestSigners: [RequestSigner] { [] }
     var acceptableStatusCodes: Set<Int>? { nil }
     var resumePolicy: StreamingResumePolicy { .disabled }
+    var timeoutPolicy: StreamingTimeoutPolicy { .disabled }
     func eventID(from output: Output) -> String? { nil }
 }

@@ -40,6 +40,8 @@ package struct StreamingExecutor: Sendable {
         sink: StreamingOutputSink<T.Output>
     ) async {
         let resumePolicy = request.resumePolicy
+        let timeoutPolicy = request.timeoutPolicy
+        let logicalStart = executionRuntime.clock.monotonicNow()
         do {
             try Self.validateSessionAuthentication(request, configuration: configuration)
             try resumePolicy.validate()
@@ -79,6 +81,8 @@ package struct StreamingExecutor: Sendable {
                     resumeState: &resumeState,
                     retryIndex: attemptRetryIndex,
                     resumePolicy: resumePolicy,
+                    timeoutPolicy: timeoutPolicy,
+                    logicalStart: logicalStart,
                     isResuming: resumeAttempts > 0,
                     sink: sink
                 )
@@ -96,10 +100,18 @@ package struct StreamingExecutor: Sendable {
                     )
                     if canResume && Self.isResumableTransportError(streamError) {
                         resumeAttempts += 1
-                        try await Self.waitBeforeResume(
-                            delay: resumeDelay,
-                            executionRuntime: executionRuntime
-                        )
+                        try await withStreamingTimeout(
+                            phase: .total,
+                            phaseBudget: nil,
+                            totalBudget: timeoutPolicy.total,
+                            logicalStart: logicalStart,
+                            clock: executionRuntime.clock
+                        ) {
+                            try await Self.waitBeforeResume(
+                                delay: resumeDelay,
+                                executionRuntime: executionRuntime
+                            )
+                        }
                         try Task.checkCancellation()
                         continue
                     }
@@ -129,7 +141,9 @@ package struct StreamingExecutor: Sendable {
                             state: &handshakeRetryState,
                             configuration: configuration,
                             executionRuntime: executionRuntime,
-                            requestID: requestID
+                            requestID: requestID,
+                            timeoutPolicy: timeoutPolicy,
+                            logicalStart: logicalStart
                         )
                     {
                         continue
@@ -203,6 +217,8 @@ package struct StreamingExecutor: Sendable {
         resumeState: inout StreamingResumeState,
         retryIndex: Int,
         resumePolicy: StreamingResumePolicy,
+        timeoutPolicy: StreamingTimeoutPolicy,
+        logicalStart: Duration,
         isResuming: Bool,
         sink: StreamingOutputSink<T.Output>
     ) async throws -> StreamingAttemptResult {
@@ -277,11 +293,20 @@ package struct StreamingExecutor: Sendable {
                 !configuration.requestSigners.isEmpty || !request.requestSigners.isEmpty
             let context =
                 hasRequestSigners ? baseContext.restrictingSignedRequestSharing() : baseContext
+            let transportRequest = urlRequest
             attemptStartedAt = Date()
             let bytes: URLSession.AsyncBytes
             let response: URLResponse
             do {
-                (bytes, response) = try await session.bytes(for: urlRequest, context: context)
+                (bytes, response) = try await withStreamingTimeout(
+                    phase: .firstResponse,
+                    phaseBudget: timeoutPolicy.firstResponse,
+                    totalBudget: timeoutPolicy.total,
+                    logicalStart: logicalStart,
+                    clock: executionRuntime.clock
+                ) {
+                    try await session.bytes(for: transportRequest, context: context)
+                }
             } catch {
                 throw StreamingAttemptFailure(
                     error: error,
@@ -347,6 +372,9 @@ package struct StreamingExecutor: Sendable {
                 maxLineBytes: streamingLineByteLimit,
                 resumeState: &resumeState,
                 attemptStartedAt: attemptStartedAt,
+                timeoutPolicy: timeoutPolicy,
+                logicalStart: logicalStart,
+                clock: executionRuntime.clock,
                 sink: sink
             )
         } catch let failure as StreamingAttemptFailure {
@@ -364,19 +392,30 @@ package struct StreamingExecutor: Sendable {
         maxLineBytes: Int,
         resumeState: inout StreamingResumeState,
         attemptStartedAt: Date?,
+        timeoutPolicy: StreamingTimeoutPolicy,
+        logicalStart: Duration,
+        clock: any InnoNetworkClock,
         sink: StreamingOutputSink<T.Output>
     ) async throws -> StreamingAttemptResult {
         var streamedByteCount = 0
         var iterator = bytes.makeAsyncIterator()
         var skipsLeadingLF = false
         let decode = request.makeDecoder()
+        let watchdog = StreamingTimeoutWatchdog(
+            policy: timeoutPolicy,
+            logicalStart: logicalStart,
+            clock: clock,
+            cancelTransport: { bytes.task.cancel() }
+        )
+        defer { watchdog.finish() }
         while true {
             let frame: BoundedStreamLine?
             do {
                 frame = try await Self.nextBoundedLine(
                     from: &iterator,
                     skipsLeadingLF: &skipsLeadingLF,
-                    maxBytes: maxLineBytes
+                    maxBytes: maxLineBytes,
+                    onActivity: { watchdog.recordNetworkActivity() }
                 )
             } catch is CancellationError {
                 throw NetworkError.cancelled
@@ -388,6 +427,7 @@ package struct StreamingExecutor: Sendable {
                     fallbackResponse: httpResponse
                 )
             } catch {
+                if let timeout = watchdog.timeoutError { throw timeout }
                 return .transportFailure(error, attemptStartedAt)
             }
 
@@ -413,6 +453,7 @@ package struct StreamingExecutor: Sendable {
                 )
             }
             if let output = decoded {
+                watchdog.recordFirstEvent()
                 if let eventID = request.eventID(from: output) {
                     if eventID.isEmpty || Self.isValidLastEventIDCursor(eventID) {
                         resumeState.observe(eventID: eventID)
@@ -423,7 +464,15 @@ package struct StreamingExecutor: Sendable {
                         resumeState.rejectEventID()
                     }
                 }
-                try await sink.yield(output)
+                try await withStreamingTimeout(
+                    phase: .total,
+                    phaseBudget: nil,
+                    totalBudget: timeoutPolicy.total,
+                    logicalStart: logicalStart,
+                    clock: clock
+                ) {
+                    try await sink.yield(output)
+                }
             }
         }
     }
@@ -448,7 +497,9 @@ package struct StreamingExecutor: Sendable {
         state: inout StreamingHandshakeRetryState,
         configuration: NetworkConfiguration,
         executionRuntime: RequestExecutionRuntime,
-        requestID: UUID
+        requestID: UUID,
+        timeoutPolicy: StreamingTimeoutPolicy,
+        logicalStart: Duration
     ) async throws -> Bool {
         guard failure.phase == .handshake,
             let policy = configuration.retryPolicy
@@ -505,7 +556,14 @@ package struct StreamingExecutor: Sendable {
             }
         }
 
-        if delay > 0 {
+        try await withStreamingTimeout(
+            phase: .total,
+            phaseBudget: nil,
+            totalBudget: timeoutPolicy.total,
+            logicalStart: logicalStart,
+            clock: executionRuntime.clock
+        ) {
+            guard delay > 0 else { return }
             try await executionRuntime.clock.sleep(for: .seconds(delay))
         }
 
@@ -536,12 +594,14 @@ package struct StreamingExecutor: Sendable {
     private static func nextBoundedLine<Iterator: AsyncIteratorProtocol>(
         from iterator: inout Iterator,
         skipsLeadingLF: inout Bool,
-        maxBytes: Int
+        maxBytes: Int,
+        onActivity: () -> Void = {}
     ) async throws -> BoundedStreamLine? where Iterator.Element == UInt8 {
         var bytes: [UInt8] = []
         bytes.reserveCapacity(min(maxBytes, 4 * 1024))
 
         while let byte = try await iterator.next() {
+            onActivity()
             if skipsLeadingLF {
                 skipsLeadingLF = false
                 if byte == 0x0A { continue }
@@ -565,6 +625,37 @@ package struct StreamingExecutor: Sendable {
             line: String(decoding: bytes, as: UTF8.self),
             byteCount: bytes.count
         )
+    }
+
+    private func withStreamingTimeout<Value: Sendable>(
+        phase: StreamingTimeoutPhase,
+        phaseBudget: Duration?,
+        totalBudget: Duration?,
+        logicalStart: Duration,
+        clock: any InnoNetworkClock,
+        operation: @escaping @Sendable () async throws -> Value
+    ) async throws -> Value {
+        var budgets: [(Duration, StreamingTimeoutPhase)] = []
+        if let phaseBudget { budgets.append((phaseBudget, phase)) }
+        if let totalBudget {
+            let remaining = logicalStart + totalBudget - clock.monotonicNow()
+            budgets.append((max(.zero, remaining), .total))
+        }
+        guard let selected = budgets.min(by: { $0.0 < $1.0 }) else {
+            return try await operation()
+        }
+        guard selected.0 > .zero else { throw selected.1.error }
+
+        return try await withThrowingTaskGroup(of: Value.self) { group in
+            group.addTask { try await operation() }
+            group.addTask {
+                try await clock.sleep(for: selected.0)
+                throw selected.1.error
+            }
+            defer { group.cancelAll() }
+            guard let value = try await group.next() else { throw NetworkError.cancelled }
+            return value
+        }
     }
 
     private static func streamFrameTooLargeError(

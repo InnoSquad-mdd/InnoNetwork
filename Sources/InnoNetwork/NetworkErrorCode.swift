@@ -37,6 +37,7 @@ public enum NetworkErrorCode: Int, Sendable {
     case requestAdmissionWaitExpired = 4007
     case rateLimitQueueRejected = 4008
     case rateLimitScopeRejected = 4009
+    case streamingPhaseTimeout = 4010
 
     // 5xxx — trust evaluation failures.
     case trustEvaluationFailed = 5001
