@@ -314,6 +314,21 @@ package struct StreamingExecutor: Sendable {
             let context =
                 hasRequestSigners ? baseContext.restrictingSignedRequestSharing() : baseContext
             let transportRequest = urlRequest
+            let rateReservation = try await executionRuntime.rateLimit?.reserve(for: transportRequest)
+            if let rateReservation {
+                await eventHub.publish(
+                    .decision(NetworkDecision(
+                        requestID: requestID,
+                        attemptIndex: retryIndex,
+                        kind: .rateLimit,
+                        outcome: rateReservation.wasDelayed ? .delayed : .allowed,
+                        reason: rateReservation.wasDelayed ? .localQuota : .policyAllowed
+                    )),
+                    requestID: requestID,
+                    observers: configuration.eventObservers
+                )
+                await executionRuntime.rateLimit?.commit(rateReservation)
+            }
             attemptStartedAt = Date()
             let bytes: URLSession.AsyncBytes
             let response: URLResponse
@@ -349,6 +364,7 @@ package struct StreamingExecutor: Sendable {
                     nil
                 )
             }
+            await executionRuntime.rateLimit?.observe(response: httpResponse, for: transportRequest)
             await eventHub.publish(
                 .responseReceived(
                     requestID: requestID,
@@ -383,20 +399,66 @@ package struct StreamingExecutor: Sendable {
                 )
             }
 
+
+            let streamGrant: RequestAdmissionGrant?
+            do {
+                streamGrant = try await executionRuntime.streamAdmission?.acquire(for: transportRequest)
+                if let streamGrant {
+                    await eventHub.publish(
+                        .decision(NetworkDecision(
+                            requestID: requestID,
+                            attemptIndex: retryIndex,
+                            kind: .admission,
+                            outcome: streamGrant.wasQueued ? .delayed : .allowed,
+                            reason: .policyAllowed
+                        )),
+                        requestID: requestID,
+                        observers: configuration.eventObservers
+                    )
+                }
+            } catch RequestAdmissionFailure.queueFull {
+                throw NetworkError.underlying(
+                    SendableUnderlyingError(
+                        domain: NetworkError.errorDomain,
+                        code: NetworkErrorCode.requestAdmissionRejected.rawValue,
+                        message: "The bounded streaming admission queue is full."
+                    ), nil
+                )
+            } catch RequestAdmissionFailure.queueWaitExpired {
+                throw NetworkError.underlying(
+                    SendableUnderlyingError(
+                        domain: NetworkError.errorDomain,
+                        code: NetworkErrorCode.requestAdmissionWaitExpired.rawValue,
+                        message: "The streaming admission wait expired."
+                    ), nil
+                )
+            }
+
             let streamingLineByteLimit = max(1, configuration.streamingLineByteLimit)
-            return try await consumeAttemptBytes(
-                bytes,
-                request: request,
-                networkResponse: networkResponse,
-                httpResponse: httpResponse,
-                maxLineBytes: streamingLineByteLimit,
-                resumeState: &resumeState,
-                attemptStartedAt: attemptStartedAt,
-                timeoutPolicy: timeoutPolicy,
-                logicalStart: logicalStart,
-                clock: executionRuntime.clock,
-                sink: sink
-            )
+            do {
+                let result = try await consumeAttemptBytes(
+                    bytes,
+                    request: request,
+                    networkResponse: networkResponse,
+                    httpResponse: httpResponse,
+                    maxLineBytes: streamingLineByteLimit,
+                    resumeState: &resumeState,
+                    attemptStartedAt: attemptStartedAt,
+                    timeoutPolicy: timeoutPolicy,
+                    logicalStart: logicalStart,
+                    clock: executionRuntime.clock,
+                    sink: sink
+                )
+                if let streamGrant {
+                    await executionRuntime.streamAdmission?.release(scope: streamGrant.scope)
+                }
+                return result
+            } catch {
+                if let streamGrant {
+                    await executionRuntime.streamAdmission?.release(scope: streamGrant.scope)
+                }
+                throw error
+            }
         } catch let failure as StreamingAttemptFailure {
             throw failure
         } catch {

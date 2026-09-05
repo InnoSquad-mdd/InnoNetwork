@@ -16,6 +16,9 @@ public struct RequestAdmissionPolicy: Sendable, Equatable {
     public let scope: RequestAdmissionScope
     public let maximumConcurrentRequestsPerScope: Int
     public let maximumScopes: Int
+    public let maximumConcurrentStreams: Int
+    public let maximumPendingStreams: Int
+    public let maximumStreamQueueWait: Duration?
 
     public init(
         maximumConcurrentRequests: Int,
@@ -23,7 +26,10 @@ public struct RequestAdmissionPolicy: Sendable, Equatable {
         maximumQueueWait: Duration? = nil,
         scope: RequestAdmissionScope = .origin,
         maximumConcurrentRequestsPerScope: Int? = nil,
-        maximumScopes: Int = 128
+        maximumScopes: Int = 128,
+        maximumConcurrentStreams: Int? = nil,
+        maximumPendingStreams: Int? = nil,
+        maximumStreamQueueWait: Duration? = nil
     ) {
         let concurrent = max(1, maximumConcurrentRequests)
         self.maximumConcurrentRequests = concurrent
@@ -35,6 +41,23 @@ public struct RequestAdmissionPolicy: Sendable, Equatable {
             min(concurrent, maximumConcurrentRequestsPerScope ?? concurrent)
         )
         self.maximumScopes = max(1, maximumScopes)
+        self.maximumConcurrentStreams = max(1, maximumConcurrentStreams ?? min(4, concurrent))
+        self.maximumPendingStreams = max(0, maximumPendingStreams ?? maximumPendingRequests)
+        self.maximumStreamQueueWait = maximumStreamQueueWait.map { max(.zero, $0) }
+    }
+
+    package var streamingPolicy: RequestAdmissionPolicy {
+        RequestAdmissionPolicy(
+            maximumConcurrentRequests: maximumConcurrentStreams,
+            maximumPendingRequests: maximumPendingStreams,
+            maximumQueueWait: maximumStreamQueueWait,
+            scope: scope,
+            maximumConcurrentRequestsPerScope: min(maximumConcurrentRequestsPerScope, maximumConcurrentStreams),
+            maximumScopes: maximumScopes,
+            maximumConcurrentStreams: maximumConcurrentStreams,
+            maximumPendingStreams: maximumPendingStreams,
+            maximumStreamQueueWait: maximumStreamQueueWait
+        )
     }
 }
 

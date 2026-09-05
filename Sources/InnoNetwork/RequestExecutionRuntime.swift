@@ -5,6 +5,7 @@ package final class RequestExecutionRuntime: Sendable {
     let requestCoalescer: RequestCoalescer
     let circuitBreakers: CircuitBreakerRegistry
     let requestAdmission: RequestAdmissionCoordinator?
+    let streamAdmission: RequestAdmissionCoordinator?
     let rateLimit: AdvancedRateLimitCoordinator?
     let inFlight: InFlightRegistry
     let clock: any InnoNetworkClock
@@ -22,6 +23,9 @@ package final class RequestExecutionRuntime: Sendable {
         self.circuitBreakers = CircuitBreakerRegistry(clock: clock)
         self.requestAdmission = configuration.requestAdmissionPolicy.map {
             RequestAdmissionCoordinator(policy: $0, clock: clock)
+        }
+        self.streamAdmission = configuration.requestAdmissionPolicy.map {
+            RequestAdmissionCoordinator(policy: $0.streamingPolicy, clock: clock)
         }
         self.rateLimit = configuration.advancedRateLimitPolicy.map {
             AdvancedRateLimitCoordinator(policy: $0, clock: clock)
