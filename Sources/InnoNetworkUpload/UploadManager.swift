@@ -20,10 +20,12 @@ public actor UploadManager {
     private let eventHub: TaskEventHub<UploadEvent>
     private let invalidationBarrier = UploadInvalidationBarrier()
     private let invalidationTimeout: Duration
+    private let startPreparationHook: (@Sendable (String) async -> Void)?
     private nonisolated let consumerTask =
         OSAllocatedUnfairLock<Task<Void, Never>?>(initialState: nil)
 
     private var tasks: [String: UploadTask] = [:]
+    private var pendingStartIDs: Set<String> = []
     private var uploadTasks: [String: any UploadURLTask] = [:]
     private var logicalIDsBySystemIdentifier: [Int: String] = [:]
     /// URLSession identifiers whose logical attempt has already terminated.
@@ -61,6 +63,7 @@ public actor UploadManager {
         self.channel = channel
         self.backgroundCompletionStore = UploadBackgroundCompletionStore()
         self.invalidationTimeout = .seconds(5)
+        self.startPreparationHook = nil
         self.eventHub = TaskEventHub(
             policy: configuration.eventDeliveryPolicy,
             metricsReporter: configuration.eventMetricsReporter,
@@ -82,7 +85,8 @@ public actor UploadManager {
         session: any UploadURLSession,
         channel: UploadDelegateEventChannel,
         backgroundCompletionStore: UploadBackgroundCompletionStore = UploadBackgroundCompletionStore(),
-        invalidationTimeout: Duration = .seconds(5)
+        invalidationTimeout: Duration = .seconds(5),
+        startPreparationHook: (@Sendable (String) async -> Void)? = nil
     ) {
         self.configuration = configuration
         self.session = session
@@ -90,6 +94,7 @@ public actor UploadManager {
         self.channel = channel
         self.backgroundCompletionStore = backgroundCompletionStore
         self.invalidationTimeout = invalidationTimeout
+        self.startPreparationHook = startPreparationHook
         self.eventHub = TaskEventHub(
             policy: configuration.eventDeliveryPolicy,
             metricsReporter: configuration.eventMetricsReporter,
@@ -134,21 +139,34 @@ public actor UploadManager {
         }
         guard !isShutdown else { throw .managerShutdown }
         try Self.validate(request: request, fileURL: fileURL, configuration: configuration)
-        guard tasks.count < configuration.resourcePolicy.maximumTrackedTasks else {
-            throw .resourceLimitExceeded(limit: configuration.resourcePolicy.maximumTrackedTasks)
-        }
 
         guard let url = request.url else {
             throw .invalidRequest("Upload request URL disappeared after validation")
         }
         let method = request.httpMethod ?? "POST"
         let task = UploadTask(requestURL: url, method: method)
-        let stream = await eventHub.stream(for: task.id)
+        guard reserveTrackedSlot(for: task.id) else {
+            throw .resourceLimitExceeded(limit: configuration.resourcePolicy.maximumTrackedTasks)
+        }
+        defer { pendingStartIDs.remove(task.id) }
+
+        await startPreparationHook?(task.id)
+        if Task.isCancelled { throw .cancelled }
         guard !isShutdown else { throw .managerShutdown }
+
+        let stream = await eventHub.stream(for: task.id)
+        if Task.isCancelled {
+            await eventHub.publishTerminalAndFinish(.failed(.cancelled), for: task.id)
+            throw .cancelled
+        }
+        guard !isShutdown else {
+            await eventHub.publishTerminalAndFinish(.failed(.managerShutdown), for: task.id)
+            throw .managerShutdown
+        }
         let urlTask = session.makeUploadTask(with: request, fromFile: fileURL)
         urlTask.taskDescription = UploadTaskDescription.active(id: task.id)
 
-        tasks[task.id] = task
+        commitTrackedTask(task)
         if let idempotencyKey = Self.idempotencyKey(in: request) {
             idempotencyKeys[task.id] = idempotencyKey
         }
@@ -156,7 +174,23 @@ public actor UploadManager {
         logicalIDsBySystemIdentifier[urlTask.taskIdentifier] = task.id
         responseBodies[urlTask.taskIdentifier] = Data()
 
-        guard await task.begin() else { throw .managerShutdown }
+        guard await task.begin() else {
+            urlTask.cancel()
+            removeRuntime(for: task.id)
+            tasks.removeValue(forKey: task.id)
+            idempotencyKeys.removeValue(forKey: task.id)
+            await eventHub.publishTerminalAndFinish(.failed(.managerShutdown), for: task.id)
+            throw .managerShutdown
+        }
+        if Task.isCancelled {
+            urlTask.cancel()
+            await task.fail(with: .cancelled)
+            removeRuntime(for: task.id)
+            tasks.removeValue(forKey: task.id)
+            idempotencyKeys.removeValue(forKey: task.id)
+            await eventHub.publishTerminalAndFinish(.failed(.cancelled), for: task.id)
+            throw .cancelled
+        }
         await eventHub.publish(.stateChanged(.uploading), for: task.id)
         guard !isShutdown else { throw .managerShutdown }
         urlTask.resume()
@@ -197,7 +231,8 @@ public actor UploadManager {
 
             let descriptor = UploadTaskDescription.decode(urlTask.taskDescription)
             let id = uniqueTaskID(descriptor.id)
-            guard tasks[id] != nil || tasks.count < configuration.resourcePolicy.maximumTrackedTasks else {
+            let existingTask = tasks[id]
+            if existingTask == nil, !reserveTrackedSlot(for: id) {
                 urlTask.cancel()
                 continue
             }
@@ -215,7 +250,7 @@ public actor UploadManager {
                 ? .paused
                 : (urlTask.state == .suspended ? .waiting : .uploading)
             let task =
-                tasks[id]
+                existingTask
                 ?? UploadTask(
                     id: id,
                     requestURL: url,
@@ -231,8 +266,13 @@ public actor UploadManager {
                 await task.fail(with: error)
             }
 
-            guard !isShutdown else { return [] }
-            tasks[id] = task
+            guard !isShutdown else {
+                pendingStartIDs.remove(id)
+                return []
+            }
+            if existingTask == nil {
+                commitTrackedTask(task)
+            }
             if let idempotencyKey = Self.idempotencyKey(in: request) {
                 idempotencyKeys[id] = idempotencyKey
             }
@@ -448,6 +488,7 @@ public actor UploadManager {
         responseBodies.removeAll()
         forcedFailures.removeAll()
         idempotencyKeys.removeAll()
+        pendingStartIDs.removeAll()
         retryingTaskIDs.removeAll()
         terminalTaskOrder.removeAll()
         session.invalidateAndCancel()
@@ -542,15 +583,15 @@ public actor UploadManager {
                     bufferPending(event, for: identifier)
                     return
                 }
-                guard tasks.count < configuration.resourcePolicy.maximumTrackedTasks else { return }
                 let id = uniqueTaskID(UploadTaskDescription.decode(taskDescription).id)
+                guard reserveTrackedSlot(for: id) else { return }
                 let adopted = UploadTask(
                     id: id,
                     requestURL: url,
                     method: request.httpMethod ?? "POST",
                     state: .uploading
                 )
-                tasks[id] = adopted
+                commitTrackedTask(adopted)
                 if let idempotencyKey = Self.idempotencyKey(in: request) {
                     idempotencyKeys[id] = idempotencyKey
                 }
@@ -694,7 +735,30 @@ public actor UploadManager {
 
     private func uniqueTaskID(_ value: String?) -> String {
         let candidate = normalizedTaskID(value)
-        return tasks[candidate] == nil ? candidate : UUID().uuidString
+        return tasks[candidate] == nil && !pendingStartIDs.contains(candidate)
+            ? candidate
+            : UUID().uuidString
+    }
+
+    private var trackedResourceCount: Int {
+        tasks.count + pendingStartIDs.count
+    }
+
+    private func reserveTrackedSlot(for taskID: String) -> Bool {
+        guard tasks[taskID] == nil,
+            !pendingStartIDs.contains(taskID),
+            trackedResourceCount < configuration.resourcePolicy.maximumTrackedTasks
+        else {
+            return false
+        }
+
+        pendingStartIDs.insert(taskID)
+        return true
+    }
+
+    private func commitTrackedTask(_ task: UploadTask) {
+        pendingStartIDs.remove(task.id)
+        tasks[task.id] = task
     }
 
     private func restoredTasksSnapshot() -> [UploadTask] {

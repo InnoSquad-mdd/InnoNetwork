@@ -584,6 +584,60 @@ struct UploadManagerTests {
         await manager.shutdown()
     }
 
+    @Test("Concurrent starts reserve the tracked-task limit before actor reentry")
+    func concurrentStartsHonorTrackedTaskLimit() async throws {
+        let preparationGate = UploadRestorationTestGate()
+        let startBarrier = UploadStartBarrier()
+        let resourcePolicy = UploadResourcePolicy(
+            maximumTrackedTasks: 1,
+            maximumBufferedDelegateEvents: 8,
+            maximumBufferedDelegateBytes: 1_024,
+            maximumPendingUnknownTasks: 1
+        )
+        let (manager, session, _) = makeUploadHarness(
+            configuration: .advanced(resourcePolicy: resourcePolicy),
+            startPreparationHook: { _ in await preparationGate.wait() }
+        )
+        let file = try makeTemporaryUploadFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        var mutableRequest = URLRequest(url: URL(string: "https://upload.example.test/files")!)
+        mutableRequest.httpMethod = "POST"
+        let request = mutableRequest
+
+        await withTaskGroup(of: UploadStartOutcome.self) { group in
+            for _ in 0..<100 {
+                group.addTask {
+                    await startBarrier.arrive(total: 100)
+                    do {
+                        _ = try await manager.upload(request, fromFile: file)
+                        return .started
+                    } catch let error as UploadError {
+                        return .failed(error)
+                    } catch {
+                        Issue.record("Unexpected upload start error: \(error)")
+                        return .unexpected
+                    }
+                }
+            }
+
+            await preparationGate.waitUntilEntered()
+            for _ in 0..<99 {
+                let outcome = await group.next()
+                #expect(
+                    outcome
+                        == .failed(.resourceLimitExceeded(limit: 1))
+                )
+            }
+
+            await preparationGate.open()
+            #expect(await group.next() == .started)
+        }
+
+        #expect(session.taskCount == 1)
+        #expect(await manager.allTasks().count == 1)
+        await manager.shutdown()
+    }
+
     @Test("Shutdown remains bounded when invalidation callback is missing")
     func shutdownTimesOutAndRemainsIdempotent() async {
         let (manager, session, _) = makeUploadHarness(
@@ -670,6 +724,28 @@ private actor UploadRestorationTestGate {
         releaseWaiters.removeAll()
         for waiter in waiters { waiter.resume() }
     }
+}
+
+private actor UploadStartBarrier {
+    private var arrivals = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func arrive(total: Int) async {
+        arrivals += 1
+        if arrivals == total {
+            let waiting = waiters
+            waiters.removeAll()
+            for waiter in waiting { waiter.resume() }
+        } else {
+            await withCheckedContinuation { waiters.append($0) }
+        }
+    }
+}
+
+private enum UploadStartOutcome: Sendable, Equatable {
+    case started
+    case failed(UploadError)
+    case unexpected
 }
 
 private struct UploadReply: Decodable, Sendable, Equatable {
