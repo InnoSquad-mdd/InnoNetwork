@@ -59,6 +59,11 @@ subset. Resolve redirecting endpoints before enabling resume.
 First-response, first-event, idle-byte, and total budgets are independent.
 Only configured budgets run. The idle watchdog uses byte activity, so SSE
 comments count as connection liveness without being emitted as application data.
+The total budget starts before request authentication and adaptation and also
+covers rate-limit waits, the dedicated stream-admission queue, response
+interceptors, reconnect delay, and backpressured delivery. Stream admission is
+acquired before URLSession opens the byte transport; a quota delay releases the
+slot before waiting.
 
 ## Resume a custom NDJSON protocol
 

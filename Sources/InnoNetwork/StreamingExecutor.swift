@@ -14,15 +14,16 @@ import Foundation
 /// 2. session-level then per-endpoint request interceptors, then
 ///    `RefreshTokenPolicy.applyCurrentToken`
 /// 3. `requestAdapted` event
-/// 4. transport `bytes(for:context:)` call
-/// 5. `responseReceived` event
-/// 6. session-level response interceptors (the `Response.data` is intentionally
+/// 4. rate-limit and dedicated stream admission at the physical dispatch boundary
+/// 5. transport `bytes(for:context:)` call
+/// 6. `responseReceived` event
+/// 7. session-level response interceptors (the `Response.data` is intentionally
 ///    empty because stream contents are decoded line-by-line)
-/// 7. acceptable status code validation with optional retry-policy handling
+/// 8. acceptable status code validation with optional retry-policy handling
 ///    before any stream body bytes are consumed
-/// 8. line iteration with `decode(line:)` and event id tracking
-/// 9. resume decision when the iterator throws mid-stream
-/// 10. `requestFinished` on clean completion or `requestFailed` on terminal error
+/// 9. line iteration with `decode(line:)` and event id tracking
+/// 10. resume decision when the iterator throws mid-stream
+/// 11. `requestFinished` on clean completion or `requestFailed` on terminal error
 package struct StreamingExecutor: Sendable {
     package let session: URLSessionProtocol
     package let eventHub: NetworkEventHub

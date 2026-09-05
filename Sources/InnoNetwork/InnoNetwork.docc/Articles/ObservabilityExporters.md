@@ -45,8 +45,11 @@ let configuration = NetworkConfiguration.advanced(
 
 Span records intentionally omit URLs, headers, and bodies. A logical request
 span owns child attempt spans; retry scheduling closes the prior attempt as
-`retried`. Export runs asynchronously through a bounded buffer and drops the
-oldest completed span under sustained exporter backpressure.
+`retried`. A child begins only when the physical transport dispatches. Cache
+hits, coalesced followers, and failures during preparation, quota, or admission
+therefore keep their logical span without a synthetic attempt. Export runs
+asynchronously through a bounded buffer and drops the oldest completed span
+under sustained exporter backpressure.
 
 Putting that glue inside InnoNetwork would either pull every supported
 vendor into the package graph (build-time cost, transitive license

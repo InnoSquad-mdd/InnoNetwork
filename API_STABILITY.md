@@ -236,9 +236,9 @@ Promotion from Provisionally Stable to Stable requires all of the following:
 | `PersistentResponseCache` statistics and telemetry | 6.x minor | Reentrancy invariant docs plus persistent cache key-rotation/statistics tests. |
 | `ResponseCachePolicy.rfc9111Compliant(wrapping:)` | 6.x minor | The subset is documented as RFC 9111-aware, with directive tests for the supported rules. |
 | Root `@APIDefinition` macro | Stable in 6.0.0 | InnoSample and Mulbyul adoption, expansion and diagnostic fixtures, the independent macro smoke, and the `traits: []` build prove the explicit-struct and opt-out contracts. |
-| 6.1 admission, advanced quota, and structured decisions | Later 6.x minor | Bounded/cancellation tests, server-contract validation, and production quota evidence. |
-| 6.1 streaming timeout and control-frame APIs | Later 6.x minor | Virtual-time budgets, SSE wire fixtures, and consumer reconnect validation. |
-| 6.1 span export and resumable-upload APIs | Later 6.x minor | Backpressure tests, crash/restart upload fixtures, and real backend adapter adoption. |
+| 6.1 admission, advanced quota, and structured decisions | Later 6.x minor | Bounded/cancellation and dispatch-time tests are present; server-contract validation and production quota evidence remain. |
+| 6.1 streaming timeout and control-frame APIs | Later 6.x minor | Virtual-time budgets and SSE wire fixtures are present; consumer reconnect validation remains. |
+| 6.1 span export and resumable-upload APIs | Later 6.x minor | Backpressure, physical-attempt, interruption, and immutable-byte tests are present; crash/restart backend fixtures and real adapter adoption remain. |
 
 The 6.1 candidate rows cover `RequestAdmissionPolicy`,
 `AdvancedRateLimitPolicy`, `NetworkDecision`, `StreamingTimeoutPolicy`,
@@ -506,8 +506,8 @@ below keeps the high-level compatibility classification readable. Historical
 5.x HLS sections document the migration source but are no longer included in
 the current machine-checked inventory.
 
-The machine-checked snapshot currently partitions all 1,611 declarations into
-306 Stable consumer declarations, 1,272 Provisionally Stable consumer
+The machine-checked snapshot currently partitions all 1,612 declarations into
+306 Stable consumer declarations, 1,273 Provisionally Stable consumer
 declarations, and 33 opt-in SPI declarations. The three sets are disjoint and
 exhaustive. `Scripts/symbols/stable-rules.tsv` maps the Stable ledger to symbol
 paths, while the compiler-authored SPI flag is snapshotted in

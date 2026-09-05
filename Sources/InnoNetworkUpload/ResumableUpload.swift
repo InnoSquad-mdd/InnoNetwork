@@ -256,11 +256,13 @@ public struct ResumableUploadEngine: Sendable {
         let snapshotURL = snapshotDirectory.appendingPathComponent(
             "innonetwork-resumable-\(UUID().uuidString).snapshot"
         )
-        guard fileManager.createFile(
-            atPath: snapshotURL.path,
-            contents: nil,
-            attributes: [.posixPermissions: 0o600]
-        ) else {
+        guard
+            fileManager.createFile(
+                atPath: snapshotURL.path,
+                contents: nil,
+                attributes: [.posixPermissions: 0o600]
+            )
+        else {
             throw ResumableUploadError.unreadableFile
         }
         do {

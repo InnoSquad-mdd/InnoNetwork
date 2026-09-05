@@ -41,7 +41,12 @@ NetworkErrorCode.timeout
 NetworkErrorCode.trustEvaluationFailed
 NetworkErrorCode.underlying
 
+NetworkDecisionKind.admission
+NetworkDecisionKind.cache
 NetworkDecisionKind.dispatch
+NetworkDecisionKind.rateLimit
+NetworkDecisionKind.retry
+NetworkDecisionKind.streamingResume
 
 NetworkOperationDeadlineStage.authentication
 NetworkOperationDeadlineStage.cacheLookup

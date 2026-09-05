@@ -120,16 +120,23 @@ Use ``ResumableUploadEngine`` when the server exposes create, probe, chunk,
 and finalize operations. Implement ``ResumableUploadAdapting`` for that exact
 protocol and provide a ``ResumableUploadCheckpointStoring`` store.
 
-The engine hashes the file incrementally, probes the server on every start,
-and advances its checkpoint only to an offset returned by the adapter. It
-never infers acceptance from bytes sent. ``FileResumableUploadCheckpointStore``
-uses hashed filenames and atomic JSON replacement. Persisted session identifiers
-must be non-secret; credentials and pre-signed URLs belong in the adapter's
-fresh request path, not in the checkpoint.
+The engine first copies and hashes the source into a private immutable snapshot,
+then reads every chunk from that same snapshot. Replacing the caller's source
+path after session creation cannot make the advertised identity differ from the
+uploaded bytes. The engine probes the server on every start and advances its
+checkpoint only to an offset returned by the adapter; it never infers acceptance
+from bytes sent. ``FileResumableUploadCheckpointStore`` uses hashed filenames
+and atomic JSON replacement. Persisted session identifiers must be non-secret;
+credentials and pre-signed URLs belong in the adapter's fresh request path, not
+in the checkpoint.
 
 Cancellation or process interruption leaves the last server-confirmed offset
 available for the next invocation. A changed file fails closed before the old
-session is reused.
+session is reused. Snapshot files are mode `0600` and removed on success,
+failure, or cancellation. Adapter finalization must be idempotent for a session
+and file identity: once the server reports success, checkpoint removal is
+best-effort so local cleanup failure cannot misreport the remote outcome, and a
+later invocation may repeat finalization before cleanup succeeds.
 
 ## Security contract
 

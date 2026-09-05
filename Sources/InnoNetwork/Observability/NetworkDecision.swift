@@ -2,6 +2,7 @@ import Foundation
 
 /// A policy boundary that made an observable execution decision.
 public enum NetworkDecisionKind: String, Sendable, Equatable {
+    /// A physical request or stream transport is about to begin.
     case dispatch
     case retry
     case cache

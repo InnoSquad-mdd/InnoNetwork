@@ -18,22 +18,26 @@ struct NetworkSpanObserverTests {
         let id = UUID()
 
         await observer.handle(.requestStart(requestID: id, method: "GET", url: "", retryIndex: 0))
-        await observer.handle(.decision(NetworkDecision(
-            requestID: id,
-            attemptIndex: 0,
-            kind: .dispatch,
-            outcome: .allowed,
-            reason: .policyAllowed
-        )))
+        await observer.handle(
+            .decision(
+                NetworkDecision(
+                    requestID: id,
+                    attemptIndex: 0,
+                    kind: .dispatch,
+                    outcome: .allowed,
+                    reason: .policyAllowed
+                )))
         await observer.handle(.retryScheduled(requestID: id, retryIndex: 0, delay: 1, reason: "test"))
         await observer.handle(.requestStart(requestID: id, method: "GET", url: "", retryIndex: 1))
-        await observer.handle(.decision(NetworkDecision(
-            requestID: id,
-            attemptIndex: 1,
-            kind: .dispatch,
-            outcome: .allowed,
-            reason: .policyAllowed
-        )))
+        await observer.handle(
+            .decision(
+                NetworkDecision(
+                    requestID: id,
+                    attemptIndex: 1,
+                    kind: .dispatch,
+                    outcome: .allowed,
+                    reason: .policyAllowed
+                )))
         await observer.handle(.requestFinished(requestID: id, statusCode: 200, byteCount: 4))
 
         await observer.flush()
@@ -54,23 +58,27 @@ struct NetworkSpanObserverTests {
         let cachedID = UUID()
 
         await observer.handle(.requestStart(requestID: firstID, method: "GET", url: "", retryIndex: 0))
-        await observer.handle(.decision(NetworkDecision(
-            requestID: firstID,
-            attemptIndex: 0,
-            kind: .dispatch,
-            outcome: .allowed,
-            reason: .policyAllowed
-        )))
+        await observer.handle(
+            .decision(
+                NetworkDecision(
+                    requestID: firstID,
+                    attemptIndex: 0,
+                    kind: .dispatch,
+                    outcome: .allowed,
+                    reason: .policyAllowed
+                )))
         await observer.handle(.requestFinished(requestID: firstID, statusCode: 200, byteCount: 4))
 
         await observer.handle(.requestStart(requestID: cachedID, method: "GET", url: "", retryIndex: 0))
-        await observer.handle(.decision(NetworkDecision(
-            requestID: cachedID,
-            attemptIndex: 0,
-            kind: .cache,
-            outcome: .allowed,
-            reason: .cacheHit
-        )))
+        await observer.handle(
+            .decision(
+                NetworkDecision(
+                    requestID: cachedID,
+                    attemptIndex: 0,
+                    kind: .cache,
+                    outcome: .allowed,
+                    reason: .cacheHit
+                )))
         await observer.handle(.requestFinished(requestID: cachedID, statusCode: 200, byteCount: 4))
 
         await observer.flush()

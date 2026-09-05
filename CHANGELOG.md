@@ -24,9 +24,12 @@ that cut and are not part of the 6.0 contract.
   `retry:` hints, while `StreamingResumePolicy.serverSentEvents` can reconnect
   after clean EOF within a fixed attempt and total-time budget.
 - `NetworkSpanObserver` exports separate logical request and physical attempt
-  spans through a bounded asynchronous vendor-neutral buffer.
+  spans through a bounded asynchronous vendor-neutral buffer. Attempt spans
+  begin only at physical dispatch, so cache hits, coalesced followers, and
+  pre-dispatch failures do not create synthetic transport attempts.
 - `ResumableUploadEngine` probes server state and checkpoints only confirmed
-  offsets, with incremental file hashing and an atomic credential-free store.
+  offsets. Hashing and chunk reads share one private immutable snapshot, while
+  checkpoints use an atomic credential-free store.
 - Upload delegate events and manager task/terminal state now have explicit
   resource ceilings; progress is coalesced while terminal events remain lossless.
 
@@ -61,6 +64,24 @@ that cut and are not part of the 6.0 contract.
   `Cache-Control: only-if-cached` without transport or background
   revalidation. Both controls are opt-in; cancellation, trust,
   configuration, decoding, and body-limit failures remain non-recoverable.
+
+### Fixed for 6.1.0
+
+- Request admission enforces the origin registry bound on immediate grants and
+  lets an origin with free capacity bypass waiters blocked only by another
+  origin's per-scope cap.
+- Advanced rate limiting rejects non-finite, zero-refill, and impossible-cost
+  configurations without trapping or waiting forever. Reservations are
+  rechecked when transport actually dispatches, and fully replenished inactive
+  scopes can be reclaimed without increasing quota.
+- Streaming total deadlines include request authentication/interceptors,
+  rate-limit and stream-slot waits, response interceptors, reconnect delays,
+  and backpressured output delivery. A stream slot is acquired before opening
+  the URLSession byte transport.
+- Resumable uploads stop before server work when already cancelled, preserve
+  hash-to-byte identity if the caller replaces the source path, remove private
+  snapshots on every terminal path, and do not report a completed remote
+  finalize as failed solely because local checkpoint cleanup failed.
 
 ### Added for 6.0.0
 
