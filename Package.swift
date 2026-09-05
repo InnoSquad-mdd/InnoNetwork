@@ -186,7 +186,10 @@ let package = Package(
         ),
         .target(
             name: "InnoNetworkUpload",
-            dependencies: ["InnoNetwork"],
+            dependencies: [
+                "InnoNetwork",
+                .product(name: "Crypto", package: "swift-crypto"),
+            ],
             path: "Sources/InnoNetworkUpload",
             swiftSettings: strictSettings
         ),
