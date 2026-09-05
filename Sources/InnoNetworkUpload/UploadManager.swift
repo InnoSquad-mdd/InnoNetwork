@@ -614,10 +614,12 @@ public actor UploadManager {
             )
             let receipt = UploadReceipt(response: coreResponse)
             guard configuration.acceptableStatusCodes.contains(response.statusCode) else {
-                guard await task.fail(
-                    with: .unacceptableStatusCode(response.statusCode),
-                    receipt: receipt
-                ) else { return }
+                guard
+                    await task.fail(
+                        with: .unacceptableStatusCode(response.statusCode),
+                        receipt: receipt
+                    )
+                else { return }
                 await eventHub.publishTerminalAndFinish(
                     .failed(.unacceptableStatusCode(response.statusCode)),
                     for: task.id

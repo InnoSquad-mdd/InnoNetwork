@@ -33,11 +33,13 @@ struct StreamingResumePolicyCompatibilityTests {
         #expect(!policy.isCompatible(with: .bufferingOldest(1)))
     }
 
-    @Test("Invalid cursor header names fail closed without echoing input", arguments: [
-        "", "X-Cursor\r\nAuthorization", "x cursor", "é", String(repeating: "x", count: 129),
-        "AUTHORIZATION", "Cookie", "Content-Length", "Host", "Proxy-Authorization", "Sec-Fetch-Site",
-        "Transfer-Encoding", "Idempotency-Key", "Traceparent", "X-Api-Key", "If-None-Match",
-    ])
+    @Test(
+        "Invalid cursor header names fail closed without echoing input",
+        arguments: [
+            "", "X-Cursor\r\nAuthorization", "x cursor", "é", String(repeating: "x", count: 129),
+            "AUTHORIZATION", "Cookie", "Content-Length", "Host", "Proxy-Authorization", "Sec-Fetch-Site",
+            "Transfer-Encoding", "Idempotency-Key", "Traceparent", "X-Api-Key", "If-None-Match",
+        ])
     func invalidCursorHeader(header: String) {
         #expect(throws: NetworkError.self) {
             try StreamingResumePolicy.cursor(header: header, maxAttempts: 1).validate()

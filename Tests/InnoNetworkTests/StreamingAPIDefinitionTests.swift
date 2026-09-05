@@ -726,10 +726,12 @@ struct StreamingAPIDefinitionTests {
         #expect(values == ["three"])
     }
 
-    @Test("stream(bufferingPolicy:) rejects bounded buffers with cursor resume", arguments: [
-        StreamingResumePolicy.lastEventID(maxAttempts: 2, retryDelay: 0),
-        .cursor(header: "X-Resume-Cursor", maxAttempts: 2, retryDelay: 0),
-    ])
+    @Test(
+        "stream(bufferingPolicy:) rejects bounded buffers with cursor resume",
+        arguments: [
+            StreamingResumePolicy.lastEventID(maxAttempts: 2, retryDelay: 0),
+            .cursor(header: "X-Resume-Cursor", maxAttempts: 2, retryDelay: 0),
+        ])
     func streamBufferingPolicyRejectsBoundedResumeCombination(policy: StreamingResumePolicy) async throws {
         let baseURL = uniqueStreamingBaseURL()
         let definition = ResumableStream(resumePolicy: policy)
@@ -1691,17 +1693,19 @@ struct StreamingAPIDefinitionTests {
         #expect(captured.first?.value(forHTTPHeaderField: "Last-Event-ID") == nil)
     }
 
-    @Test("NDJSON resumes with the caller's cursor header and clears seeded headers on reset",
-          arguments: ["page-2", ""])
+    @Test(
+        "NDJSON resumes with the caller's cursor header and clears seeded headers on reset",
+        arguments: ["page-2", ""])
     func ndjsonCursorResume(cursor: String) async throws {
         let body = "{\"cursor\":\"\(cursor)\",\"value\":1}\n"
         let server = try StreamingResumeHTTPServer(
             firstAttemptBody: body, resumedBody: "{\"cursor\":\"page-3\",\"value\":2}\n"
         )
         defer { server.stop() }
-        let definition = CursorNDJSONStream(headers: HTTPHeaders([
-            HTTPHeader(name: "X-Resume-Cursor", value: "seed")
-        ]))
+        let definition = CursorNDJSONStream(
+            headers: HTTPHeaders([
+                HTTPHeader(name: "X-Resume-Cursor", value: "seed")
+            ]))
         let client = DefaultNetworkClient(
             configuration: NetworkConfiguration(baseURL: server.baseURL, timeout: 5, allowsInsecureHTTP: true),
             session: URLSession(configuration: .ephemeral)
@@ -1801,7 +1805,8 @@ struct StreamingAPIDefinitionTests {
         )
         var count = 0
         do {
-            for try await _ in client.stream(ResumableStream(resumePolicy: .lastEventID(maxAttempts: 1, retryDelay: 0))) {
+            for try await _ in client.stream(ResumableStream(resumePolicy: .lastEventID(maxAttempts: 1, retryDelay: 0)))
+            {
                 count += 1
             }
             Issue.record("Expected terminal transport error")
@@ -1833,8 +1838,9 @@ struct StreamingAPIDefinitionTests {
         #expect(server.capturedRequests().last?.contains("Last-Event-ID: 1") == true)
     }
 
-    @Test("SSE accepts CR, LF and CRLF, including empty data and unterminated final events",
-          arguments: ["\r", "\n", "\r\n"])
+    @Test(
+        "SSE accepts CR, LF and CRLF, including empty data and unterminated final events",
+        arguments: ["\r", "\n", "\r\n"])
     func sseLineEndings(separator: String) async throws {
         let baseURL = uniqueStreamingBaseURL()
         let definition = ResponseScopedSSEStream()
@@ -1854,10 +1860,12 @@ struct StreamingAPIDefinitionTests {
         let baseURL = uniqueStreamingBaseURL()
         let definition = ResponseScopedSSEStream(maximumEventBytes: 9)
         let streamURL = baseURL.appendingPathComponent(definition.path)
-        SequencedStreamingURLProtocol.enqueue(url: streamURL, steps: [
-            .success(statusCode: 200, data: Data("id: 1\ndata: ok\n\ndata: secret\ndata: secret\n\n".utf8)),
-            .success(statusCode: 200, data: Data("data: unexpected\n\n".utf8)),
-        ])
+        SequencedStreamingURLProtocol.enqueue(
+            url: streamURL,
+            steps: [
+                .success(statusCode: 200, data: Data("id: 1\ndata: ok\n\ndata: secret\ndata: secret\n\n".utf8)),
+                .success(statusCode: 200, data: Data("data: unexpected\n\n".utf8)),
+            ])
         let client = DefaultNetworkClient(
             configuration: NetworkConfiguration(baseURL: baseURL), session: makeSequencedStreamingURLSession()
         )
