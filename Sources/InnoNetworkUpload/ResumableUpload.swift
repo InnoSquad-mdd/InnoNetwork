@@ -165,8 +165,7 @@ public struct ResumableUploadEngine: Sendable {
         await progress?(probed, identity.size)
 
         let handle: FileHandle
-        do { handle = try FileHandle(forReadingFrom: fileURL) }
-        catch { throw ResumableUploadError.unreadableFile }
+        do { handle = try FileHandle(forReadingFrom: fileURL) } catch { throw ResumableUploadError.unreadableFile }
         defer { try? handle.close() }
 
         while checkpoint.confirmedOffset < identity.size {
@@ -217,8 +216,7 @@ public struct ResumableUploadEngine: Sendable {
     private static func fileIdentity(at url: URL) throws -> (size: Int64, sha256: String) {
         guard url.isFileURL else { throw ResumableUploadError.unreadableFile }
         let handle: FileHandle
-        do { handle = try FileHandle(forReadingFrom: url) }
-        catch { throw ResumableUploadError.unreadableFile }
+        do { handle = try FileHandle(forReadingFrom: url) } catch { throw ResumableUploadError.unreadableFile }
         defer { try? handle.close() }
         var hasher = SHA256()
         var size: Int64 = 0

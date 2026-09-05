@@ -85,6 +85,9 @@ retain those values.
 - ``NetworkEventObserving``
 - ``SemanticNetworkEventAdapter``
 - ``NetworkMetricsReporting``
+- ``NetworkSpanObserver``
+- ``NetworkSpanExporting``
+- <doc:AdmissionAndRateLimiting>
 
 ### Request and Response Behavior
 
@@ -112,6 +115,8 @@ retain those values.
 - ``InMemoryResponseCache``
 - ``RequestExecutionPolicy``
 - ``RateLimitExecutionPolicy``
+- ``RequestAdmissionPolicy``
+- ``AdvancedRateLimitPolicy``
 - ``ResponseBodyBufferingPolicy``
 - ``CircuitBreakerPolicy``
 - ``CircuitBreakerOpenError``

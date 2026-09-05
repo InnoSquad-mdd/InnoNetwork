@@ -110,39 +110,41 @@ package actor RequestAdmissionCoordinator {
         let timeoutClock = clock
         var acquired = false
         do {
-            try await withTaskCancellationHandler(operation: {
-                try await withCheckedThrowingContinuation {
-                    (continuation: CheckedContinuation<Void, Error>) in
-                    if consumeCancellationMark(id) || Task.isCancelled {
-                        continuation.resume(throwing: CancellationError())
-                        return
-                    }
-                    let timeoutTask: Task<Void, Never>?
-                    if let maximumQueueWait {
-                        timeoutTask = Task { [weak self] in
-                            do {
-                                try await timeoutClock.sleep(for: maximumQueueWait)
-                            } catch {
-                                return
-                            }
-                            await self?.expire(id: id)
+            try await withTaskCancellationHandler(
+                operation: {
+                    try await withCheckedThrowingContinuation {
+                        (continuation: CheckedContinuation<Void, Error>) in
+                        if consumeCancellationMark(id) || Task.isCancelled {
+                            continuation.resume(throwing: CancellationError())
+                            return
                         }
-                    } else {
-                        timeoutTask = nil
-                    }
-                    waiters.append(
-                        Waiter(
-                            id: id,
-                            scope: scope,
-                            continuation: continuation,
-                            timeoutTask: timeoutTask
+                        let timeoutTask: Task<Void, Never>?
+                        if let maximumQueueWait {
+                            timeoutTask = Task { [weak self] in
+                                do {
+                                    try await timeoutClock.sleep(for: maximumQueueWait)
+                                } catch {
+                                    return
+                                }
+                                await self?.expire(id: id)
+                            }
+                        } else {
+                            timeoutTask = nil
+                        }
+                        waiters.append(
+                            Waiter(
+                                id: id,
+                                scope: scope,
+                                continuation: continuation,
+                                timeoutTask: timeoutTask
+                            )
                         )
-                    )
-                }
-            }, onCancel: { [weak self] in
-                self?.cancellationMarks.withLock { _ = $0.insert(id) }
-                Task { [weak self] in await self?.cancel(id: id) }
-            })
+                    }
+                },
+                onCancel: { [weak self] in
+                    self?.cancellationMarks.withLock { _ = $0.insert(id) }
+                    Task { [weak self] in await self?.cancel(id: id) }
+                })
             acquired = true
             try Task.checkCancellation()
             return RequestAdmissionGrant(scope: scope, wasQueued: true)
@@ -155,8 +157,7 @@ package actor RequestAdmissionCoordinator {
     package func release(scope: String) {
         guard active > 0, let scoped = activeByScope[scope], scoped > 0 else { return }
         active -= 1
-        if scoped == 1 { activeByScope.removeValue(forKey: scope) }
-        else { activeByScope[scope] = scoped - 1 }
+        if scoped == 1 { activeByScope.removeValue(forKey: scope) } else { activeByScope[scope] = scoped - 1 }
         pump()
     }
 

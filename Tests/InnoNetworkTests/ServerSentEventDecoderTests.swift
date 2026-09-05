@@ -123,13 +123,14 @@ struct ServerSentEventDecoderTests {
         #expect(heartbeat == nil)
     }
 
-    @Test("Empty data lines preserve leading, trailing, and repeated newlines",
-          arguments: [
+    @Test(
+        "Empty data lines preserve leading, trailing, and repeated newlines",
+        arguments: [
             (["data:"], ""),
             (["data:", "data: next"], "\nnext"),
             (["data: first", "data:"], "first\n"),
             (["data:", "data:", "data:"], "\n\n"),
-          ])
+        ])
     func emptyDataLines(lines: [String], expected: String) {
         let decoder = ServerSentEventDecoder()
         for line in lines { #expect(decoder.decode(line: line) == nil) }

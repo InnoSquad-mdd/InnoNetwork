@@ -15,15 +15,17 @@ struct Updates: StreamingAPIDefinition {
     var path: String { "/updates" }
     var sessionAuthentication: SessionAuthentication { .anonymous }
     var resumePolicy: StreamingResumePolicy {
-        .lastEventID(maxAttempts: 3, retryDelay: 1)
+        .serverSentEvents(maxAttempts: 3, retryDelay: 1)
     }
 
-    func makeDecoder() -> @Sendable (String) throws -> ServerSentEvent? {
+    func makeFrameDecoder() -> @Sendable (String) throws -> StreamingDecodedFrame<ServerSentEvent> {
         let decoder = ServerSentEventDecoder()
-        return { try decoder.decode(line: $0, maximumEventBytes: 1024 * 1024) }
+        return { try decoder.decodeFrame(line: $0, maximumEventBytes: 1024 * 1024) }
     }
 
-    func eventID(from output: ServerSentEvent) -> String? { output.id }
+    var timeoutPolicy: StreamingTimeoutPolicy {
+        .init(firstResponse: .seconds(10), firstEvent: .seconds(15), idle: .seconds(30))
+    }
 }
 
 for try await event in client.stream(Updates()) {
@@ -47,12 +49,16 @@ significant newlines, metadata-only blocks produce no output, and IDs persist
 until changed or cleared. A BOM is special only at the response start.
 CR, LF, and CRLF delimit lines; an incomplete final event is not dispatched.
 
-This is not a full browser `EventSource`: EOF completes instead of reconnecting,
-server `retry:` hints are not automatically scheduled, and only decoded outputs
-advance the executor's resume cursor. Metadata-only ID/reset blocks therefore
-do not themselves update transport recovery state. IDs use a deliberately
-conservative printable-ASCII subset. Resolve redirecting endpoints before
-enabling resume.
+The control-aware decoder preserves metadata-only `id:` updates and resets,
+and bounded nonnegative `retry:` hints replace the endpoint fallback delay.
+The EventSource policy can reconnect after clean EOF as well as transient
+disconnects. Attempts remain bounded and the optional total timeout never
+resets across reconnects. IDs use a deliberately conservative printable-ASCII
+subset. Resolve redirecting endpoints before enabling resume.
+
+First-response, first-event, idle-byte, and total budgets are independent.
+Only configured budgets run. The idle watchdog uses byte activity, so SSE
+comments count as connection liveness without being emitted as application data.
 
 ## Resume a custom NDJSON protocol
 

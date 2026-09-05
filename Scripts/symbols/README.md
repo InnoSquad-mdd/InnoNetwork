@@ -23,37 +23,37 @@ Stable compatibility promise.
 
 The 5.0.0 release baseline remains the compatibility reference for the
 currently tagged 5.x line; this table tracks the 6.1 candidate layered after
-the planned 6.0 boundary with 1,434 public declarations in the root package.
+the planned 6.0 boundary with 1,611 public declarations in the root package.
 
 | Product | Public declarations |
 |---|---:|
-| `InnoNetwork` (core) | 915 |
+| `InnoNetwork` (core) | 1046 |
 | `InnoNetworkWebSocket` | 164 |
 | `InnoNetworkDownload` | 94 |
-| `InnoNetworkUpload` | 63 |
+| `InnoNetworkUpload` | 109 |
 | `InnoNetworkTestSupport` | 84 |
 | `InnoNetworkPersistentCache` | 51 |
 | `InnoNetworkOpenAPI` | 36 |
 | `InnoNetworkTrust` | 17 |
 | `InnoNetworkAuthAWS` | 10 |
-| **Total** | **1,434** |
+| **Total** | **1,611** |
 
 | Compatibility tier | Public declarations |
 |---|---:|
 | Stable consumer API | 306 |
-| Provisionally Stable consumer API | 1,095 |
+| Provisionally Stable consumer API | 1,272 |
 | `@_spi(GeneratedClientSupport)` | 33 |
-| **Total** | **1,434** |
+| **Total** | **1,611** |
 
 ## Why this matters
 
 The 6.0 split reduced this repository's machine-checked surface from 3,254 to
 1,407 declarations by moving the four HLS modules to InnoStream and folding
 the temporary `InnoNetworkNext` module into the root product. The additive 6.1
-deadline, upload-control, cache-control, and bounded streaming/cursor candidates
-raise the development snapshot to 1,434 declarations. The streaming follow-up
-adds exactly four provisional declarations: a cursor policy case, a decoder
-factory, a bounded SSE decode overload, and an explicit decoder reset.
+deadline, upload-control, cache-control, bounded streaming/cursor, admission,
+advanced quota, tracing, and resumable-upload candidates raise the development
+snapshot to 1,611 declarations. The 177 new declarations remain Provisionally
+Stable until real server and consumer evidence supports promotion.
 
 At release, every public symbol becomes:
 

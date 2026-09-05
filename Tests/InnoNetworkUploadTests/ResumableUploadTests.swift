@@ -53,7 +53,9 @@ private actor InterruptingResumableAdapter: ResumableUploadAdapting {
     var confirmedOffset: Int64 = 0
     var calls = 0
     func createSession(request: URLRequest, fileSize: Int64, fileSHA256: String) async throws -> String { "session" }
-    func probe(sessionIdentifier: String, request: URLRequest, fileSize: Int64) async throws -> Int64 { confirmedOffset }
+    func probe(sessionIdentifier: String, request: URLRequest, fileSize: Int64) async throws -> Int64 {
+        confirmedOffset
+    }
     func uploadChunk(
         _ data: Data,
         range: Range<Int64>,
@@ -100,13 +102,14 @@ struct ResumableUploadTests {
         let file = directory.appendingPathComponent("payload.bin")
         try Data("new-file".utf8).write(to: file)
         let store = MemoryCheckpointStore()
-        try await store.save(ResumableUploadCheckpoint(
-            uploadID: "job",
-            sessionIdentifier: "session",
-            fileSize: 8,
-            fileSHA256: "wrong",
-            confirmedOffset: 4
-        ))
+        try await store.save(
+            ResumableUploadCheckpoint(
+                uploadID: "job",
+                sessionIdentifier: "session",
+                fileSize: 8,
+                fileSHA256: "wrong",
+                confirmedOffset: 4
+            ))
         let adapter = FakeResumableAdapter()
         let engine = try ResumableUploadEngine(adapter: adapter, checkpointStore: store)
 

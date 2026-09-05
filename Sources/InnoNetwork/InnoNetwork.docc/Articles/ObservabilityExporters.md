@@ -18,7 +18,8 @@ glue. It maps lifecycle events to a compact envelope using current HTTP
 semantic-convention names such as `http.request.method`, `url.full`,
 `server.address`, `http.request.resend_count`,
 `http.response.status_code`, and `error.type`. The application still owns the
-vendor exporter and span lifecycle.
+vendor exporter. Use ``NetworkSpanObserver`` when it wants bounded request and
+retry-attempt span lifecycles instead of reconstructing them itself.
 
 ```swift
 let observer = SemanticNetworkEventAdapter { event in
@@ -30,6 +31,22 @@ let configuration = NetworkConfiguration.advanced(
     observability: ObservabilityPack(eventObservers: [observer])
 )
 ```
+
+```swift
+let spans = NetworkSpanObserver(
+    exporter: MySpanExporter(),
+    policy: .init(maximumBufferedSpans: 512, batchSize: 32)
+)
+let configuration = NetworkConfiguration.advanced(
+    baseURL: apiBaseURL,
+    observability: ObservabilityPack(eventObservers: [spans])
+)
+```
+
+Span records intentionally omit URLs, headers, and bodies. A logical request
+span owns child attempt spans; retry scheduling closes the prior attempt as
+`retried`. Export runs asynchronously through a bounded buffer and drops the
+oldest completed span under sustained exporter backpressure.
 
 Putting that glue inside InnoNetwork would either pull every supported
 vendor into the package graph (build-time cost, transitive license

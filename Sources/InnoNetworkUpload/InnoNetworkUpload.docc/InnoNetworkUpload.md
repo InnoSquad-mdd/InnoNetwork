@@ -114,6 +114,23 @@ request must already contain the same non-empty application-owned
 does not make replay safe. The manager reuses the logical ``UploadTask`` but
 returns a new pre-registered ``UploadOperation/events`` stream for the retry.
 
+### Server-negotiated resumable uploads
+
+Use ``ResumableUploadEngine`` when the server exposes create, probe, chunk,
+and finalize operations. Implement ``ResumableUploadAdapting`` for that exact
+protocol and provide a ``ResumableUploadCheckpointStoring`` store.
+
+The engine hashes the file incrementally, probes the server on every start,
+and advances its checkpoint only to an offset returned by the adapter. It
+never infers acceptance from bytes sent. ``FileResumableUploadCheckpointStore``
+uses hashed filenames and atomic JSON replacement. Persisted session identifiers
+must be non-secret; credentials and pre-signed URLs belong in the adapter's
+fresh request path, not in the checkpoint.
+
+Cancellation or process interruption leaves the last server-confirmed offset
+available for the next invocation. A changed file fails closed before the old
+session is reused.
+
 ## Security contract
 
 - Only absolute HTTPS URLs without URL credentials, fragments, or dot-path
@@ -147,3 +164,7 @@ returns a new pre-registered ``UploadOperation/events`` stream for the retry.
 - ``UploadReceipt``
 - ``UploadState``
 - ``UploadError``
+- ``ResumableUploadEngine``
+- ``ResumableUploadAdapting``
+- ``ResumableUploadCheckpoint``
+- ``FileResumableUploadCheckpointStore``

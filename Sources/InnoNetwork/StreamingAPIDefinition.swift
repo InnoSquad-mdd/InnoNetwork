@@ -95,7 +95,8 @@ public enum StreamingResumePolicy: Sendable, Equatable {
             header.utf8.allSatisfy({ byte in
                 switch byte {
                 case 0x30...0x39, 0x41...0x5A, 0x61...0x7A,
-                    0x21, 0x23...0x27, 0x2A, 0x2B, 0x2D, 0x2E, 0x5E, 0x5F, 0x60, 0x7C, 0x7E: true
+                    0x21, 0x23...0x27, 0x2A, 0x2B, 0x2D, 0x2E, 0x5E, 0x5F, 0x60, 0x7C, 0x7E:
+                    true
                 default: false
                 }
             })
@@ -299,9 +300,10 @@ public extension StreamingAPIDefinition {
     /// Stateful definitions may implement only ``makeDecoder()``. Direct line
     /// decoding without their response-scoped state is unsupported.
     func decode(line: String) throws -> Output? {
-        throw DecodingError.dataCorrupted(.init(
-            codingPath: [], debugDescription: "Implement decode(line:) or makeDecoder()."
-        ))
+        throw DecodingError.dataCorrupted(
+            .init(
+                codingPath: [], debugDescription: "Implement decode(line:) or makeDecoder()."
+            ))
     }
     var headers: HTTPHeaders { HTTPHeaders() }
     var requestInterceptors: [RequestInterceptor] { [] }

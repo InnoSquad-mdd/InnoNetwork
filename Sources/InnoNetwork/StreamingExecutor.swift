@@ -94,10 +94,11 @@ package struct StreamingExecutor: Sendable {
                     // - this attempt observed a safe cursor (empty cursor
                     //   explicitly resets Last-Event-ID)
                     let hasBudget = resumeAttempts < resumeBudget
-                    let canResume = resumeState.canResume(
-                        maxAttempts: resumeBudget,
-                        completedResumeAttempts: resumeAttempts
-                    ) || (resumePolicy.permitsCursorlessReconnect && hasBudget)
+                    let canResume =
+                        resumeState.canResume(
+                            maxAttempts: resumeBudget,
+                            completedResumeAttempts: resumeAttempts
+                        ) || (resumePolicy.permitsCursorlessReconnect && hasBudget)
                     if canResume && Self.isResumableTransportError(streamError) {
                         resumeAttempts += 1
                         let reconnectDelay = resumeState.serverRetryDelay ?? resumePolicy.retryDelay
@@ -317,13 +318,14 @@ package struct StreamingExecutor: Sendable {
             let rateReservation = try await executionRuntime.rateLimit?.reserve(for: transportRequest)
             if let rateReservation {
                 await eventHub.publish(
-                    .decision(NetworkDecision(
-                        requestID: requestID,
-                        attemptIndex: retryIndex,
-                        kind: .rateLimit,
-                        outcome: rateReservation.wasDelayed ? .delayed : .allowed,
-                        reason: rateReservation.wasDelayed ? .localQuota : .policyAllowed
-                    )),
+                    .decision(
+                        NetworkDecision(
+                            requestID: requestID,
+                            attemptIndex: retryIndex,
+                            kind: .rateLimit,
+                            outcome: rateReservation.wasDelayed ? .delayed : .allowed,
+                            reason: rateReservation.wasDelayed ? .localQuota : .policyAllowed
+                        )),
                     requestID: requestID,
                     observers: configuration.eventObservers
                 )
@@ -405,13 +407,14 @@ package struct StreamingExecutor: Sendable {
                 streamGrant = try await executionRuntime.streamAdmission?.acquire(for: transportRequest)
                 if let streamGrant {
                     await eventHub.publish(
-                        .decision(NetworkDecision(
-                            requestID: requestID,
-                            attemptIndex: retryIndex,
-                            kind: .admission,
-                            outcome: streamGrant.wasQueued ? .delayed : .allowed,
-                            reason: .policyAllowed
-                        )),
+                        .decision(
+                            NetworkDecision(
+                                requestID: requestID,
+                                attemptIndex: retryIndex,
+                                kind: .admission,
+                                outcome: streamGrant.wasQueued ? .delayed : .allowed,
+                                reason: .policyAllowed
+                            )),
                         requestID: requestID,
                         observers: configuration.eventObservers
                     )
@@ -798,9 +801,10 @@ package struct StreamingExecutor: Sendable {
     }
 
     private static func isValidLastEventIDCursor(_ value: String) -> Bool {
-        value.utf8.count <= 4096 && value.unicodeScalars.allSatisfy { scalar in
-            (0x20...0x7E).contains(scalar.value)
-        }
+        value.utf8.count <= 4096
+            && value.unicodeScalars.allSatisfy { scalar in
+                (0x20...0x7E).contains(scalar.value)
+            }
     }
 
     private static func isValidLastEventIDHeaderValue(_ value: String) -> Bool {

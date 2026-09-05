@@ -135,7 +135,8 @@ public final class ServerSentEventDecoder: Sendable {
             }
             func checkCapacity(adding bytes: Int, replacing replacedBytes: Int = 0) throws {
                 guard let limit = maximumEventBytes else { return }
-                let retained = state.dataByteCount
+                let retained =
+                    state.dataByteCount
                     + (state.current.id?.utf8.count ?? 0)
                     + (state.current.event?.utf8.count ?? 0) - replacedBytes
                 guard retained <= limit, bytes <= limit - retained else {

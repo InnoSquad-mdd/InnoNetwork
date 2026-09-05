@@ -168,10 +168,11 @@ package actor AdvancedRateLimitCoordinator {
             delay = retryAfterDelay(response: response, maximumDelay: maximumDelay)
         case .ietfDraft11(let maximum):
             maximumDelay = max(0, maximum)
-            delay = RateLimitHeaderAdapterV11.cooldown(
-                response: response,
-                maximumDelay: maximumDelay
-            ) ?? retryAfterDelay(response: response, maximumDelay: maximumDelay)
+            delay =
+                RateLimitHeaderAdapterV11.cooldown(
+                    response: response,
+                    maximumDelay: maximumDelay
+                ) ?? retryAfterDelay(response: response, maximumDelay: maximumDelay)
         }
         guard let delay, delay > 0 else { return }
         let proposed = clock.monotonicNow() + .seconds(delay)

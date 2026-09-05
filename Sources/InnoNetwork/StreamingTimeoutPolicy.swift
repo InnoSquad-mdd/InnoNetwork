@@ -125,11 +125,13 @@ package final class StreamingTimeoutWatchdog: Sendable {
             }
             if snapshot.isFinished { return }
             let now = clock.monotonicNow()
-            guard let deadline = nearestDeadline(
-                acceptedAt: snapshot.acceptedAt,
-                lastActivity: snapshot.lastActivity,
-                deliveredFirstEvent: snapshot.deliveredFirstEvent
-            ) else { return }
+            guard
+                let deadline = nearestDeadline(
+                    acceptedAt: snapshot.acceptedAt,
+                    lastActivity: snapshot.lastActivity,
+                    deliveredFirstEvent: snapshot.deliveredFirstEvent
+                )
+            else { return }
 
             if deadline.instant > now {
                 do {

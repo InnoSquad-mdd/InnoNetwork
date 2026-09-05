@@ -13,6 +13,23 @@ that cut and are not part of the 6.0 contract.
 
 ### Added for 6.1.0
 
+- Bounded request admission now provides global/origin concurrency, finite
+  pending queues, cancellation-safe queue deadlines, and separate long-lived
+  streaming slots at the physical transport boundary.
+- `AdvancedRateLimitPolicy` adds monotonic token-bucket and exact sliding-window
+  algorithms, reservations/refunds, bounded scopes/queues, `Retry-After`, and
+  an explicitly versioned IETF RateLimit draft-11 adapter.
+- Streaming adds independent first-response, first-event, idle-byte, and total
+  budgets. `StreamingDecodedFrame` preserves output-free SSE `id:` resets and
+  `retry:` hints, while `StreamingResumePolicy.serverSentEvents` can reconnect
+  after clean EOF within a fixed attempt and total-time budget.
+- `NetworkSpanObserver` exports separate logical request and physical attempt
+  spans through a bounded asynchronous vendor-neutral buffer.
+- `ResumableUploadEngine` probes server state and checkpoints only confirmed
+  offsets, with incremental file hashing and an atomic credential-free store.
+- Upload delegate events and manager task/terminal state now have explicit
+  resource ceilings; progress is coalesced while terminal events remain lossless.
+
 - `StreamingResumePolicy.cursor(header:maxAttempts:retryDelay:)` supports
   caller-owned NDJSON and other line-stream cursors, with validated header
   names, a 4 KiB cursor ceiling, no automatic redirects, and transient-only

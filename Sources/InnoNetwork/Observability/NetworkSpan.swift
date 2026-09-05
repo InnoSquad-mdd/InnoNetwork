@@ -120,31 +120,33 @@ public actor NetworkSpanObserver: NetworkEventObserving {
     ) {
         guard let state = requests.removeValue(forKey: requestID) else { return }
         for (index, attempt) in state.attempts {
-            enqueue(NetworkSpan(
-                id: attempt.id,
-                parentID: state.spanID,
+            enqueue(
+                NetworkSpan(
+                    id: attempt.id,
+                    parentID: state.spanID,
+                    requestID: requestID,
+                    attemptIndex: index,
+                    kind: .attempt,
+                    outcome: outcome,
+                    startedAt: attempt.startedAt,
+                    endedAt: endedAt,
+                    statusCode: statusCode,
+                    errorCode: errorCode
+                ))
+        }
+        enqueue(
+            NetworkSpan(
+                id: state.spanID,
+                parentID: nil,
                 requestID: requestID,
-                attemptIndex: index,
-                kind: .attempt,
+                attemptIndex: nil,
+                kind: .request,
                 outcome: outcome,
-                startedAt: attempt.startedAt,
+                startedAt: state.startedAt,
                 endedAt: endedAt,
                 statusCode: statusCode,
                 errorCode: errorCode
             ))
-        }
-        enqueue(NetworkSpan(
-            id: state.spanID,
-            parentID: nil,
-            requestID: requestID,
-            attemptIndex: nil,
-            kind: .request,
-            outcome: outcome,
-            startedAt: state.startedAt,
-            endedAt: endedAt,
-            statusCode: statusCode,
-            errorCode: errorCode
-        ))
     }
 
     private func finishAttempt(
@@ -156,18 +158,19 @@ public actor NetworkSpanObserver: NetworkEventObserving {
         guard let request = requests[requestID],
             let attempt = requests[requestID]?.attempts.removeValue(forKey: attemptIndex)
         else { return }
-        enqueue(NetworkSpan(
-            id: attempt.id,
-            parentID: request.spanID,
-            requestID: requestID,
-            attemptIndex: attemptIndex,
-            kind: .attempt,
-            outcome: outcome,
-            startedAt: attempt.startedAt,
-            endedAt: endedAt,
-            statusCode: nil,
-            errorCode: nil
-        ))
+        enqueue(
+            NetworkSpan(
+                id: attempt.id,
+                parentID: request.spanID,
+                requestID: requestID,
+                attemptIndex: attemptIndex,
+                kind: .attempt,
+                outcome: outcome,
+                startedAt: attempt.startedAt,
+                endedAt: endedAt,
+                statusCode: nil,
+                errorCode: nil
+            ))
     }
 
     private func enqueue(_ span: NetworkSpan) {
