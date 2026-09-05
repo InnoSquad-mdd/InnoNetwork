@@ -78,21 +78,23 @@ value, not by implementation convenience.
    event limit cover interrupted/concurrent streams and multiline memory growth.
    Real TCP disconnect fixtures validate custom cursors and explicit resets;
    server replay/deduplication still belongs to the application.
-4. **Exporter-neutral request span lifecycle.** `NetworkContext` already
-   provides task-local trace and correlation values, and
-   `TraceContextInterceptor` already propagates W3C headers. Evaluate a small
-   adapter that relates request, retry, refresh, cache, and transfer events to
-   parent/child span identities without importing an observability vendor SDK
-   or exposing request/response bodies.
+4. **Exporter-neutral request span lifecycle — implemented for the 6.1
+   candidate.** `NetworkSpanObserver` relates logical requests and physical
+   dispatch attempts without importing a vendor SDK or exposing request and
+   response bodies. Cache hits, coalesced followers, and failures before
+   dispatch retain a logical span but do not invent a transport attempt.
+   Retry attempts remain child spans and export through a bounded queue.
 
-### Discovery only — not admitted yet
+### Priority 2 — operational scheduling
 
-- **Rate-limiter algorithm upgrades.** The 6.0 provisional policy is a shared,
-  cancellation-aware fixed window. Token-bucket or sliding-window scheduling,
-  fairness guarantees, server-quota feedback, and retry coordination remain
-  possible 6.1 experiments, but no external workspace consumer currently uses
-  `RateLimitExecutionPolicy`. Keep the algorithm provisional until a real
-  quota model and deterministic fixture justify the additional API.
+- **Advanced rate limiting — implemented for the 6.1 candidate.** The opt-in
+  policy provides monotonic token-bucket and exact sliding-window scheduling,
+  bounded origin state, cancellation-aware waiting, and conservative
+  `Retry-After` or versioned draft-11 feedback. Numeric configurations fail
+  before sleeping, dormant fully replenished origins release registry slots,
+  and quota is rechecked after concurrency admission at the actual dispatch
+  boundary. Keep this surface Provisionally Stable until a real adopter's
+  server quota model and production traffic evidence validate the choice.
 
 ### Admission and release gates
 
