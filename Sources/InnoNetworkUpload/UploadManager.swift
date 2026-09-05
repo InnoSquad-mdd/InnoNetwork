@@ -407,7 +407,7 @@ public actor UploadManager {
         try Self.validate(request: request, fileURL: fileURL, configuration: configuration)
         guard let url = request.url,
             url == task.requestURL,
-            (request.httpMethod ?? "POST").uppercased() == task.method.uppercased()
+            (request.httpMethod ?? "POST") == task.method
         else {
             throw .invalidRequest("Retry destination and HTTP method must match the original upload")
         }

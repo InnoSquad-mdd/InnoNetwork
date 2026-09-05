@@ -39,6 +39,38 @@ private func failUploadForRetry(
 
 @Suite("Upload Retry Lifetime Tests", .serialized)
 struct UploadRetryLifetimeTests {
+    @Test("Retry preserves the exact case-sensitive HTTP method token")
+    func retryPreservesExactMethodToken() async throws {
+        let (manager, session, channel) = makeUploadHarness()
+        let file = try makeTemporaryUploadFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        var request = URLRequest(url: URL(string: "https://upload.example.test/files")!)
+        request.httpMethod = "CUSTOM"
+        request.setValue("method-token", forHTTPHeaderField: "Idempotency-Key")
+
+        let original = try await manager.upload(request, fromFile: file)
+        await failUploadForRetry(
+            original,
+            try #require(session.latestTask),
+            request: request,
+            manager: manager,
+            channel: channel
+        )
+
+        request.httpMethod = "custom"
+        await #expect(throws: UploadError.self) {
+            _ = try await manager.retry(original.task, with: request, fromFile: file)
+        }
+        #expect(session.taskCount == 1)
+        #expect(await original.task.state == .failed)
+
+        request.httpMethod = "CUSTOM"
+        let retry = try await manager.retry(original.task, with: request, fromFile: file)
+        #expect(session.taskCount == 2)
+        await manager.cancel(retry.task)
+        await manager.shutdown()
+    }
+
     @Test("Terminal retention never evicts an active retry")
     func terminalRetentionPreservesActiveRetry() async throws {
         let limits = UploadResourcePolicy(
