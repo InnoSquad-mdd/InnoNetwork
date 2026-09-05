@@ -133,6 +133,33 @@ struct RequestAdmissionPolicyTests {
         await coordinator.release(scope: secondGrant.scope)
     }
 
+    @Test("Explicit default port shares the implicit origin concurrency limit")
+    func defaultPortSharesOriginLimit() async throws {
+        let coordinator = RequestAdmissionCoordinator(
+            policy: RequestAdmissionPolicy(
+                maximumConcurrentRequests: 2,
+                maximumPendingRequests: 1,
+                scope: .origin,
+                maximumConcurrentRequestsPerScope: 1
+            ),
+            clock: TestClock()
+        )
+        let implicit = URLRequest(url: URL(string: "https://API.example.test/path")!)
+        let explicit = URLRequest(url: URL(string: "https://api.example.test:443/path")!)
+        let firstScope = try await coordinator.acquire(for: implicit).scope
+        let blocked = Task { try await coordinator.acquire(for: explicit) }
+        await waitForPending(1, coordinator: coordinator)
+
+        let snapshot = await coordinator.snapshot
+        #expect(snapshot.active == 1)
+        #expect(snapshot.pending == 1)
+        #expect(snapshot.scopes == 1)
+
+        blocked.cancel()
+        _ = try? await blocked.value
+        await coordinator.release(scope: firstScope)
+    }
+
     private func waitForPending(
         _ count: Int,
         coordinator: RequestAdmissionCoordinator

@@ -327,22 +327,7 @@ package actor CircuitBreakerRegistry {
 
     /// Visible for tests. Returns the canonical breaker key for a request.
     static func hostKey(for request: URLRequest) -> String? {
-        guard let url = request.url, let host = url.host, !host.isEmpty else { return nil }
-        let scheme = url.scheme?.lowercased() ?? "http"
-        let normalizedHost = host.lowercased()
-        let port = url.port ?? defaultPort(forScheme: scheme)
-        return "\(scheme)://\(normalizedHost):\(port)"
-    }
-
-    private static func defaultPort(forScheme scheme: String) -> Int {
-        switch scheme {
-        case "http", "ws":
-            return 80
-        case "https", "wss":
-            return 443
-        default:
-            return 0
-        }
+        NetworkOriginNormalizer.key(for: request.url, unknownSchemeDefaultPort: 0)
     }
 
     private func isCountable(error: Error, policy: CircuitBreakerPolicy) -> Bool {

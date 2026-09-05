@@ -215,12 +215,7 @@ package actor RequestAdmissionCoordinator {
     }
 
     private func scopeKey(for request: URLRequest) -> String {
-        guard policy.scope == .origin,
-            let url = request.url,
-            let scheme = url.scheme?.lowercased(),
-            let host = url.host?.lowercased()
-        else { return "global" }
-        let port = url.port.map { ":\($0)" } ?? ""
-        return "\(scheme)://\(host)\(port)"
+        guard policy.scope == .origin else { return "global" }
+        return NetworkOriginNormalizer.key(for: request.url) ?? "global"
     }
 }

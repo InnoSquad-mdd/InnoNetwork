@@ -180,28 +180,6 @@ public struct DefaultRedirectPolicy: RedirectPolicy {
     /// and effective port match. A missing explicit port resolves to the
     /// scheme's default (80 for http, 443 for https).
     package static func isSameOrigin(_ lhs: URL?, _ rhs: URL?) -> Bool {
-        guard let lhs, let rhs else { return false }
-        guard let lhsScheme = lhs.scheme?.lowercased(),
-            let rhsScheme = rhs.scheme?.lowercased(),
-            lhsScheme == rhsScheme
-        else {
-            return false
-        }
-        guard let lhsHost = lhs.host?.lowercased(),
-            let rhsHost = rhs.host?.lowercased(),
-            lhsHost == rhsHost
-        else {
-            return false
-        }
-        return effectivePort(of: lhs, scheme: lhsScheme) == effectivePort(of: rhs, scheme: rhsScheme)
-    }
-
-    private static func effectivePort(of url: URL, scheme: String) -> Int {
-        if let port = url.port { return port }
-        switch scheme {
-        case "https": return 443
-        case "http": return 80
-        default: return -1
-        }
+        NetworkOriginNormalizer.isSameOrigin(lhs, rhs)
     }
 }

@@ -376,12 +376,8 @@ package actor AdvancedRateLimitCoordinator {
     }
 
     private func scopeKey(for request: URLRequest) -> String {
-        guard policy.scope == .origin,
-            let url = request.url,
-            let scheme = url.scheme?.lowercased(),
-            let host = url.host?.lowercased()
-        else { return "global" }
-        return "\(scheme)://\(host)\(url.port.map { ":\($0)" } ?? "")"
+        guard policy.scope == .origin else { return "global" }
+        return NetworkOriginNormalizer.key(for: request.url) ?? "global"
     }
 }
 

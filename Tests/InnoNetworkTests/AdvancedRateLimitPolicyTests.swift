@@ -181,6 +181,26 @@ struct AdvancedRateLimitPolicyTests {
         #expect(await limiter.snapshot.scopes == 1)
     }
 
+    @Test("Explicit default port shares the implicit origin quota")
+    func defaultPortSharesOriginQuota() async throws {
+        let clock = TestClock()
+        let limiter = AdvancedRateLimitCoordinator(
+            policy: AdvancedRateLimitPolicy(
+                algorithm: .tokenBucket(capacity: 1, refillPerSecond: 1)
+            ),
+            clock: clock
+        )
+        let implicit = URLRequest(url: URL(string: "https://API.example.test/resource")!)
+        let explicit = URLRequest(url: URL(string: "https://api.example.test:443/resource")!)
+        #expect(await limiter.commit(try await limiter.reserve(for: implicit)) == nil)
+
+        let delayed = Task { try await limiter.reserve(for: explicit) }
+        #expect(await clock.waitForWaiters(count: 1))
+        #expect(await limiter.snapshot.scopes == 1)
+        clock.advance(by: .seconds(1))
+        _ = await limiter.commit(try await delayed.value)
+    }
+
     private func request(host: String) -> URLRequest {
         URLRequest(url: URL(string: "https://\(host)/resource")!)
     }
