@@ -52,11 +52,6 @@ struct ServerSentEventDecoderTests {
 
     @Test("UTF-8 BOM stripped again after reconnect on the same decoder")
     func bomStrippedOnSecondStreamAfterReconnect() async {
-        // `StreamingExecutor` reuses the same `ServerSentEventDecoder`
-        // instance across resume/reconnect attempts. The decoder must
-        // therefore reset its first-line state on every event boundary so
-        // a fresh HTTP response stream starting with U+FEFF is still
-        // stripped. This regression-tests the cross-reconnect bug.
         let decoder = ServerSentEventDecoder()
 
         // First stream: BOM stripped on the leading line as before.
@@ -64,10 +59,9 @@ struct ServerSentEventDecoderTests {
         let firstEvent = decoder.decode(line: "")
         #expect(firstEvent == ServerSentEvent(data: "first"))
 
-        // Simulated reconnect: the same decoder instance now sees a brand
-        // new stream that also starts with U+FEFF. Without resetting the
-        // first-line bit on dispatch, the leading BOM would survive into
-        // the parsed `data:` value.
+        _ = decoder.decode(line: "id: discarded")
+        _ = decoder.decode(line: "data: incomplete")
+        decoder.reset()
         _ = decoder.decode(line: "\u{FEFF}data: second")
         let secondEvent = decoder.decode(line: "")
         #expect(secondEvent == ServerSentEvent(data: "second"))
@@ -116,23 +110,42 @@ struct ServerSentEventDecoderTests {
         #expect(decoder.decode(line: "") == nil)
     }
 
-    @Test("Field without colon and an empty data buffer does not dispatch")
+    @Test("A data field without colon dispatches empty data; metadata alone does not")
     func fieldWithoutColon() {
         let decoder = ServerSentEventDecoder()
 
-        // Per the WHATWG SSE spec, an empty data buffer means no event is
-        // dispatched, even if a `data` line was present.
         _ = decoder.decode(line: "data")
         let event = decoder.decode(line: "")
-        #expect(event == nil)
+        #expect(event == ServerSentEvent(data: ""))
 
-        // But the event-type field on its own does dispatch with empty data.
         _ = decoder.decode(line: "event: heartbeat")
         let heartbeat = decoder.decode(line: "")
-        #expect(heartbeat == ServerSentEvent(event: "heartbeat", data: ""))
+        #expect(heartbeat == nil)
     }
 
-    @Test("Decoder resets after each dispatch")
+    @Test("Empty data lines preserve leading, trailing, and repeated newlines",
+          arguments: [
+            (["data:"], ""),
+            (["data:", "data: next"], "\nnext"),
+            (["data: first", "data:"], "first\n"),
+            (["data:", "data:", "data:"], "\n\n"),
+          ])
+    func emptyDataLines(lines: [String], expected: String) {
+        let decoder = ServerSentEventDecoder()
+        for line in lines { #expect(decoder.decode(line: line) == nil) }
+        #expect(decoder.decode(line: "")?.data == expected)
+    }
+
+    @Test("BOM is special only at the start of a response, not every event")
+    func bomInsideStreamIsNotStripped() {
+        let decoder = ServerSentEventDecoder()
+        _ = decoder.decode(line: "data: first")
+        _ = decoder.decode(line: "")
+        _ = decoder.decode(line: "\u{FEFF}data: not-a-data-field")
+        #expect(decoder.decode(line: "") == nil)
+    }
+
+    @Test("Data resets after dispatch but the last ID persists until explicitly cleared")
     func decoderResetsAfterDispatch() {
         let decoder = ServerSentEventDecoder()
 
@@ -141,10 +154,69 @@ struct ServerSentEventDecoderTests {
         let first = decoder.decode(line: "")
         #expect(first == ServerSentEvent(id: "1", data: "first"))
 
-        // No id or event carried into the next frame.
         _ = decoder.decode(line: "data: second")
         let second = decoder.decode(line: "")
-        #expect(second == ServerSentEvent(data: "second"))
+        #expect(second == ServerSentEvent(id: "1", data: "second"))
+        _ = decoder.decode(line: "id:")
+        #expect(decoder.decode(line: "") == nil)
+        _ = decoder.decode(line: "data: third")
+        #expect(decoder.decode(line: "") == ServerSentEvent(id: "", data: "third"))
+    }
+
+    @Test("Metadata-only blocks update ID without dispatching an event")
+    func metadataOnlyBlock() {
+        let decoder = ServerSentEventDecoder()
+        _ = decoder.decode(line: "id: 42")
+        _ = decoder.decode(line: "event: discarded")
+        #expect(decoder.decode(line: "") == nil)
+        _ = decoder.decode(line: "data: payload")
+        #expect(decoder.decode(line: "") == ServerSentEvent(id: "42", data: "payload"))
+    }
+
+    @Test("Event limit counts UTF-8 bytes and separators across short data lines")
+    func boundedEvent() throws {
+        let decoder = ServerSentEventDecoder()
+        _ = try decoder.decode(line: "data: é", maximumEventBytes: 4)
+        _ = try decoder.decode(line: "data:", maximumEventBytes: 4)
+        #expect(try decoder.decode(line: "", maximumEventBytes: 4)?.data == "é\n")
+        _ = try decoder.decode(line: "data: é", maximumEventBytes: 4)
+        #expect(throws: DecodingError.self) {
+            try decoder.decode(line: "data: secret", maximumEventBytes: 4)
+        }
+        #expect(throws: DecodingError.self) {
+            try decoder.decode(line: "", maximumEventBytes: 4)
+        }
+        #expect(decoder.decode(line: "data: cannot-bypass-latch") == nil)
+        decoder.reset()
+        _ = try decoder.decode(line: "data: ok", maximumEventBytes: 4)
+        #expect(try decoder.decode(line: "", maximumEventBytes: 4)?.data == "ok")
+    }
+
+    @Test("Limit accounts for metadata replacement but not comments or unknown fields")
+    func boundedMetadata() throws {
+        let decoder = ServerSentEventDecoder()
+        for _ in 0..<100 {
+            _ = try decoder.decode(line: ": keepalive", maximumEventBytes: 5)
+            _ = try decoder.decode(line: "ignored: not-retained", maximumEventBytes: 5)
+        }
+        _ = try decoder.decode(line: "id: 12345", maximumEventBytes: 5)
+        _ = try decoder.decode(line: "id: 1", maximumEventBytes: 5)
+        _ = try decoder.decode(line: "event: x", maximumEventBytes: 5)
+        _ = try decoder.decode(line: "data: ok", maximumEventBytes: 5)
+        #expect(try decoder.decode(line: "", maximumEventBytes: 5)?.data == "ok")
+        #expect(throws: DecodingError.self) {
+            try decoder.decode(line: "event: secret", maximumEventBytes: 5)
+        }
+    }
+
+    @Test("Nonpositive limit is rejected without consuming input", arguments: [0, -1])
+    func invalidLimit(limit: Int) throws {
+        let decoder = ServerSentEventDecoder()
+        #expect(throws: DecodingError.self) {
+            try decoder.decode(line: "data: ignored", maximumEventBytes: limit)
+        }
+        _ = try decoder.decode(line: "\u{FEFF}data: ok", maximumEventBytes: 3)
+        #expect(try decoder.decode(line: "", maximumEventBytes: 3)?.data == "ok")
     }
 
     @Test("Single-space prefix on values is consumed")

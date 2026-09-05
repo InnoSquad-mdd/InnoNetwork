@@ -13,6 +13,18 @@ that cut and are not part of the 6.0 contract.
 
 ### Added for 6.1.0
 
+- `StreamingResumePolicy.cursor(header:maxAttempts:retryDelay:)` supports
+  caller-owned NDJSON and other line-stream cursors, with validated header
+  names, a 4 KiB cursor ceiling, no automatic redirects, and transient-only
+  resume. Invalid cursors disable the entire attempt; empty cursors remove
+  seeded headers. Lossy output buffers remain incompatible with resume.
+- `StreamingAPIDefinition.makeDecoder()` creates response-scoped decoder
+  state, including reconnects and concurrent calls. `ServerSentEventDecoder`
+  adds an explicit reset and opt-in aggregate UTF-8 byte limit. Migrate
+  stateful definitions to the factory; stateless `decode(line:)` stays source
+  compatible. SSE fixes preserve empty data and significant newlines, inherit
+  IDs, ignore metadata-only blocks, and recognize CR/LF/CRLF. Rejected
+  handshakes and terminating decoders cancel the underlying response task.
 - `NetworkOperationDeadline` gives each operation-first buffered request one
   monotonic latency budget across request preparation, authentication, cache
   lookup, policy admission, connectivity waits, retry delay, transport, and

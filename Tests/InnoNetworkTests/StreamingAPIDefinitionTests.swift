@@ -82,6 +82,31 @@ private final class ThrowingBytesSession: URLSessionProtocol, Sendable {
     }
 }
 
+private actor InspectingStreamingSession: URLSessionProtocol {
+    let session: URLSession
+    var redirectPermissions: [Bool] = []
+    var tasks: [URLSessionTask] = []
+
+    init(session: URLSession) { self.session = session }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        try await session.data(for: request)
+    }
+
+    func bytes(for request: URLRequest, context: NetworkRequestContext) async throws -> (
+        URLSession.AsyncBytes, URLResponse
+    ) {
+        redirectPermissions.append(context.allowsAutomaticRedirects)
+        let result = try await session.bytes(for: request, context: context)
+        tasks.append(result.0.task)
+        return result
+    }
+
+    func allTasksStopped() -> Bool {
+        !tasks.isEmpty && tasks.allSatisfy { $0.state == .canceling || $0.state == .completed }
+    }
+}
+
 
 private final class DelayedTimedOutBytesSession: URLSessionProtocol, Sendable {
     private let delay: Duration
@@ -232,6 +257,41 @@ private struct ResumableStream: StreamingAPIDefinition {
     }
 }
 
+private struct ResponseScopedSSEStream: StreamingAPIDefinition {
+    var method: HTTPMethod { .get }
+    var path: String { "/sse" }
+    var sessionAuthentication: SessionAuthentication { .anonymous }
+    var resumePolicy: StreamingResumePolicy { .lastEventID(maxAttempts: 1, retryDelay: 0) }
+    var maximumEventBytes = 1024
+
+    func makeDecoder() -> @Sendable (String) throws -> ServerSentEvent? {
+        let decoder = ServerSentEventDecoder()
+        return { try decoder.decode(line: $0, maximumEventBytes: maximumEventBytes) }
+    }
+
+    func eventID(from output: ServerSentEvent) -> String? { output.id }
+}
+
+private struct CursorNDJSONStream: StreamingAPIDefinition {
+    struct Output: Decodable, Sendable, Equatable {
+        let cursor: String
+        let value: Int
+    }
+
+    var method: HTTPMethod { .get }
+    var path: String { "/changes" }
+    var sessionAuthentication: SessionAuthentication { .anonymous }
+    var resumePolicy: StreamingResumePolicy = .cursor(header: "X-Resume-Cursor", maxAttempts: 1, retryDelay: 0)
+    var headers = HTTPHeaders()
+
+    func decode(line: String) throws -> Output? {
+        guard !line.isEmpty else { return nil }
+        return try JSONDecoder().decode(Output.self, from: Data(line.utf8))
+    }
+
+    func eventID(from output: Output) -> String? { output.cursor }
+}
+
 
 private struct ResumableDecodeError: LocalizedError {
     let line: String
@@ -319,6 +379,7 @@ private final class StreamingResumeHTTPServer: @unchecked Sendable {
     private let listener: NWListener
     private let queue = DispatchQueue(label: "innonetwork.streaming-resume-http-server")
     private let firstAttemptBody: String
+    private let resumedBody: String
     private var handledConnectionCount = 0
     private var capturedHeaderBlocks: [String] = []
     private var portValue: UInt16 = 0
@@ -327,10 +388,11 @@ private final class StreamingResumeHTTPServer: @unchecked Sendable {
         URL(string: "http://127.0.0.1:\(portValue)")!
     }
 
-    init(firstAttemptBody: String = "1|alpha\n") throws {
+    init(firstAttemptBody: String = "1|alpha\n", resumedBody: String = "2|beta\n") throws {
         let listener = try NWListener(using: .tcp, on: .any)
         self.listener = listener
         self.firstAttemptBody = firstAttemptBody
+        self.resumedBody = resumedBody
 
         let ready = DispatchSemaphore(value: 0)
         listener.stateUpdateHandler = { state in
@@ -392,9 +454,9 @@ private final class StreamingResumeHTTPServer: @unchecked Sendable {
                 let response =
                     "HTTP/1.1 200 OK\r\n"
                     + "Content-Type: text/plain\r\n"
-                    + "Content-Length: 7\r\n"
+                    + "Content-Length: \(self.resumedBody.utf8.count)\r\n"
                     + "\r\n"
-                    + "2|beta\n"
+                    + self.resumedBody
                 connection.send(
                     content: Data(response.utf8),
                     completion: .contentProcessed { _ in
@@ -662,10 +724,13 @@ struct StreamingAPIDefinitionTests {
         #expect(values == ["three"])
     }
 
-    @Test("stream(bufferingPolicy:) rejects bounded buffers with Last-Event-ID resume")
-    func streamBufferingPolicyRejectsBoundedResumeCombination() async throws {
+    @Test("stream(bufferingPolicy:) rejects bounded buffers with cursor resume", arguments: [
+        StreamingResumePolicy.lastEventID(maxAttempts: 2, retryDelay: 0),
+        .cursor(header: "X-Resume-Cursor", maxAttempts: 2, retryDelay: 0),
+    ])
+    func streamBufferingPolicyRejectsBoundedResumeCombination(policy: StreamingResumePolicy) async throws {
         let baseURL = uniqueStreamingBaseURL()
-        let definition = ResumableStream(resumePolicy: .lastEventID(maxAttempts: 2, retryDelay: 0))
+        let definition = ResumableStream(resumePolicy: policy)
         let streamURL = baseURL.appendingPathComponent(definition.path)
         SequencedStreamingURLProtocol.enqueue(
             url: streamURL,
@@ -1596,6 +1661,205 @@ struct StreamingAPIDefinitionTests {
         let captured = SequencedStreamingURLProtocol.capturedRequests(for: streamURL)
         #expect(captured.count == 1)
         #expect(captured.first?.value(forHTTPHeaderField: "Last-Event-ID") == nil)
+    }
+
+    @Test("NDJSON resumes with the caller's cursor header and clears seeded headers on reset",
+          arguments: ["page-2", ""])
+    func ndjsonCursorResume(cursor: String) async throws {
+        let body = "{\"cursor\":\"\(cursor)\",\"value\":1}\n"
+        let server = try StreamingResumeHTTPServer(
+            firstAttemptBody: body, resumedBody: "{\"cursor\":\"page-3\",\"value\":2}\n"
+        )
+        defer { server.stop() }
+        let definition = CursorNDJSONStream(headers: HTTPHeaders([
+            HTTPHeader(name: "X-Resume-Cursor", value: "seed")
+        ]))
+        let client = DefaultNetworkClient(
+            configuration: NetworkConfiguration(baseURL: server.baseURL, timeout: 5, allowsInsecureHTTP: true),
+            session: URLSession(configuration: .ephemeral)
+        )
+        var values: [CursorNDJSONStream.Output] = []
+        for try await value in client.stream(definition) { values.append(value) }
+        #expect(values == [.init(cursor: cursor, value: 1), .init(cursor: "page-3", value: 2)])
+        let requests = server.capturedRequests()
+        #expect(requests.count == 2)
+        #expect(requests.first?.contains("X-Resume-Cursor: seed") == true)
+        #expect(requests.last?.contains("Last-Event-ID:") == false)
+        if cursor.isEmpty {
+            #expect(requests.last?.contains("X-Resume-Cursor:") == false)
+        } else {
+            #expect(requests.last?.contains("X-Resume-Cursor: page-2") == true)
+        }
+    }
+
+    @Test("Invalid cursor configuration fails before network dispatch")
+    func invalidCursorConfigurationDoesNotDispatch() async throws {
+        let baseURL = uniqueStreamingBaseURL()
+        let definition = CursorNDJSONStream(resumePolicy: .cursor(header: "Authorization", maxAttempts: 1))
+        let streamURL = baseURL.appendingPathComponent(definition.path)
+        SequencedStreamingURLProtocol.enqueue(url: streamURL, steps: [.success(statusCode: 200, data: Data())])
+        let client = DefaultNetworkClient(
+            configuration: NetworkConfiguration(baseURL: baseURL), session: makeSequencedStreamingURLSession()
+        )
+        do {
+            for try await _ in client.stream(definition) {}
+            Issue.record("Expected invalid cursor configuration")
+        } catch {
+            guard case .configuration = error else {
+                Issue.record("Expected configuration failure, got \(error)")
+                return
+            }
+        }
+        #expect(SequencedStreamingURLProtocol.capturedRequests(for: streamURL).isEmpty)
+    }
+
+    @Test("Resumable streams forbid automatic redirects and cancel rejected response bodies")
+    func resumeContextAndHandshakeCleanup() async throws {
+        let baseURL = uniqueStreamingBaseURL()
+        let definition = CursorNDJSONStream()
+        let streamURL = baseURL.appendingPathComponent(definition.path)
+        SequencedStreamingURLProtocol.enqueue(url: streamURL, steps: [.success(statusCode: 403, data: Data())])
+        let session = InspectingStreamingSession(session: makeSequencedStreamingURLSession())
+        let client = DefaultNetworkClient(configuration: NetworkConfiguration(baseURL: baseURL), session: session)
+        do {
+            for try await _ in client.stream(definition) {}
+            Issue.record("Expected rejected handshake")
+        } catch {
+            guard case .statusCode = error else {
+                Issue.record("Expected status-code failure, got \(error)")
+                return
+            }
+        }
+        #expect(await session.redirectPermissions == [false])
+        #expect(await session.allTasksStopped())
+    }
+
+    @Test("Identical SSE definitions used concurrently get separate response decoders")
+    func concurrentSSEStreamsAreIndependent() async throws {
+        let definition = ResponseScopedSSEStream()
+        let firstURL = uniqueStreamingBaseURL()
+        let secondURL = uniqueStreamingBaseURL()
+        StreamingURLProtocol.register(
+            url: firstURL.appendingPathComponent(definition.path),
+            response: .success(statusCode: 200, data: Data("id: first\ndata: alpha\n\n".utf8))
+        )
+        StreamingURLProtocol.register(
+            url: secondURL.appendingPathComponent(definition.path),
+            response: .success(statusCode: 200, data: Data("id: second\ndata: beta\n\n".utf8))
+        )
+        @Sendable func collect(baseURL: URL) async throws -> [ServerSentEvent] {
+            let client = DefaultNetworkClient(
+                configuration: NetworkConfiguration(baseURL: baseURL), session: makeStreamingURLSession()
+            )
+            var events: [ServerSentEvent] = []
+            for try await event in client.stream(definition) { events.append(event) }
+            return events
+        }
+        async let first = collect(baseURL: firstURL)
+        async let second = collect(baseURL: secondURL)
+        #expect(try await first == [.init(id: "first", data: "alpha")])
+        #expect(try await second == [.init(id: "second", data: "beta")])
+    }
+
+    @Test("Oversized cursor prevents resume even when a subsequent cursor is valid")
+    func oversizedCursorDoesNotResume() async throws {
+        let server = try StreamingResumeHTTPServer(
+            firstAttemptBody: String(repeating: "x", count: 4097) + "|alpha\n2|beta\n"
+        )
+        defer { server.stop() }
+        let client = DefaultNetworkClient(
+            configuration: NetworkConfiguration(baseURL: server.baseURL, timeout: 5, allowsInsecureHTTP: true),
+            session: URLSession(configuration: .ephemeral)
+        )
+        var count = 0
+        do {
+            for try await _ in client.stream(ResumableStream(resumePolicy: .lastEventID(maxAttempts: 1, retryDelay: 0))) {
+                count += 1
+            }
+            Issue.record("Expected terminal transport error")
+        } catch {
+            guard case .reachability = error else {
+                Issue.record("Expected reachability failure, got \(error)")
+                return
+            }
+        }
+        #expect(count == 2)
+        #expect(server.capturedRequests().count == 1)
+    }
+
+    @Test("SSE factory isolates decoder state across interrupted responses")
+    func sseFactoryResetsOnResume() async throws {
+        let server = try StreamingResumeHTTPServer(
+            firstAttemptBody: "\u{FEFF}id: 1\ndata: alpha\n\ndata: unfinished\n",
+            resumedBody: "\u{FEFF}id: 2\ndata: beta\n\n"
+        )
+        defer { server.stop() }
+        let client = DefaultNetworkClient(
+            configuration: NetworkConfiguration(baseURL: server.baseURL, timeout: 5, allowsInsecureHTTP: true),
+            session: URLSession(configuration: .ephemeral)
+        )
+        var events: [ServerSentEvent] = []
+        for try await event in client.stream(ResponseScopedSSEStream()) { events.append(event) }
+        #expect(events == [.init(id: "1", data: "alpha"), .init(id: "2", data: "beta")])
+        #expect(server.capturedRequests().count == 2)
+        #expect(server.capturedRequests().last?.contains("Last-Event-ID: 1") == true)
+    }
+
+    @Test("SSE accepts CR, LF and CRLF, including empty data and unterminated final events",
+          arguments: ["\r", "\n", "\r\n"])
+    func sseLineEndings(separator: String) async throws {
+        let baseURL = uniqueStreamingBaseURL()
+        let definition = ResponseScopedSSEStream()
+        let streamURL = baseURL.appendingPathComponent(definition.path)
+        let body = ["data:", "data: x", "", "data: unterminated"].joined(separator: separator)
+        StreamingURLProtocol.register(url: streamURL, response: .success(statusCode: 200, data: Data(body.utf8)))
+        let client = DefaultNetworkClient(
+            configuration: NetworkConfiguration(baseURL: baseURL), session: makeStreamingURLSession()
+        )
+        var events: [ServerSentEvent] = []
+        for try await event in client.stream(definition) { events.append(event) }
+        #expect(events == [.init(data: "\nx")])
+    }
+
+    @Test("An oversized multi-line SSE event fails with redacted decoding error, without resume")
+    func oversizedSSEDoesNotResume() async throws {
+        let baseURL = uniqueStreamingBaseURL()
+        let definition = ResponseScopedSSEStream(maximumEventBytes: 9)
+        let streamURL = baseURL.appendingPathComponent(definition.path)
+        SequencedStreamingURLProtocol.enqueue(url: streamURL, steps: [
+            .success(statusCode: 200, data: Data("id: 1\ndata: ok\n\ndata: secret\ndata: secret\n\n".utf8)),
+            .success(statusCode: 200, data: Data("data: unexpected\n\n".utf8)),
+        ])
+        let client = DefaultNetworkClient(
+            configuration: NetworkConfiguration(baseURL: baseURL), session: makeSequencedStreamingURLSession()
+        )
+        var events: [ServerSentEvent] = []
+        do {
+            for try await event in client.stream(definition) { events.append(event) }
+            Issue.record("Expected event size failure")
+        } catch {
+            guard case .decoding(let stage, let underlying, let response) = error else {
+                Issue.record("Expected decoding error, got \(error)")
+                return
+            }
+            #expect(stage == .streamFrame)
+            #expect(!underlying.message.contains("secret"))
+            #expect(response.data.isEmpty)
+        }
+        #expect(events == [.init(id: "1", data: "ok")])
+        #expect(SequencedStreamingURLProtocol.capturedRequests(for: streamURL).count == 1)
+    }
+
+    @Test("Two factories from the same definition do not share partial events")
+    func sseFactoriesAreIndependent() throws {
+        let definition = ResponseScopedSSEStream()
+        let first = definition.makeDecoder()
+        let second = definition.makeDecoder()
+        _ = try first("id: first")
+        _ = try first("data: alpha")
+        _ = try second("\u{FEFF}data: beta")
+        #expect(try second("") == .init(data: "beta"))
+        #expect(try first("") == .init(id: "first", data: "alpha"))
     }
 
     @Test("stream() handshake error does not trigger Last-Event-ID resume")

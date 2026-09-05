@@ -60,6 +60,7 @@ required_meta_docs=(
   "$repo_root/docs/releases/6.0.0.md"
 )
 required_feature_docs=(
+  "$repo_root/Sources/InnoNetwork/InnoNetwork.docc/Articles/StreamingGuide.md"
   "$repo_root/Sources/InnoNetwork/InnoNetwork.docc/Articles/EventDeliveryGuide.md"
   "$repo_root/Sources/InnoNetwork/InnoNetwork.docc/Articles/OpenAPIGeneratorAdapter.md"
   "$repo_root/Sources/InnoNetwork/InnoNetwork.docc/Articles/AuthRefresh.md"
@@ -211,6 +212,7 @@ expected_provisionally=(
 '`JWTBearerInterceptor` reference signer for request-minted JWT bearer tokens'
 '`InnoNetworkAuthAWS` companion product and `AWSSigV4Interceptor` reference signer for single-shot AWS SigV4 signing'
 '`StreamingBufferingPolicy`, `StreamingOutputSequence`, `TraceContextInterceptor`, `W3CTraceContext`, `CurlCommandOptions`, `IdempotencyKeyPolicy`, and `RequestPriority`'
+'`StreamingAPIDefinition.makeDecoder()`, `StreamingResumePolicy.cursor`, and'
 '`HTTPHeaderName<Variant>` phantom-typed header key surface and its predefined `SingleValueHeader` / `RepeatableHeader` markers (also referenced as `HTTPHeaderName` / `HTTPHeaderVariant` for contract-sync purposes)'
 '`MultipartUploadStrategy.threshold(bytes:)`'
 '`PersistentResponseCacheStatistics.hitCount` / `missCount` / `evictionCount`'
@@ -1728,6 +1730,17 @@ for symbol in "${expected_provisionally[@]}"; do
       ;;
     '`StreamingBufferingPolicy`, `StreamingOutputSequence`, `TraceContextInterceptor`, `W3CTraceContext`, `CurlCommandOptions`, `IdempotencyKeyPolicy`, and `RequestPriority`')
       validate_operational_dx_public_api
+      continue
+      ;;
+    '`StreamingAPIDefinition.makeDecoder()`, `StreamingResumePolicy.cursor`, and')
+      require_contains 'func makeDecoder() -> @Sendable (String) throws -> Output?' \
+        "$repo_root/Sources/InnoNetwork/StreamingAPIDefinition.swift"
+      require_contains 'case cursor(header: String, maxAttempts: Int, retryDelay: TimeInterval = 1.0)' \
+        "$repo_root/Sources/InnoNetwork/StreamingAPIDefinition.swift"
+      require_contains 'public func decode(line: String, maximumEventBytes: Int)' \
+        "$repo_root/Sources/InnoNetwork/StreamingDecoders.swift"
+      require_contains 'public func reset()' \
+        "$repo_root/Sources/InnoNetwork/StreamingDecoders.swift"
       continue
       ;;
     '`HTTPHeaderName<Variant>` phantom-typed header key surface and its predefined `SingleValueHeader` / `RepeatableHeader` markers (also referenced as `HTTPHeaderName` / `HTTPHeaderVariant` for contract-sync purposes)')

@@ -68,6 +68,10 @@ retain those values.
 - ``UploadNetworkClient``
 - ``EndpointBuilder``
 - ``MultipartAPIDefinition``
+- <doc:StreamingGuide>
+- ``StreamingAPIDefinition``
+- ``StreamingResumePolicy``
+- ``ServerSentEventDecoder``
 - ``BoundedNetworkTransfer``
 - ``NetworkRetryExecutor``
 - ``NetworkURLValidator``

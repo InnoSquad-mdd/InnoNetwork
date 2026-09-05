@@ -2,13 +2,18 @@ import Foundation
 
 /// Resume policy for a ``StreamingAPIDefinition``.
 ///
-/// Streaming requests bypass the configured ``RetryPolicy`` because a partial
-/// event prefix cannot be replayed transparently. This policy describes the
+/// Mid-stream failures bypass the configured ``RetryPolicy`` because a partial
+/// event prefix cannot be replayed transparently. Handshake failures can use
+/// that retry policy before any outputs are delivered. This policy describes the
 /// narrow alternative: re-establish the connection after a transport-level
 /// disconnect, using the most recent non-empty event id observed by the
 /// client as a `Last-Event-ID` HTTP header so the server can resume from the
 /// right position. Designed for Server-Sent Events but applicable to any
 /// id-bearing line stream.
+///
+/// Both resume policies accept only bounded printable-ASCII cursors, disable
+/// automatic redirects, and resume only timeout/reachability failures. They
+/// require server-supported replay semantics, not arbitrary request repetition.
 public enum StreamingResumePolicy: Sendable, Equatable {
     /// Do not resume after a mid-stream transport disconnect. The error is
     /// surfaced to the consumer as-is. This is the default.
@@ -27,11 +32,25 @@ public enum StreamingResumePolicy: Sendable, Equatable {
     /// attempt.
     case lastEventID(maxAttempts: Int, retryDelay: TimeInterval = 1.0)
 
+    /// Resume an application-defined line stream (for example NDJSON) using
+    /// the cursor from ``StreamingAPIDefinition/eventID(from:)`` in `header`.
+    /// The server must explicitly support cursor-based replay for this endpoint;
+    /// opting in is not an exactly-once or durable acknowledgement guarantee.
+    ///
+    /// Header names must be ASCII HTTP tokens of at most 128 bytes and must not
+    /// name authentication, cookie, framing, routing, or other reserved fields.
+    /// Cursors accept at most 4,096 printable ASCII bytes. Empty cursors clear
+    /// the header; any invalid cursor disables resume for the entire attempt.
+    /// Like `lastEventID`, this policy rejects lossy buffers. Both policies
+    /// disable automatic redirects to avoid forwarding a cursor to another URL.
+    case cursor(header: String, maxAttempts: Int, retryDelay: TimeInterval = 1.0)
+
     /// Internal accessor used by the streaming executor.
     var maxAttempts: Int {
         switch self {
         case .disabled: return 0
         case .lastEventID(let maxAttempts, _): return max(0, maxAttempts)
+        case .cursor(_, let maxAttempts, _): return max(0, maxAttempts)
         }
     }
 
@@ -39,6 +58,49 @@ public enum StreamingResumePolicy: Sendable, Equatable {
         switch self {
         case .disabled: return 0
         case .lastEventID(_, let delay): return max(0, delay)
+        case .cursor(_, _, let delay): return max(0, delay)
+        }
+    }
+
+    package var headerName: String? {
+        switch self {
+        case .disabled: nil
+        case .lastEventID: "Last-Event-ID"
+        case .cursor(let header, _, _): header
+        }
+    }
+
+    package func validate() throws {
+        let delay: TimeInterval
+        switch self {
+        case .disabled: return
+        case .lastEventID(_, let value), .cursor(_, _, let value): delay = value
+        }
+        guard delay.isFinite else {
+            throw NetworkError.configuration(reason: .invalidRequest("Streaming resume delay must be finite."))
+        }
+        guard let header = headerName,
+            !header.isEmpty, header.utf8.count <= 128,
+            header.utf8.allSatisfy({ byte in
+                switch byte {
+                case 0x30...0x39, 0x41...0x5A, 0x61...0x7A,
+                    0x21, 0x23...0x27, 0x2A, 0x2B, 0x2D, 0x2E, 0x5E, 0x5F, 0x60, 0x7C, 0x7E: true
+                default: false
+                }
+            })
+        else {
+            throw NetworkError.configuration(reason: .invalidRequest("Invalid streaming cursor header name."))
+        }
+        let name = header.lowercased()
+        let reserved: Set<String> = [
+            "authorization", "cookie", "set-cookie", "host", "content-length", "content-type",
+            "content-encoding", "transfer-encoding", "connection", "keep-alive", "te", "trailer",
+            "upgrade", "expect", "accept", "accept-encoding", "range", "if-range", "if-match",
+            "if-none-match", "if-modified-since", "if-unmodified-since", "cache-control", "pragma",
+            "origin", "referer", "user-agent", "idempotency-key", "x-api-key", "traceparent", "tracestate",
+        ]
+        guard !reserved.contains(name), !name.hasPrefix("proxy-"), !name.hasPrefix("sec-") else {
+            throw NetworkError.configuration(reason: .invalidRequest("Streaming cursor cannot use a reserved header."))
         }
     }
 }
@@ -79,7 +141,7 @@ extension StreamingResumePolicy {
             // The consumer has opted out of resume entirely, so a bounded
             // buffer cannot mask lost recovery state.
             return true
-        case .lastEventID:
+        case .lastEventID, .cursor:
             // Last-Event-ID resume re-issues against the most recent id the
             // consumer has actually observed. A bounded buffer can drop a
             // not-yet-consumed frame that carried the next id, so the
@@ -98,10 +160,10 @@ extension StreamingResumePolicy {
 ///
 /// 1. The transport is line-delimited bytes (Server-Sent Events, NDJSON,
 ///    `chunked` log feeds) rather than a single buffered body.
-/// 2. The ``RetryPolicy`` is intentionally bypassed because mid-stream
+/// 2. The ``RetryPolicy`` is intentionally bypassed for mid-stream failures because
 ///    retry semantics are application-specific — a partial event prefix
 ///    cannot be replayed transparently. Use ``resumePolicy`` for the
-///    narrow Last-Event-ID-based resume behavior; deeper reconnect logic
+///    narrow cursor-based resume behavior; deeper reconnect logic
 ///    belongs in the consumer.
 ///
 /// Each line yielded by the transport is passed to ``decode(line:)``.
@@ -128,6 +190,13 @@ public protocol StreamingAPIDefinition: Sendable {
     /// Default is ``StreamingResumePolicy/disabled``.
     var resumePolicy: StreamingResumePolicy { get }
 
+    /// Create isolated line-decoder state for one accepted HTTP response.
+    /// Called once per response, including reconnects, never shared by separate
+    /// calls to `stream`. Stateful SSE decoders should be allocated inside this
+    /// factory so incomplete events cannot cross attempts or concurrent streams.
+    /// The default forwards to ``decode(line:)`` for stateless definitions.
+    func makeDecoder() -> @Sendable (String) throws -> Output?
+
     /// Decode a single line (without trailing newline) into an `Output`,
     /// or return `nil` to skip it.
     ///
@@ -138,16 +207,28 @@ public protocol StreamingAPIDefinition: Sendable {
 
     /// Returns the Last-Event-ID-style identifier for a decoded event, when
     /// the underlying protocol carries one. The library tracks the most
-    /// recent non-nil result and uses it as the `Last-Event-ID` header on
+    /// recent non-nil result and uses it in the configured cursor header on
     /// resume attempts. An empty string clears the previous cursor and is not
     /// sent as a blank header. Values containing characters unsafe for HTTP
-    /// headers disable resume for that attempt. Default returns `nil`, which
+    /// headers or exceeding 4,096 UTF-8 bytes disable resume for that attempt.
+    /// Default returns `nil`, which
     /// disables resume even if ``resumePolicy`` is configured.
     func eventID(from output: Output) -> String?
 }
 
 
 public extension StreamingAPIDefinition {
+    func makeDecoder() -> @Sendable (String) throws -> Output? {
+        { try self.decode(line: $0) }
+    }
+
+    /// Stateful definitions may implement only ``makeDecoder()``. Direct line
+    /// decoding without their response-scoped state is unsupported.
+    func decode(line: String) throws -> Output? {
+        throw DecodingError.dataCorrupted(.init(
+            codingPath: [], debugDescription: "Implement decode(line:) or makeDecoder()."
+        ))
+    }
     var headers: HTTPHeaders { HTTPHeaders() }
     var requestInterceptors: [RequestInterceptor] { [] }
     var requestSigners: [RequestSigner] { [] }

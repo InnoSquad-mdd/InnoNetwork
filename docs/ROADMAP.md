@@ -70,11 +70,14 @@ value, not by implementation convenience.
    change destination or method and cannot restart cancelled or completed
    uploads. This surface remains Provisionally Stable pending external adopter
    evidence.
-3. **Caller-owned streaming cursors.** Generalize the current
-   `StreamingResumePolicy.lastEventID` convenience so NDJSON and other
-   line-oriented protocols can provide a validated cursor and reconnect
-   header. Resume must remain bounded, reject buffering modes that can hide a
-   cursor gap, and never turn an opaque partial body into an automatic retry.
+3. **Caller-owned streaming cursors — implemented locally.** The additive
+   `StreamingResumePolicy.cursor` supports NDJSON and other line-oriented
+   protocols with a validated reconnect header, a 4 KiB cursor cap, and
+   transient-only bounded resume. Lossy buffering and automatic redirects are
+   rejected. Response-scoped decoder factories and an opt-in aggregate SSE
+   event limit cover interrupted/concurrent streams and multiline memory growth.
+   Real TCP disconnect fixtures validate custom cursors and explicit resets;
+   server replay/deduplication still belongs to the application.
 4. **Exporter-neutral request span lifecycle.** `NetworkContext` already
    provides task-local trace and correlation values, and
    `TraceContextInterceptor` already propagates W3C headers. Evaluate a small

@@ -227,6 +227,7 @@ InnoNetwork	swift.enum.case	SessionAuthentication.required
 InnoNetwork	swift.enum.case	StreamingBufferingPolicy.bufferingNewest(_:)
 InnoNetwork	swift.enum.case	StreamingBufferingPolicy.bufferingOldest(_:)
 InnoNetwork	swift.enum.case	StreamingBufferingPolicy.unbounded
+InnoNetwork	swift.enum.case	StreamingResumePolicy.cursor(header:maxAttempts:retryDelay:)
 InnoNetwork	swift.enum.case	StreamingResumePolicy.disabled
 InnoNetwork	swift.enum.case	StreamingResumePolicy.lastEventID(maxAttempts:retryDelay:)
 InnoNetwork	swift.enum.case	TimeoutReason.connectionTimeout
@@ -458,10 +459,13 @@ InnoNetwork	swift.method	RetryPolicy.shouldResetAttempts(afterNetworkChangeFrom:
 InnoNetwork	swift.method	RetryPolicy.shouldRetry(error:retryIndex:request:response:)
 InnoNetwork	swift.method	SemanticNetworkEventAdapter.handle(_:)
 InnoNetwork	swift.method	ServerSentEventDecoder.decode(line:)
+InnoNetwork	swift.method	ServerSentEventDecoder.decode(line:maximumEventBytes:)
+InnoNetwork	swift.method	ServerSentEventDecoder.reset()
 InnoNetwork	swift.method	SingleRequestExecutable.decode(data:response:)
 InnoNetwork	swift.method	SingleRequestExecutable.makePayload()
 InnoNetwork	swift.method	StreamingAPIDefinition.decode(line:)
 InnoNetwork	swift.method	StreamingAPIDefinition.eventID(from:)
+InnoNetwork	swift.method	StreamingAPIDefinition.makeDecoder()
 InnoNetwork	swift.method	StreamingOutputSequence.Iterator.next()
 InnoNetwork	swift.method	StreamingOutputSequence.Iterator.next(isolation:)
 InnoNetwork	swift.method	StreamingOutputSequence.makeAsyncIterator()

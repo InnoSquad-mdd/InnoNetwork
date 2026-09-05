@@ -2,13 +2,15 @@ import Foundation
 import OSLog
 import os
 
-/// A single Server-Sent Events frame as defined by the WHATWG HTML Living
-/// Standard.
+/// A dispatched Server-Sent Events data event.
 ///
 /// Fields populate from `id:`, `event:`, and `data:` lines. Multiple
 /// `data:` lines within one frame are joined with `\n`. The `retry:`
 /// field carries the server-suggested reconnect delay in milliseconds
-/// when present; consumers are free to honor or ignore it.
+/// when present in the same block; consumers are free to honor or ignore it.
+/// `id` inherits the most recent accepted ID within this response, including
+/// an empty string after an explicit reset. Metadata-only blocks do not emit
+/// outputs. This value is not a browser EventSource implementation.
 public struct ServerSentEvent: Sendable, Equatable {
     public var id: String?
     public var event: String?
@@ -36,37 +38,48 @@ public struct ServerSentEvent: Sendable, Equatable {
 /// endpoint:
 ///
 /// ```swift
-/// final class MyEventStream: StreamingAPIDefinition {
+/// struct MyEventStream: StreamingAPIDefinition {
 ///     typealias Output = ServerSentEvent
 ///
 ///     var method: HTTPMethod { .get }
 ///     var path: String { "/events" }
+///     var sessionAuthentication: SessionAuthentication { .anonymous }
 ///     var headers: HTTPHeaders {
 ///         HTTPHeaders([HTTPHeader(name: "Accept", value: "text/event-stream")])
 ///     }
 ///
-///     private let decoder = ServerSentEventDecoder()
-///
-///     func decode(line: String) throws -> ServerSentEvent? {
-///         decoder.decode(line: line)
+///     func makeDecoder() -> @Sendable (String) throws -> ServerSentEvent? {
+///         let decoder = ServerSentEventDecoder()
+///         return { try decoder.decode(line: $0, maximumEventBytes: 1024 * 1024) }
 ///     }
 /// }
 /// ```
 ///
-/// Returning the decoder via a `let` member is enough — the decoder
-/// guards its internal frame buffer with an `OSAllocatedUnfairLock` so
-/// it is `Sendable` even when shared.
+/// Create one decoder per response attempt with ``StreamingAPIDefinition/makeDecoder()``.
+/// Its lock provides memory safety, not isolation between independent streams.
+/// The nonthrowing overload remains unbounded for source compatibility; prefer
+/// ``decode(line:maximumEventBytes:)`` for untrusted or long-lived streams.
 public final class ServerSentEventDecoder: Sendable {
     private static let logger = Logger(subsystem: "innosquad.network", category: "Streaming")
 
     private struct State {
         var current = ServerSentEvent()
         var hasProcessedFirstLine = false
+        var dataByteCount = 0
+        var exceededLimit = false
     }
 
     private let state = OSAllocatedUnfairLock<State>(initialState: State())
 
     public init() {}
+
+    /// Discard all response state, including an incomplete event, inherited ID,
+    /// BOM position, and a latched size error. Call only between responses.
+    /// Concurrent streams must use separate instances instead of resetting a
+    /// shared decoder while it is in use.
+    public func reset() {
+        state.withLock { $0 = State() }
+    }
 
     /// Process one line (without trailing `\n`). Returns a fully-formed
     /// ``ServerSentEvent`` when a blank dispatch line completes the
@@ -76,7 +89,45 @@ public final class ServerSentEventDecoder: Sendable {
     /// - Returns: A dispatched event, or `nil` while still aggregating
     ///   the current frame.
     public func decode(line inputLine: String) -> ServerSentEvent? {
-        state.withLock { state in
+        try? process(line: inputLine, maximumEventBytes: nil)
+    }
+
+    /// Decode with a positive UTF-8 byte cap on retained data and ID/event
+    /// metadata. Data-line separators count toward the cap; comments and
+    /// ignored fields do not. The transport's separate line cap still applies.
+    ///
+    /// Exceeding the cap releases buffered data and throws `DecodingError` with
+    /// no payload in its diagnostic. Failure stays latched until ``reset()``;
+    /// callers must terminate the current response rather than skip the error.
+    public func decode(line: String, maximumEventBytes: Int) throws -> ServerSentEvent? {
+        guard maximumEventBytes > 0 else {
+            throw Self.limitError("SSE event byte limit must be positive.")
+        }
+        return try process(line: line, maximumEventBytes: maximumEventBytes)
+    }
+
+    private static func limitError(_ message: String) -> DecodingError {
+        .dataCorrupted(.init(codingPath: [], debugDescription: message))
+    }
+
+    private func process(line inputLine: String, maximumEventBytes: Int?) throws -> ServerSentEvent? {
+        try state.withLock { state in
+            guard !state.exceededLimit else {
+                throw Self.limitError("SSE event byte limit exceeded; reset required.")
+            }
+            func checkCapacity(adding bytes: Int, replacing replacedBytes: Int = 0) throws {
+                guard let limit = maximumEventBytes else { return }
+                let retained = state.dataByteCount
+                    + (state.current.id?.utf8.count ?? 0)
+                    + (state.current.event?.utf8.count ?? 0) - replacedBytes
+                guard retained <= limit, bytes <= limit - retained else {
+                    state.current = ServerSentEvent()
+                    state.dataByteCount = 0
+                    state.exceededLimit = true
+                    throw Self.limitError("SSE event exceeded the configured \(limit)-byte limit.")
+                }
+            }
+            try checkCapacity(adding: 0)
             let line: String
             if state.hasProcessedFirstLine {
                 line = inputLine
@@ -88,15 +139,9 @@ public final class ServerSentEventDecoder: Sendable {
             // Blank line dispatches the current event.
             if line.isEmpty {
                 let frame = state.current
-                state.current = ServerSentEvent()
-                // `StreamingExecutor` reuses the same decoder instance
-                // across resume/reconnect attempts on the same request, so
-                // the BOM-stripping bit must reset on every event boundary
-                // — otherwise the first line of a fresh HTTP response
-                // stream after reconnect would see `hasProcessedFirstLine`
-                // still set and miss the leading BOM.
-                state.hasProcessedFirstLine = false
-                if frame.id == nil, frame.event == nil, frame.data.isEmpty, frame.retry == nil {
+                state.current = ServerSentEvent(id: frame.id)
+                state.dataByteCount = 0
+                if frame.data.isEmpty {
                     return nil
                 }
                 var dispatched = frame
@@ -139,15 +184,18 @@ public final class ServerSentEventDecoder: Sendable {
                 // (RFC 9110 §5.5 `field-value`). Bytes outside the
                 // visible ASCII range, plus CR/LF and NUL, are dropped.
                 if Self.isSanitizedSSEID(value) {
+                    try checkCapacity(adding: value.utf8.count, replacing: state.current.id?.utf8.count ?? 0)
                     state.current.id = value
                 }
             case "event":
+                try checkCapacity(adding: value.utf8.count, replacing: state.current.event?.utf8.count ?? 0)
                 state.current.event = value
             case "data":
-                if !state.current.data.isEmpty {
-                    state.current.data.append("\n")
-                }
+                let addedBytes = value.utf8.count + 1
+                try checkCapacity(adding: addedBytes)
                 state.current.data.append(value)
+                state.current.data.append("\n")
+                state.dataByteCount += addedBytes
             case "retry":
                 if value.allSatisfy(\.isASCIIDigit), let ms = Int(value) {
                     state.current.retry = ms

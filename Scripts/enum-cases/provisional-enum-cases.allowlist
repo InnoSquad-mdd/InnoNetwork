@@ -71,6 +71,7 @@ StreamingBufferingPolicy.bufferingNewest
 StreamingBufferingPolicy.bufferingOldest
 StreamingBufferingPolicy.unbounded
 
+StreamingResumePolicy.cursor
 StreamingResumePolicy.disabled
 StreamingResumePolicy.lastEventID
 

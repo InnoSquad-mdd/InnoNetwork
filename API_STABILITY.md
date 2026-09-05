@@ -190,6 +190,11 @@ acquiring a 6.x Stable compatibility promise.
 - `JWTBearerInterceptor` reference signer for request-minted JWT bearer tokens
 - `InnoNetworkAuthAWS` companion product and `AWSSigV4Interceptor` reference signer for single-shot AWS SigV4 signing
 - `StreamingBufferingPolicy`, `StreamingOutputSequence`, `TraceContextInterceptor`, `W3CTraceContext`, `CurlCommandOptions`, `IdempotencyKeyPolicy`, and `RequestPriority`
+- `StreamingAPIDefinition.makeDecoder()`, `StreamingResumePolicy.cursor`, and
+  `ServerSentEventDecoder.reset()` / `decode(line:maximumEventBytes:)` are
+  additive 6.1 Provisionally Stable surfaces. The default factory preserves
+  existing stateless `decode(line:)` implementations; stateful consumers must
+  migrate to a response-scoped factory for reconnect/concurrent-use isolation.
 - `HTTPHeaderName<Variant>` phantom-typed header key surface and its predefined `SingleValueHeader` / `RepeatableHeader` markers (also referenced as `HTTPHeaderName` / `HTTPHeaderVariant` for contract-sync purposes)
 - `MultipartUploadStrategy.threshold(bytes:)`
 - `PersistentResponseCacheStatistics.hitCount` / `missCount` / `evictionCount`
@@ -381,8 +386,21 @@ Promotion from Provisionally Stable to Stable requires all of the following:
 - `StreamingBufferingPolicy` — bounded buffering cases may gain additional
   policy knobs, but `stream(_:)` stays lossless and backpressured by default
   for 6.x. Explicit bounded buffers remain incompatible with
-  `StreamingResumePolicy.lastEventID`; explicit `.unbounded` remains the
+  `StreamingResumePolicy.lastEventID` and `.cursor`; explicit `.unbounded` remains the
   producer-nonsuspending, lossless opt-out.
+- `StreamingResumePolicy` — resume accepts at most 4,096 printable ASCII
+  cursor bytes from decoded outputs and only retries timeout/reachability
+  failures. Invalid cursors latch until the next attempt; invalid/reserved
+  custom header names and nonfinite delays fail before dispatch. Resume-enabled
+  streams disable automatic redirects, including same-origin redirects, so
+  applications must resolve their final endpoint explicitly. Empty cursors
+  clear a seeded request header. Server-side replay and deduplication remain
+  application contracts, not an exactly-once library guarantee.
+- `ServerSentEventDecoder` — empty `data` lines dispatch, multiline data keeps
+  significant newlines, metadata-only blocks do not dispatch, and IDs persist
+  within one response. BOM handling is response-scoped, not event-scoped.
+  The legacy nonthrowing decoder remains unbounded; the opt-in throwing
+  overload caps retained UTF-8 data/metadata and fails closed until reset.
 - `stream(_:)` / `stream(_:bufferingPolicy:)` — every failure the returned
   ``StreamingOutputSequence`` finishes with is a `NetworkError`. Its iterator
   exposes typed `throws(NetworkError)` on every supported platform floor, so
@@ -470,8 +488,8 @@ below keeps the high-level compatibility classification readable. Historical
 5.x HLS sections document the migration source but are no longer included in
 the current machine-checked inventory.
 
-The machine-checked snapshot currently partitions all 1,430 declarations into
-306 Stable consumer declarations, 1,091 Provisionally Stable consumer
+The machine-checked snapshot currently partitions all 1,434 declarations into
+306 Stable consumer declarations, 1,095 Provisionally Stable consumer
 declarations, and 33 opt-in SPI declarations. The three sets are disjoint and
 exhaustive. `Scripts/symbols/stable-rules.tsv` maps the Stable ledger to symbol
 paths, while the compiler-authored SPI flag is snapshotted in

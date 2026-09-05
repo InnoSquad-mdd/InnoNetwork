@@ -200,7 +200,7 @@ package struct StreamingResumeState: Sendable {
     }
 
     package mutating func observe(eventID: String?) {
-        guard let eventID else { return }
+        guard let eventID, attemptCursorObservation != .invalid else { return }
         if eventID.isEmpty {
             lastSeenEventID = nil
             attemptCursorObservation = .explicitReset

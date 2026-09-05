@@ -39,8 +39,10 @@ package struct StreamingExecutor: Sendable {
         executionRuntime: RequestExecutionRuntime,
         sink: StreamingOutputSink<T.Output>
     ) async {
+        let resumePolicy = request.resumePolicy
         do {
             try Self.validateSessionAuthentication(request, configuration: configuration)
+            try resumePolicy.validate()
         } catch {
             let mapped = Self.mapTransportError(error, startedAt: nil)
             let nsError = mapped as NSError
@@ -58,7 +60,6 @@ package struct StreamingExecutor: Sendable {
             return
         }
 
-        let resumePolicy = request.resumePolicy
         let resumeBudget = resumePolicy.maxAttempts
         let resumeDelay = resumePolicy.retryDelay
         var resumeState = StreamingResumeState()
@@ -77,6 +78,8 @@ package struct StreamingExecutor: Sendable {
                     executionRuntime: executionRuntime,
                     resumeState: &resumeState,
                     retryIndex: attemptRetryIndex,
+                    resumePolicy: resumePolicy,
+                    isResuming: resumeAttempts > 0,
                     sink: sink
                 )
 
@@ -91,7 +94,7 @@ package struct StreamingExecutor: Sendable {
                         maxAttempts: resumeBudget,
                         completedResumeAttempts: resumeAttempts
                     )
-                    if canResume {
+                    if canResume && Self.isResumableTransportError(streamError) {
                         resumeAttempts += 1
                         try await Self.waitBeforeResume(
                             delay: resumeDelay,
@@ -199,6 +202,8 @@ package struct StreamingExecutor: Sendable {
         executionRuntime: RequestExecutionRuntime,
         resumeState: inout StreamingResumeState,
         retryIndex: Int,
+        resumePolicy: StreamingResumePolicy,
+        isResuming: Bool,
         sink: StreamingOutputSink<T.Output>
     ) async throws -> StreamingAttemptResult {
         var attemptStartedAt: Date?
@@ -209,7 +214,9 @@ package struct StreamingExecutor: Sendable {
             var urlRequest = try Self.makeURLRequest(
                 for: request,
                 configuration: configuration,
-                lastSeenEventID: resumeState.lastSeenEventID
+                lastSeenEventID: resumeState.lastSeenEventID,
+                resumeHeader: resumePolicy.headerName,
+                isResuming: isResuming
             )
             retryRequest = urlRequest
 
@@ -263,7 +270,7 @@ package struct StreamingExecutor: Sendable {
                 eventObservers: configuration.eventObservers,
                 redirectPolicy: configuration.redirectPolicy,
                 allowsInsecureHTTP: configuration.allowsInsecureHTTP,
-                allowsAutomaticRedirects: true,
+                allowsAutomaticRedirects: resumePolicy.headerName == nil,
                 allowsURLCacheStorage: true
             )
             let hasRequestSigners =
@@ -283,6 +290,9 @@ package struct StreamingExecutor: Sendable {
                     request: retryRequest
                 )
             }
+            // Stop rejected handshakes and abandoned/erroring decoders too.
+            // Receiving headers does not mean the response body has completed.
+            defer { bytes.task.cancel() }
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw NetworkError.underlying(
                     SendableUnderlyingError(
@@ -358,11 +368,14 @@ package struct StreamingExecutor: Sendable {
     ) async throws -> StreamingAttemptResult {
         var streamedByteCount = 0
         var iterator = bytes.makeAsyncIterator()
+        var skipsLeadingLF = false
+        let decode = request.makeDecoder()
         while true {
             let frame: BoundedStreamLine?
             do {
                 frame = try await Self.nextBoundedLine(
                     from: &iterator,
+                    skipsLeadingLF: &skipsLeadingLF,
                     maxBytes: maxLineBytes
                 )
             } catch is CancellationError {
@@ -386,7 +399,7 @@ package struct StreamingExecutor: Sendable {
             streamedByteCount += frame.byteCount
             let decoded: T.Output?
             do {
-                decoded = try request.decode(line: line)
+                decoded = try decode(line)
             } catch {
                 throw NetworkError.decoding(
                     stage: .streamFrame,
@@ -421,6 +434,13 @@ package struct StreamingExecutor: Sendable {
     ) async throws {
         guard delay > 0 else { return }
         try await executionRuntime.clock.sleep(for: .seconds(delay))
+    }
+
+    package static func isResumableTransportError(_ error: Error) -> Bool {
+        switch NetworkError.mapTransportError(error) {
+        case .timeout, .reachability: true
+        default: false
+        }
     }
 
     private func retryHandshakeIfNeeded(
@@ -515,16 +535,19 @@ package struct StreamingExecutor: Sendable {
 
     private static func nextBoundedLine<Iterator: AsyncIteratorProtocol>(
         from iterator: inout Iterator,
+        skipsLeadingLF: inout Bool,
         maxBytes: Int
     ) async throws -> BoundedStreamLine? where Iterator.Element == UInt8 {
         var bytes: [UInt8] = []
         bytes.reserveCapacity(min(maxBytes, 4 * 1024))
 
         while let byte = try await iterator.next() {
-            if byte == 0x0A {
-                if bytes.last == 0x0D {
-                    bytes.removeLast()
-                }
+            if skipsLeadingLF {
+                skipsLeadingLF = false
+                if byte == 0x0A { continue }
+            }
+            if byte == 0x0A || byte == 0x0D {
+                skipsLeadingLF = byte == 0x0D
                 return BoundedStreamLine(
                     line: String(decoding: bytes, as: UTF8.self),
                     byteCount: bytes.count
@@ -538,9 +561,6 @@ package struct StreamingExecutor: Sendable {
         }
 
         guard !bytes.isEmpty else { return nil }
-        if bytes.last == 0x0D {
-            bytes.removeLast()
-        }
         return BoundedStreamLine(
             line: String(decoding: bytes, as: UTF8.self),
             byteCount: bytes.count
@@ -574,7 +594,9 @@ package struct StreamingExecutor: Sendable {
     private static func makeURLRequest<T: StreamingAPIDefinition>(
         for request: T,
         configuration: NetworkConfiguration,
-        lastSeenEventID: String?
+        lastSeenEventID: String?,
+        resumeHeader: String?,
+        isResuming: Bool
     ) throws -> URLRequest {
         let url = try EndpointPathBuilder.makeURL(
             baseURL: configuration.baseURL,
@@ -590,14 +612,16 @@ package struct StreamingExecutor: Sendable {
         urlRequest.allowsCellularAccess = configuration.allowsCellularAccess
         urlRequest.allowsExpensiveNetworkAccess = configuration.allowsExpensiveNetworkAccess
         urlRequest.allowsConstrainedNetworkAccess = configuration.allowsConstrainedNetworkAccess
-        if let lastSeenEventID, Self.isValidLastEventIDHeaderValue(lastSeenEventID) {
-            urlRequest.setValue(lastSeenEventID, forHTTPHeaderField: "Last-Event-ID")
+        if isResuming, let resumeHeader {
+            // Also removes a caller's initial header after an explicit reset.
+            let value = lastSeenEventID.flatMap { Self.isValidLastEventIDHeaderValue($0) ? $0 : nil }
+            urlRequest.setValue(value, forHTTPHeaderField: resumeHeader)
         }
         return urlRequest
     }
 
     private static func isValidLastEventIDCursor(_ value: String) -> Bool {
-        value.unicodeScalars.allSatisfy { scalar in
+        value.utf8.count <= 4096 && value.unicodeScalars.allSatisfy { scalar in
             (0x20...0x7E).contains(scalar.value)
         }
     }
