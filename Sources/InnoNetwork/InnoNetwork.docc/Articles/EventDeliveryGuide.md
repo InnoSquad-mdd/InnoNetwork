@@ -34,26 +34,21 @@ Passing a custom policy replaces the default for that manager's lifetime.
 ## Terminal Ordering
 
 Normal request, download, and WebSocket notifications use the configured
-partition and consumer overflow policy. Request observability events keep that
-policy through `requestFinished`/`requestFailed`; finishing the request
-partition does not turn either event into a lossless audit record.
-
-Download and WebSocket managers give the one authoritative final outcome a
-stronger guarantee. That event is admitted to the task partition and to every
-listener or `AsyncStream` consumer in the
-publication snapshot even when `.dropNewest` queues are full; the same
-guarantee applies under `.dropOldest`.
+partition and consumer overflow policy. Their one authoritative final outcome
+has a stronger guarantee. The event is admitted to the task partition and to
+every observer, listener, or `AsyncStream` consumer in the publication
+snapshot even when `.dropNewest` queues are full; the same guarantee applies
+under `.dropOldest`. For request observability, those outcomes are
+`requestFinished` and `requestFailed`.
 When a bounded partition or consumer queue is full, its oldest queued event is
 displaced to make room for the final outcome. The manager waits for enqueue,
 not user-handler execution.
 
-For downloads, `completed`, `failed`, and cancellation outcomes atomically
-seal the task partition when admitted. A late progress or state publisher
-cannot enqueue behind the final outcome or displace it. WebSocket terminal
-cleanup likewise publishes its final `disconnected` or `error` outcome before
-closing the partition. Earlier notifications in a multi-event terminal burst,
-and all other nonterminal events, retain the configured overflow policy and
-may be dropped.
+Request, download, and WebSocket terminal outcomes atomically seal their
+partition when admitted. A late progress, response, or state publisher cannot
+enqueue behind the final outcome or displace it. Earlier notifications in a
+multi-event terminal burst, and all other nonterminal events, retain the
+configured overflow policy and may be dropped.
 
 Consumers should treat stream completion as "no more events after the terminal
 outcome", not as a separate status signal. Event handling remains asynchronous
@@ -77,8 +72,8 @@ reaches a listener. Two common adjustments:
 
 `maxBufferedEventsPerConsumer` applies to listener chains and `AsyncStream`
 subscribers alike, isolating a slow consumer from the rest of the partition.
-The final download/WebSocket outcome is the sole admission exception described
-above; it displaces the oldest queued event instead of being dropped.
+The final request/download/WebSocket outcome is the sole admission exception
+described above; it displaces the oldest queued event instead of being dropped.
 
 ## Overflow: `.dropOldest` vs `.dropNewest`
 

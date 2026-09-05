@@ -24,6 +24,7 @@ package actor NetworkEventHub {
     private let policy: EventDeliveryPolicy
     private let clock: any InnoNetworkClock
     private let metricsProxy: EventPipelineMetricsReporterProxy?
+    private let drainSuspension: (@Sendable (UUID) async -> Void)?
     private let retirementSuspension: (@Sendable (UUID) async -> Void)?
     private var metricsReporter: (any EventPipelineMetricsReporting)? { metricsProxy }
 
@@ -37,6 +38,7 @@ package actor NetworkEventHub {
     ) {
         self.policy = policy
         self.clock = clock
+        self.drainSuspension = nil
         self.retirementSuspension = retirementSuspension
         self.metricsProxy = metricsReporter.map {
             EventPipelineMetricsReporterProxy(
@@ -46,6 +48,17 @@ package actor NetworkEventHub {
                 clock: clock
             )
         }
+    }
+
+    package init(
+        policy: EventDeliveryPolicy,
+        testingDrainSuspension: @escaping @Sendable (UUID) async -> Void
+    ) {
+        self.policy = policy
+        self.clock = SystemClock()
+        self.drainSuspension = testingDrainSuspension
+        self.retirementSuspension = nil
+        self.metricsProxy = nil
     }
 
     deinit {
@@ -60,24 +73,30 @@ package actor NetworkEventHub {
     /// Enqueues `event` for delivery to `observers` partitioned by `requestID`.
     ///
     /// Observers are bound at publish time, so this hub does not retain
-    /// historical events for late subscribers. ``finish(requestID:)`` marks
-    /// the active partition closed, so publishes serialized while it retires
-    /// are dropped. Request IDs are one-use lifecycle identifiers and must not
-    /// be reused after finish; the hub discards closed partition tombstones
-    /// once observer-queue handoff completes.
+    /// historical events for late subscribers. A terminal request outcome
+    /// atomically closes the active partition; ``finish(requestID:)`` joins
+    /// its queue handoff. Publishes serialized while the partition retires are
+    /// dropped. Request IDs are one-use lifecycle identifiers and must not be
+    /// reused after finish; the hub discards closed partition tombstones once
+    /// observer-queue handoff completes.
     package func publish(_ event: NetworkEvent, requestID: UUID, observers: [any NetworkEventObserving]) {
         guard !observers.isEmpty else { return }
         var partition = partitions[requestID] ?? PartitionState()
         guard !partition.isClosed else { return }
+        let guaranteesAdmission = event.isTerminalRequestOutcome
         if partition.queue.count >= policy.maxBufferedEventsPerPartition {
             partition.droppedEventCount += 1
-            switch policy.overflowPolicy {
-            case .dropOldest:
+            if guaranteesAdmission {
                 _ = partition.queue.popFirst()
-            case .dropNewest:
-                partitions[requestID] = partition
-                reportPartitionMetric(for: requestID, partition: partition)
-                return
+            } else {
+                switch policy.overflowPolicy {
+                case .dropOldest:
+                    _ = partition.queue.popFirst()
+                case .dropNewest:
+                    partitions[requestID] = partition
+                    reportPartitionMetric(for: requestID, partition: partition)
+                    return
+                }
             }
         }
         partition.queue.append(
@@ -87,6 +106,9 @@ package actor NetworkEventHub {
                 enqueuedAt: clock.now()
             )
         )
+        if guaranteesAdmission {
+            partition.isClosed = true
+        }
         partitions[requestID] = partition
         reportPartitionMetric(for: requestID, partition: partition)
         startDrainIfNeeded(requestID: requestID)
@@ -119,13 +141,23 @@ package actor NetworkEventHub {
     }
 
     private func drain(requestID: UUID) async {
+        if let drainSuspension {
+            await drainSuspension(requestID)
+        }
         while let pending = popNextEvent(requestID: requestID) {
             for (index, observer) in pending.observers.enumerated() {
                 let chain = observerChain(for: requestID, index: index, observer: observer)
-                await chain.enqueue(
-                    pending.event,
-                    enqueuedAt: pending.enqueuedAt
-                )
+                if pending.event.isTerminalRequestOutcome {
+                    await chain.enqueueGuaranteed(
+                        pending.event,
+                        enqueuedAt: pending.enqueuedAt
+                    )
+                } else {
+                    await chain.enqueue(
+                        pending.event,
+                        enqueuedAt: pending.enqueuedAt
+                    )
+                }
             }
         }
 

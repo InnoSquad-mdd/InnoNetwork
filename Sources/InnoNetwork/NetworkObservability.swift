@@ -169,6 +169,18 @@ public enum NetworkEvent: Sendable {
     case decision(NetworkDecision)
 }
 
+extension NetworkEvent {
+    package var isTerminalRequestOutcome: Bool {
+        switch self {
+        case .requestFinished, .requestFailed:
+            true
+        case .requestStart, .requestAdapted, .responseReceived, .retryScheduled,
+            .cacheRevalidation, .decision:
+            false
+        }
+    }
+}
+
 /// Lifecycle stages of a background cache revalidation. Observers receive
 /// `.scheduled` when the refresh task starts and one of the terminal cases
 /// when it ends. Used by ``NetworkEvent/cacheRevalidation(originalID:state:)``.

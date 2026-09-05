@@ -50,6 +50,31 @@ struct EventHubFirstEventBlockingObserver: NetworkEventObserving {
     }
 }
 
+actor EventHubSpanCollector: NetworkSpanExporting {
+    private var storedSpans: [NetworkSpan] = []
+
+    func export(_ spans: [NetworkSpan]) async {
+        storedSpans.append(contentsOf: spans)
+    }
+
+    func spans() -> [NetworkSpan] {
+        storedSpans
+    }
+}
+
+struct EventHubFirstEventBlockingSpanObserver: NetworkEventObserving {
+    let downstream: NetworkSpanObserver
+    let gate: EventHubDeliveryGate
+
+    func handle(_ event: NetworkEvent) async {
+        if case .requestStart = event {
+            await gate.markStarted()
+            await gate.waitForRelease()
+        }
+        await downstream.handle(event)
+    }
+}
+
 final class EventHubMetricRecorder: EventPipelineMetricsReporting, @unchecked Sendable {
     private let lock = NSLock()
     private var metrics: [EventPipelineMetric] = []

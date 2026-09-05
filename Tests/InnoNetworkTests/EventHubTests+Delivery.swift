@@ -301,6 +301,101 @@ extension EventHubTests {
         #expect(isTerminalFailure)
     }
 
+    @Test("NetworkEventHub admits and seals a terminal event when its partition is full")
+    func networkEventHubGuaranteesTerminalPartitionAdmission() async throws {
+        let gate = EventHubDeliveryGate()
+        let policy = EventDeliveryPolicy(
+            maxBufferedEventsPerPartition: 1,
+            maxBufferedEventsPerConsumer: 1,
+            overflowPolicy: .dropNewest
+        )
+        let hub = NetworkEventHub(
+            policy: policy,
+            testingDrainSuspension: { _ in
+                await gate.markStarted()
+                await gate.waitForRelease()
+            }
+        )
+        let recorder = EventHubNetworkEventRecorder()
+        let observer = EventHubRecordingObserver(recorder: recorder)
+        let requestID = UUID()
+
+        await hub.publish(
+            .requestStart(requestID: requestID, method: "GET", url: "", retryIndex: 0),
+            requestID: requestID,
+            observers: [observer]
+        )
+        await gate.waitUntilStarted()
+        await hub.publish(
+            .requestFinished(requestID: requestID, statusCode: 200, byteCount: 0),
+            requestID: requestID,
+            observers: [observer]
+        )
+        await hub.publish(
+            .responseReceived(requestID: requestID, statusCode: 201, byteCount: 1),
+            requestID: requestID,
+            observers: [observer]
+        )
+
+        let finish = Task { await hub.finish(requestID: requestID) }
+        await gate.release()
+        await finish.value
+
+        let events = try await eventHubWaitForNetworkEvents(recorder: recorder, expectedCount: 1)
+        #expect(events.count == 1)
+        if case .requestFinished(let observedID, _, _)? = events.first {
+            #expect(observedID == requestID)
+        } else {
+            Issue.record("Expected the saturated partition to retain its terminal event")
+        }
+    }
+
+    @Test("A saturated observer queue cannot strand request span state")
+    func terminalDeliveryClosesSpanUnderConsumerSaturation() async {
+        let policy = EventDeliveryPolicy(
+            maxBufferedEventsPerPartition: 8,
+            maxBufferedEventsPerConsumer: 1,
+            overflowPolicy: .dropNewest
+        )
+        let hub = NetworkEventHub(policy: policy)
+        let collector = EventHubSpanCollector()
+        let spanObserver = NetworkSpanObserver(exporter: collector)
+        let gate = EventHubDeliveryGate()
+        let observer = EventHubFirstEventBlockingSpanObserver(
+            downstream: spanObserver,
+            gate: gate
+        )
+        let requestID = UUID()
+
+        await hub.publish(
+            .requestStart(requestID: requestID, method: "GET", url: "", retryIndex: 0),
+            requestID: requestID,
+            observers: [observer]
+        )
+        await gate.waitUntilStarted()
+        await hub.publish(
+            .responseReceived(requestID: requestID, statusCode: 200, byteCount: 4),
+            requestID: requestID,
+            observers: [observer]
+        )
+        await hub.publish(
+            .requestFinished(requestID: requestID, statusCode: 200, byteCount: 4),
+            requestID: requestID,
+            observers: [observer]
+        )
+        await hub.finish(requestID: requestID)
+        await gate.release()
+
+        let exported = await eventHubWaitForCondition(timeout: 1.0) {
+            await collector.spans().contains {
+                $0.requestID == requestID && $0.kind == .request
+            }
+        }
+        #expect(exported)
+        await spanObserver.flush()
+        #expect(await collector.spans().count == 1)
+    }
+
     @Test("NetworkEventHub keeps a closed tombstone across retirement reentrancy")
     func networkEventHubRetirementRejectsReentrantPublishAndJoinsFinish() async throws {
         let retirementGate = EventHubDeliveryGate()
