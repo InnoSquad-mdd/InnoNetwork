@@ -28,11 +28,57 @@ private struct IntegerResponseRequest: APIDefinition {
 
     let method = HTTPMethod.get
     let path = "/status"
-    let sessionAuthentication = SessionAuthentication.anonymous
+    var sessionAuthentication = SessionAuthentication.anonymous
 }
 
 @Suite("Request Lifecycle Regression Tests", .serialized)
 struct RequestLifecycleRegressionTests {
+    @Test("Authentication replay exports every physical transport attempt")
+    func authenticationReplayExportsTwoAttempts() async throws {
+        let exporter = LifecycleSpanExporter()
+        let spanObserver = NetworkSpanObserver(exporter: exporter)
+        let events = AsyncStream<NetworkEvent>.makeStream()
+        let observer = LifecycleCompositeObserver(
+            spanObserver: spanObserver,
+            continuation: events.continuation
+        )
+        let session = MockURLSession()
+        session.setScriptedResponses([
+            .http(statusCode: 401),
+            .http(statusCode: 200, data: Data("1".utf8)),
+        ])
+        let configuration = NetworkConfiguration(
+            baseURL: URL(string: "https://api.example.com")!,
+            networkMonitor: nil,
+            eventObservers: [observer],
+            refreshTokenPolicy: RefreshTokenPolicy(
+                currentToken: { "old" },
+                refreshToken: { "new" }
+            )
+        )
+        let client = DefaultNetworkClient(configuration: configuration, session: session)
+
+        #expect(
+            try await client.request(
+                IntegerResponseRequest(sessionAuthentication: .required)
+            ) == 1
+        )
+        for await event in events.stream {
+            if case .requestFinished = event { break }
+        }
+        await spanObserver.flush()
+
+        let spans = await exporter.spans
+        let attempts = spans.filter { $0.kind == .attempt }.sorted {
+            ($0.attemptIndex ?? -1) < ($1.attemptIndex ?? -1)
+        }
+        #expect(session.capturedRequestsInOrder.count == 2)
+        #expect(attempts.map(\.attemptIndex) == [0, 1])
+        #expect(attempts.map(\.outcome) == [.retried, .succeeded])
+        #expect(spans.filter { $0.kind == .request }.count == 1)
+        await client.shutdown()
+    }
+
     @Test("A real retry exports one logical request span")
     func retryExportsOneLogicalSpan() async throws {
         let exporter = LifecycleSpanExporter()

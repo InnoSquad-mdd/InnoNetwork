@@ -8,6 +8,10 @@ public struct NetworkSpan: Sendable, Equatable {
     public let id: UUID
     public let parentID: UUID?
     public let requestID: UUID
+    /// Zero-based physical transport order within the logical request.
+    /// This is independent of retry-policy indices because authentication
+    /// recovery and custom execution policies can dispatch more than once
+    /// inside one retry-policy attempt.
     public let attemptIndex: Int?
     public let kind: Kind
     public let outcome: Outcome
@@ -45,6 +49,7 @@ public actor NetworkSpanObserver: NetworkEventObserving {
         let spanID: UUID
         let startedAt: Date
         var attempts: [Int: (id: UUID, startedAt: Date)] = [:]
+        var nextAttemptIndex = 0
     }
 
     private let exporter: any NetworkSpanExporting
@@ -90,13 +95,22 @@ public actor NetworkSpanObserver: NetworkEventObserving {
 
         case .decision(let decision)
         where decision.kind == .dispatch && decision.outcome == .allowed:
-            guard requests[decision.requestID] != nil else { return }
-            requests[decision.requestID]?.attempts[decision.attemptIndex] = (
+            // A second dispatch before the logical retry coordinator emits a
+            // retry event is an inner replay (for example, a 401 refresh or a
+            // custom policy calling `next.execute()` again). Close the prior
+            // physical attempt before opening the next one so it cannot be
+            // overwritten by a reused retry-policy index.
+            finishOpenAttempts(requestID: decision.requestID, outcome: .retried, at: timestamp)
+            guard var request = requests[decision.requestID] else { return }
+            let attemptIndex = request.nextAttemptIndex
+            request.nextAttemptIndex += 1
+            request.attempts[attemptIndex] = (
                 UUID(), decision.occurredAt ?? timestamp
             )
+            requests[decision.requestID] = request
 
-        case .retryScheduled(let requestID, let retryIndex, _, _):
-            finishAttempt(requestID: requestID, attemptIndex: retryIndex, outcome: .retried, at: timestamp)
+        case .retryScheduled(let requestID, _, _, _):
+            finishOpenAttempts(requestID: requestID, outcome: .retried, at: timestamp)
 
         case .requestFinished(let requestID, let statusCode, _):
             finishTerminal(
@@ -187,6 +201,24 @@ public actor NetworkSpanObserver: NetworkEventObserving {
                 statusCode: nil,
                 errorCode: nil
             ))
+    }
+
+    private func finishOpenAttempts(
+        requestID: UUID,
+        outcome: NetworkSpan.Outcome,
+        at endedAt: Date
+    ) {
+        guard let attemptIndices = requests[requestID]?.attempts.keys.sorted(),
+            !attemptIndices.isEmpty
+        else { return }
+        for attemptIndex in attemptIndices {
+            finishAttempt(
+                requestID: requestID,
+                attemptIndex: attemptIndex,
+                outcome: outcome,
+                at: endedAt
+            )
+        }
     }
 
     private func enqueue(_ span: NetworkSpan) {
