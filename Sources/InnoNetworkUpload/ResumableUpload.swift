@@ -93,6 +93,9 @@ public protocol ResumableUploadAdapting: Sendable {
         request: URLRequest
     ) async throws -> Int64
 
+    /// Finalizes a fully confirmed session. Implementations must make this
+    /// idempotent for the same session and file identity because a completed
+    /// remote operation can be retried when local checkpoint cleanup fails.
     func finalize(
         sessionIdentifier: String,
         request: URLRequest,
@@ -113,6 +116,7 @@ public struct ResumableUploadEngine: Sendable {
     public let chunkSize: Int
     private let adapter: any ResumableUploadAdapting
     private let checkpointStore: any ResumableUploadCheckpointStoring
+    private let snapshotDirectory: URL
 
     public init(
         chunkSize: Int = 5 * 1024 * 1024,
@@ -123,6 +127,20 @@ public struct ResumableUploadEngine: Sendable {
         self.chunkSize = chunkSize
         self.adapter = adapter
         self.checkpointStore = checkpointStore
+        self.snapshotDirectory = FileManager.default.temporaryDirectory
+    }
+
+    package init(
+        chunkSize: Int = 5 * 1024 * 1024,
+        adapter: any ResumableUploadAdapting,
+        checkpointStore: any ResumableUploadCheckpointStoring,
+        snapshotDirectory: URL
+    ) throws {
+        guard chunkSize > 0 else { throw ResumableUploadError.invalidChunkSize }
+        self.chunkSize = chunkSize
+        self.adapter = adapter
+        self.checkpointStore = checkpointStore
+        self.snapshotDirectory = snapshotDirectory
     }
 
     public func upload(
@@ -131,7 +149,11 @@ public struct ResumableUploadEngine: Sendable {
         request: URLRequest,
         progress: (@Sendable (_ confirmedBytes: Int64, _ totalBytes: Int64) async -> Void)? = nil
     ) async throws -> ResumableUploadResult {
-        let identity = try Self.fileIdentity(at: fileURL)
+        try Task.checkCancellation()
+        let snapshot = try await makeFileSnapshot(at: fileURL)
+        defer { try? FileManager.default.removeItem(at: snapshot.url) }
+        let identity = (size: snapshot.size, sha256: snapshot.sha256)
+        try Task.checkCancellation()
         var checkpoint: ResumableUploadCheckpoint
         if let stored = try await checkpointStore.load(uploadID: uploadID) {
             guard stored.fileSize == identity.size, stored.fileSHA256 == identity.sha256 else {
@@ -139,6 +161,7 @@ public struct ResumableUploadEngine: Sendable {
             }
             checkpoint = stored
         } else {
+            try Task.checkCancellation()
             let session = try await adapter.createSession(
                 request: request,
                 fileSize: identity.size,
@@ -154,6 +177,7 @@ public struct ResumableUploadEngine: Sendable {
             try await checkpointStore.save(checkpoint)
         }
 
+        try Task.checkCancellation()
         let probed = try await adapter.probe(
             sessionIdentifier: checkpoint.sessionIdentifier,
             request: request,
@@ -165,7 +189,7 @@ public struct ResumableUploadEngine: Sendable {
         await progress?(probed, identity.size)
 
         let handle: FileHandle
-        do { handle = try FileHandle(forReadingFrom: fileURL) } catch { throw ResumableUploadError.unreadableFile }
+        do { handle = try FileHandle(forReadingFrom: snapshot.url) } catch { throw ResumableUploadError.unreadableFile }
         defer { try? handle.close() }
 
         while checkpoint.confirmedOffset < identity.size {
@@ -178,6 +202,7 @@ public struct ResumableUploadEngine: Sendable {
             }
             let start = checkpoint.confirmedOffset
             let range = start..<(start + Int64(data.count))
+            try Task.checkCancellation()
             let confirmed = try await adapter.uploadChunk(
                 data,
                 range: range,
@@ -192,13 +217,17 @@ public struct ResumableUploadEngine: Sendable {
             await progress?(confirmed, identity.size)
         }
 
+        try Task.checkCancellation()
         try await adapter.finalize(
             sessionIdentifier: checkpoint.sessionIdentifier,
             request: request,
             fileSize: identity.size,
             fileSHA256: identity.sha256
         )
-        try await checkpointStore.remove(uploadID: uploadID)
+        // The server has durably finalized the upload. Local checkpoint
+        // cleanup is best-effort so a storage failure cannot turn a completed
+        // remote operation into a misleading upload failure.
+        try? await checkpointStore.remove(uploadID: uploadID)
         return ResumableUploadResult(
             uploadID: uploadID,
             sessionIdentifier: checkpoint.sessionIdentifier,
@@ -213,18 +242,53 @@ public struct ResumableUploadEngine: Sendable {
         }
     }
 
-    private static func fileIdentity(at url: URL) throws -> (size: Int64, sha256: String) {
+    private struct FileSnapshot {
+        let url: URL
+        let size: Int64
+        let sha256: String
+    }
+
+    private func makeFileSnapshot(at url: URL) async throws -> FileSnapshot {
         guard url.isFileURL else { throw ResumableUploadError.unreadableFile }
-        let handle: FileHandle
-        do { handle = try FileHandle(forReadingFrom: url) } catch { throw ResumableUploadError.unreadableFile }
-        defer { try? handle.close() }
-        var hasher = SHA256()
-        var size: Int64 = 0
-        while let data = try handle.read(upToCount: 1024 * 1024), !data.isEmpty {
-            hasher.update(data: data)
-            size += Int64(data.count)
+        try Task.checkCancellation()
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: snapshotDirectory, withIntermediateDirectories: true)
+        let snapshotURL = snapshotDirectory.appendingPathComponent(
+            "innonetwork-resumable-\(UUID().uuidString).snapshot"
+        )
+        guard fileManager.createFile(
+            atPath: snapshotURL.path,
+            contents: nil,
+            attributes: [.posixPermissions: 0o600]
+        ) else {
+            throw ResumableUploadError.unreadableFile
         }
-        let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
-        return (size, digest)
+        do {
+            let source = try FileHandle(forReadingFrom: url)
+            let destination = try FileHandle(forWritingTo: snapshotURL)
+            defer {
+                try? source.close()
+                try? destination.close()
+            }
+            var hasher = SHA256()
+            var size: Int64 = 0
+            while let data = try source.read(upToCount: 1024 * 1024), !data.isEmpty {
+                try Task.checkCancellation()
+                try destination.write(contentsOf: data)
+                hasher.update(data: data)
+                size += Int64(data.count)
+                await Task.yield()
+            }
+            try Task.checkCancellation()
+            try destination.synchronize()
+            let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+            return FileSnapshot(url: snapshotURL, size: size, sha256: digest)
+        } catch is CancellationError {
+            try? fileManager.removeItem(at: snapshotURL)
+            throw CancellationError()
+        } catch {
+            try? fileManager.removeItem(at: snapshotURL)
+            throw ResumableUploadError.unreadableFile
+        }
     }
 }
