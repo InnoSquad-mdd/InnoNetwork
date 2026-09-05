@@ -149,6 +149,19 @@ package final class TestClock: InnoNetworkClock, @unchecked Sendable {
         }
     }
 
+    /// Advances monotonic time without resuming elapsed sleepers. Tests use
+    /// this to exercise actor reentrancy while a time-based operation remains
+    /// suspended, then call `advance(by: .zero)` to release elapsed sleepers.
+    package func advanceWithoutResuming(by duration: Duration) {
+        let readyConditions = stateLock.withLock { state in
+            state.virtualNow += duration
+            return state.removeSatisfiedConditionWaiters()
+        }
+        for condition in readyConditions {
+            condition.resume(returning: true)
+        }
+    }
+
     /// Outstanding waiter count. Useful for gating `advance` on the coordinator
     /// having actually registered its sleep.
     package var waiterCount: Int {

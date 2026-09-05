@@ -111,6 +111,7 @@ package actor AdvancedRateLimitCoordinator {
         var dispatchedSlidingEntries: [(instant: Duration, cost: Double)] = []
         var cooldownUntil: Duration?
         var uncommittedReservations: Set<UUID> = []
+        var activeReserveCalls = 0
     }
 
     private let policy: AdvancedRateLimitPolicy
@@ -136,13 +137,15 @@ package actor AdvancedRateLimitCoordinator {
             }
             scopes[scope] = ScopeState()
         }
+        scopes[scope]?.activeReserveCalls += 1
+        defer { finishReserveCall(scope: scope) }
 
         var wasDelayed = false
         while true {
             try Task.checkCancellation()
             let now = clock.monotonicNow()
             let reservationID = UUID()
-            if let wait = reserveIfPossible(
+            if let wait = try reserveIfPossible(
                 scope: scope,
                 cost: cost,
                 reservationID: reservationID,
@@ -234,8 +237,12 @@ package actor AdvancedRateLimitCoordinator {
         cost: Double,
         reservationID: UUID,
         now: Duration
-    ) -> Duration? {
-        guard var state = scopes[scope] else { return .zero }
+    ) throws -> Duration? {
+        guard var state = scopes[scope] else {
+            throw RateLimitAdmissionFailure.invalidConfiguration(
+                "Rate-limit scope state was released while admission was active."
+            )
+        }
         if let cooldown = state.cooldownUntil, cooldown > now {
             return cooldown - now
         }
@@ -324,7 +331,8 @@ package actor AdvancedRateLimitCoordinator {
         var removable: [String] = []
         var refreshed: [String: ScopeState] = [:]
         for (scope, var state) in scopes {
-            guard state.uncommittedReservations.isEmpty,
+            guard state.activeReserveCalls == 0,
+                state.uncommittedReservations.isEmpty,
                 state.cooldownUntil.map({ $0 <= now }) ?? true
             else { continue }
 
@@ -362,6 +370,11 @@ package actor AdvancedRateLimitCoordinator {
         }
         for scope in removable { scopes.removeValue(forKey: scope) }
         for (scope, state) in refreshed { scopes[scope] = state }
+    }
+
+    private func finishReserveCall(scope: String) {
+        guard let active = scopes[scope]?.activeReserveCalls, active > 0 else { return }
+        scopes[scope]?.activeReserveCalls = active - 1
     }
 
     private func retryAfterDelay(response: HTTPURLResponse, maximumDelay: TimeInterval) -> TimeInterval? {

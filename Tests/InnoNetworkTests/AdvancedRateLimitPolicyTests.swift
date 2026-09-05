@@ -201,6 +201,77 @@ struct AdvancedRateLimitPolicyTests {
         _ = await limiter.commit(try await delayed.value)
     }
 
+    @Test("A dormant-scope prune cannot evict a suspended token-bucket waiter")
+    func tokenBucketWaiterRetainsScope() async throws {
+        try await verifySuspendedWaiterRetainsScope(
+            algorithm: .tokenBucket(capacity: 1, refillPerSecond: 1),
+            elapsed: .seconds(1)
+        )
+    }
+
+    @Test("A dormant-scope prune cannot evict a suspended sliding-window waiter")
+    func slidingWindowWaiterRetainsScope() async throws {
+        try await verifySuspendedWaiterRetainsScope(
+            algorithm: .slidingWindow(limit: 1, interval: .seconds(1)),
+            elapsed: .seconds(1)
+        )
+    }
+
+    @Test("Cancelling a suspended reservation releases its scope lifetime")
+    func cancellationReleasesScopeLifetime() async throws {
+        let clock = TestClock()
+        let limiter = AdvancedRateLimitCoordinator(
+            policy: AdvancedRateLimitPolicy(
+                algorithm: .tokenBucket(capacity: 1, refillPerSecond: 1),
+                maximumScopes: 1
+            ),
+            clock: clock
+        )
+        let firstRequest = request(host: "a.example.test")
+        #expect(await limiter.commit(try await limiter.reserve(for: firstRequest)) == nil)
+        let suspended = Task { try await limiter.reserve(for: firstRequest) }
+        #expect(await clock.waitForWaiters(count: 1))
+
+        suspended.cancel()
+        await #expect(throws: CancellationError.self) {
+            _ = try await suspended.value
+        }
+        clock.advanceWithoutResuming(by: .seconds(1))
+
+        let replacement = try await limiter.reserve(for: request(host: "b.example.test"))
+        #expect(await limiter.commit(replacement) == nil)
+        #expect(await limiter.snapshot.scopes == 1)
+    }
+
+    private func verifySuspendedWaiterRetainsScope(
+        algorithm: AdvancedRateLimitAlgorithm,
+        elapsed: Duration
+    ) async throws {
+        let clock = TestClock()
+        let limiter = AdvancedRateLimitCoordinator(
+            policy: AdvancedRateLimitPolicy(
+                algorithm: algorithm,
+                maximumScopes: 1
+            ),
+            clock: clock
+        )
+        let firstRequest = request(host: "a.example.test")
+        #expect(await limiter.commit(try await limiter.reserve(for: firstRequest)) == nil)
+        let suspended = Task { try await limiter.reserve(for: firstRequest) }
+        #expect(await clock.waitForWaiters(count: 1))
+
+        clock.advanceWithoutResuming(by: elapsed)
+        await #expect(throws: RateLimitAdmissionFailure.scopeLimitReached) {
+            _ = try await limiter.reserve(for: request(host: "b.example.test"))
+        }
+        #expect(await limiter.snapshot.scopes == 1)
+
+        clock.advance(by: .zero)
+        let delayed = try await suspended.value
+        #expect(delayed.wasDelayed)
+        #expect(await limiter.commit(delayed) == nil)
+    }
+
     private func request(host: String) -> URLRequest {
         URLRequest(url: URL(string: "https://\(host)/resource")!)
     }
