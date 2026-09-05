@@ -1,0 +1,287 @@
+import Foundation
+
+/// Algorithm used by the built-in physical-dispatch rate limiter.
+public enum AdvancedRateLimitAlgorithm: Sendable, Equatable {
+    /// Allows bursts up to `capacity`, then replenishes continuously.
+    case tokenBucket(capacity: Double, refillPerSecond: Double)
+    /// Enforces an exact weighted limit in every interval-sized window.
+    case slidingWindow(limit: Double, interval: Duration)
+}
+
+/// Optional server signals that may make the local limiter more restrictive.
+public enum RateLimitServerFeedbackPolicy: Sendable, Equatable {
+    case disabled
+    case retryAfter(maximumDelay: TimeInterval)
+    /// Parses the constrained `RateLimit` shape from draft revision 11.
+    /// The adapter is versioned because the specification is not yet an RFC.
+    case ietfDraft11(maximumDelay: TimeInterval)
+}
+
+/// Process-local rate limiting applied immediately before physical transport.
+public struct AdvancedRateLimitPolicy: Sendable, Equatable {
+    public let algorithm: AdvancedRateLimitAlgorithm
+    public let defaultRequestCost: Double
+    public let maximumPendingRequests: Int
+    public let scope: RequestAdmissionScope
+    public let maximumScopes: Int
+    public let serverFeedback: RateLimitServerFeedbackPolicy
+
+    public init(
+        algorithm: AdvancedRateLimitAlgorithm,
+        defaultRequestCost: Double = 1,
+        maximumPendingRequests: Int = 512,
+        scope: RequestAdmissionScope = .origin,
+        maximumScopes: Int = 128,
+        serverFeedback: RateLimitServerFeedbackPolicy = .disabled
+    ) {
+        self.algorithm = Self.normalized(algorithm)
+        self.defaultRequestCost = max(Double.leastNonzeroMagnitude, defaultRequestCost)
+        self.maximumPendingRequests = max(0, maximumPendingRequests)
+        self.scope = scope
+        self.maximumScopes = max(1, maximumScopes)
+        self.serverFeedback = serverFeedback
+    }
+
+    private static func normalized(_ algorithm: AdvancedRateLimitAlgorithm) -> AdvancedRateLimitAlgorithm {
+        switch algorithm {
+        case .tokenBucket(let capacity, let refill):
+            return .tokenBucket(
+                capacity: max(Double.leastNonzeroMagnitude, capacity),
+                refillPerSecond: max(Double.leastNonzeroMagnitude, refill)
+            )
+        case .slidingWindow(let limit, let interval):
+            return .slidingWindow(
+                limit: max(Double.leastNonzeroMagnitude, limit),
+                interval: interval > .zero ? interval : .milliseconds(1)
+            )
+        }
+    }
+}
+
+package enum RateLimitAdmissionFailure: Error, Sendable, Equatable {
+    case queueFull
+    case scopeLimitReached
+}
+
+package struct RateLimitReservation: Sendable {
+    let id: UUID
+    let scope: String
+    let cost: Double
+    let wasDelayed: Bool
+}
+
+package actor AdvancedRateLimitCoordinator {
+    private struct SlidingEntry: Sendable {
+        let id: UUID
+        let instant: Duration
+        let cost: Double
+    }
+
+    private struct ScopeState: Sendable {
+        var tokens: Double?
+        var lastRefill: Duration?
+        var slidingEntries: [SlidingEntry] = []
+        var cooldownUntil: Duration?
+        var uncommittedReservations: Set<UUID> = []
+    }
+
+    private let policy: AdvancedRateLimitPolicy
+    private let clock: any InnoNetworkClock
+    private var scopes: [String: ScopeState] = [:]
+    private var pending = 0
+
+    package init(policy: AdvancedRateLimitPolicy, clock: any InnoNetworkClock) {
+        self.policy = policy
+        self.clock = clock
+    }
+
+    package func reserve(for request: URLRequest, cost requestedCost: Double? = nil) async throws
+        -> RateLimitReservation
+    {
+        let scope = scopeKey(for: request)
+        let cost = normalizedCost(requestedCost ?? policy.defaultRequestCost)
+        if scopes[scope] == nil {
+            guard scopes.count < policy.maximumScopes else {
+                throw RateLimitAdmissionFailure.scopeLimitReached
+            }
+            scopes[scope] = ScopeState()
+        }
+
+        var wasDelayed = false
+        while true {
+            try Task.checkCancellation()
+            let now = clock.monotonicNow()
+            let reservationID = UUID()
+            if let wait = reserveIfPossible(
+                scope: scope,
+                cost: cost,
+                reservationID: reservationID,
+                now: now
+            ) {
+                guard pending < policy.maximumPendingRequests else {
+                    throw RateLimitAdmissionFailure.queueFull
+                }
+                pending += 1
+                defer { pending -= 1 }
+                wasDelayed = true
+                try await clock.sleep(for: wait)
+                continue
+            }
+
+            scopes[scope]?.uncommittedReservations.insert(reservationID)
+            return RateLimitReservation(
+                id: reservationID,
+                scope: scope,
+                cost: cost,
+                wasDelayed: wasDelayed
+            )
+        }
+    }
+
+    package func commit(_ reservation: RateLimitReservation) {
+        scopes[reservation.scope]?.uncommittedReservations.remove(reservation.id)
+    }
+
+    package func refund(_ reservation: RateLimitReservation) {
+        guard scopes[reservation.scope]?.uncommittedReservations.remove(reservation.id) != nil else {
+            return
+        }
+        switch policy.algorithm {
+        case .tokenBucket(let capacity, _):
+            let current = scopes[reservation.scope]?.tokens ?? 0
+            scopes[reservation.scope]?.tokens = min(capacity, current + reservation.cost)
+        case .slidingWindow:
+            scopes[reservation.scope]?.slidingEntries.removeAll { $0.id == reservation.id }
+        }
+    }
+
+    package func observe(response: HTTPURLResponse, for request: URLRequest) {
+        let scope = scopeKey(for: request)
+        guard scopes[scope] != nil else { return }
+        let maximumDelay: TimeInterval
+        let delay: TimeInterval?
+        switch policy.serverFeedback {
+        case .disabled:
+            return
+        case .retryAfter(let maximum):
+            maximumDelay = max(0, maximum)
+            delay = retryAfterDelay(response: response, maximumDelay: maximumDelay)
+        case .ietfDraft11(let maximum):
+            maximumDelay = max(0, maximum)
+            delay = RateLimitHeaderAdapterV11.cooldown(
+                response: response,
+                maximumDelay: maximumDelay
+            ) ?? retryAfterDelay(response: response, maximumDelay: maximumDelay)
+        }
+        guard let delay, delay > 0 else { return }
+        let proposed = clock.monotonicNow() + .seconds(delay)
+        if let current = scopes[scope]?.cooldownUntil, current >= proposed { return }
+        scopes[scope]?.cooldownUntil = proposed
+    }
+
+    package var snapshot: (scopes: Int, pending: Int) { (scopes.count, pending) }
+
+    /// Returns `nil` after charging the request, or the monotonic delay until
+    /// the next safe admission.
+    private func reserveIfPossible(
+        scope: String,
+        cost: Double,
+        reservationID: UUID,
+        now: Duration
+    ) -> Duration? {
+        guard var state = scopes[scope] else { return .zero }
+        if let cooldown = state.cooldownUntil, cooldown > now {
+            return cooldown - now
+        }
+        state.cooldownUntil = nil
+
+        switch policy.algorithm {
+        case .tokenBucket(let capacity, let refillPerSecond):
+            let previous = state.lastRefill ?? now
+            let elapsed = max(0, (now - previous).rateLimitSeconds)
+            let available = min(capacity, (state.tokens ?? capacity) + elapsed * refillPerSecond)
+            state.lastRefill = now
+            if available >= cost {
+                state.tokens = available - cost
+                scopes[scope] = state
+                return nil
+            }
+            state.tokens = available
+            scopes[scope] = state
+            return .seconds((cost - available) / refillPerSecond)
+
+        case .slidingWindow(let limit, let interval):
+            state.slidingEntries.removeAll {
+                now - $0.instant >= interval
+            }
+            let used = state.slidingEntries.reduce(0) { $0 + $1.cost }
+            if used + cost <= limit {
+                state.slidingEntries.append(
+                    SlidingEntry(id: reservationID, instant: now, cost: cost)
+                )
+                scopes[scope] = state
+                return nil
+            }
+            guard let oldest = state.slidingEntries.first else { return .zero }
+            scopes[scope] = state
+            return oldest.instant + interval - now
+        }
+    }
+
+    private func normalizedCost(_ cost: Double) -> Double {
+        let positive = max(Double.leastNonzeroMagnitude, cost)
+        switch policy.algorithm {
+        case .tokenBucket(let capacity, _): return min(capacity, positive)
+        case .slidingWindow(let limit, _): return min(limit, positive)
+        }
+    }
+
+    private func retryAfterDelay(response: HTTPURLResponse, maximumDelay: TimeInterval) -> TimeInterval? {
+        guard response.statusCode == 429 || response.statusCode == 503,
+            let value = response.value(forHTTPHeaderField: "Retry-After")
+        else { return nil }
+        return ExponentialBackoffRetryPolicy.parseRetryAfter(
+            value,
+            now: clock.now(),
+            maxSeconds: maximumDelay
+        )
+    }
+
+    private func scopeKey(for request: URLRequest) -> String {
+        guard policy.scope == .origin,
+            let url = request.url,
+            let scheme = url.scheme?.lowercased(),
+            let host = url.host?.lowercased()
+        else { return "global" }
+        return "\(scheme)://\(host)\(url.port.map { ":\($0)" } ?? "")"
+    }
+}
+
+package enum RateLimitHeaderAdapterV11 {
+    /// Accepts only the constrained draft-11 form `RateLimit:
+    /// "name";r=0;t=seconds`. Unknown or malformed parameters are ignored;
+    /// server feedback can delay local traffic but never increase capacity.
+    static func cooldown(response: HTTPURLResponse, maximumDelay: TimeInterval) -> TimeInterval? {
+        guard let raw = response.value(forHTTPHeaderField: "RateLimit") else { return nil }
+        var remaining: Int?
+        var reset: Int?
+        for component in raw.split(separator: ";").dropFirst() {
+            let pair = component.split(separator: "=", maxSplits: 1).map {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            guard pair.count == 2, let value = Int(pair[1]), value >= 0 else { continue }
+            if pair[0] == "r" { remaining = value }
+            if pair[0] == "t" { reset = value }
+        }
+        guard remaining == 0, let reset else { return nil }
+        return min(TimeInterval(reset), max(0, maximumDelay))
+    }
+}
+
+private extension Duration {
+    var rateLimitSeconds: TimeInterval {
+        let components = self.components
+        return TimeInterval(components.seconds)
+            + TimeInterval(components.attoseconds) / 1_000_000_000_000_000_000
+    }
+}

@@ -86,6 +86,10 @@ package final class TestClock: InnoNetworkClock, @unchecked Sendable {
         return epoch.addingTimeInterval(virtualSeconds)
     }
 
+    package func monotonicNow() -> Duration {
+        stateLock.withLock { $0.virtualNow }
+    }
+
     package func sleep(for duration: Duration) async throws {
         let id = UUID()
         try await withTaskCancellationHandler {

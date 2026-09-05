@@ -32,6 +32,8 @@ public struct ResiliencePack: Sendable {
     /// single transport attempt. Replaces the builder slot wholesale;
     /// pass `nil` (the default) to leave the underlying value alone.
     private let customExecutionPolicies: [any RequestExecutionPolicy]?
+    private let admission: RequestAdmissionPolicy?
+    private let advancedRateLimit: AdvancedRateLimitPolicy?
 
     public init(
         retry: RetryPolicy? = nil,
@@ -39,7 +41,9 @@ public struct ResiliencePack: Sendable {
         circuitBreaker: CircuitBreakerPolicy? = nil,
         idempotency: IdempotencyKeyPolicy? = nil,
         bodyBuffering: ResponseBodyBufferingPolicy? = nil,
-        customExecutionPolicies: [any RequestExecutionPolicy]? = nil
+        customExecutionPolicies: [any RequestExecutionPolicy]? = nil,
+        admission: RequestAdmissionPolicy? = nil,
+        advancedRateLimit: AdvancedRateLimitPolicy? = nil
     ) {
         self.retry = retry
         self.coalescing = coalescing
@@ -47,6 +51,8 @@ public struct ResiliencePack: Sendable {
         self.idempotency = idempotency
         self.bodyBuffering = bodyBuffering
         self.customExecutionPolicies = customExecutionPolicies
+        self.admission = admission
+        self.advancedRateLimit = advancedRateLimit
     }
 
     package func apply(to builder: inout NetworkConfiguration.AdvancedBuilder) {
@@ -58,6 +64,8 @@ public struct ResiliencePack: Sendable {
             builder.responseBodyBufferingPolicy = bodyBuffering
         }
         if let customExecutionPolicies { builder.customExecutionPolicies = customExecutionPolicies }
+        if let admission { builder.requestAdmissionPolicy = admission }
+        if let advancedRateLimit { builder.advancedRateLimitPolicy = advancedRateLimit }
     }
 }
 

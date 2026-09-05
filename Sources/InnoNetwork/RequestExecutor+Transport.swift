@@ -156,6 +156,115 @@ extension RequestExecutor {
         runtime: RequestExecutionRuntime,
         policy: CircuitBreakerPolicy?
     ) async throws -> TransportResult {
+        let rateReservation: RateLimitReservation?
+        do {
+            rateReservation = try await runtime.rateLimit?.reserve(for: request)
+            if let rateReservation {
+                await eventHub.publish(
+                    .decision(
+                        NetworkDecision(
+                            requestID: context.requestID,
+                            attemptIndex: context.retryIndex,
+                            kind: .rateLimit,
+                            outcome: rateReservation.wasDelayed ? .delayed : .allowed,
+                            reason: rateReservation.wasDelayed ? .localQuota : .policyAllowed
+                        )
+                    ),
+                    requestID: context.requestID,
+                    observers: context.eventObservers
+                )
+            }
+        } catch RateLimitAdmissionFailure.queueFull {
+            throw NetworkError.underlying(
+                SendableUnderlyingError(
+                    domain: NetworkError.errorDomain,
+                    code: NetworkErrorCode.rateLimitQueueRejected.rawValue,
+                    message: "The bounded rate-limit queue is full."
+                ),
+                nil
+            )
+        } catch RateLimitAdmissionFailure.scopeLimitReached {
+            throw NetworkError.underlying(
+                SendableUnderlyingError(
+                    domain: NetworkError.errorDomain,
+                    code: NetworkErrorCode.rateLimitScopeRejected.rawValue,
+                    message: "The bounded rate-limit scope registry is full."
+                ),
+                nil
+            )
+        }
+
+        let admissionGrant: RequestAdmissionGrant?
+        do {
+            admissionGrant = try await runtime.requestAdmission?.acquire(for: request)
+            if let admissionGrant {
+                await eventHub.publish(
+                    .decision(
+                        NetworkDecision(
+                            requestID: context.requestID,
+                            attemptIndex: context.retryIndex,
+                            kind: .admission,
+                            outcome: admissionGrant.wasQueued ? .delayed : .allowed,
+                            reason: .policyAllowed
+                        )
+                    ),
+                    requestID: context.requestID,
+                    observers: context.eventObservers
+                )
+            }
+        } catch RequestAdmissionFailure.queueFull {
+            if let rateReservation { await runtime.rateLimit?.refund(rateReservation) }
+            await eventHub.publish(
+                .decision(
+                    NetworkDecision(
+                        requestID: context.requestID,
+                        attemptIndex: context.retryIndex,
+                        kind: .admission,
+                        outcome: .denied,
+                        reason: .queueFull
+                    )
+                ),
+                requestID: context.requestID,
+                observers: context.eventObservers
+            )
+            throw NetworkError.underlying(
+                SendableUnderlyingError(
+                    domain: NetworkError.errorDomain,
+                    code: NetworkErrorCode.requestAdmissionRejected.rawValue,
+                    message: "The bounded request admission queue is full."
+                ),
+                nil
+            )
+        } catch RequestAdmissionFailure.queueWaitExpired {
+            if let rateReservation { await runtime.rateLimit?.refund(rateReservation) }
+            await eventHub.publish(
+                .decision(
+                    NetworkDecision(
+                        requestID: context.requestID,
+                        attemptIndex: context.retryIndex,
+                        kind: .admission,
+                        outcome: .denied,
+                        reason: .queueWaitExpired
+                    )
+                ),
+                requestID: context.requestID,
+                observers: context.eventObservers
+            )
+            throw NetworkError.underlying(
+                SendableUnderlyingError(
+                    domain: NetworkError.errorDomain,
+                    code: NetworkErrorCode.requestAdmissionWaitExpired.rawValue,
+                    message: "The request admission wait expired before transport."
+                ),
+                nil
+            )
+        } catch {
+            if let rateReservation { await runtime.rateLimit?.refund(rateReservation) }
+            throw error
+        }
+
+        if let rateReservation { await runtime.rateLimit?.commit(rateReservation) }
+
         do {
             let result = try await transport(
                 request: request,
@@ -168,8 +277,15 @@ extension RequestExecutor {
                 policy: policy,
                 statusCode: result.response.statusCode
             )
+            if let admissionGrant {
+                await runtime.requestAdmission?.release(scope: admissionGrant.scope)
+            }
+            await runtime.rateLimit?.observe(response: result.response, for: request)
             return result
         } catch {
+            if let admissionGrant {
+                await runtime.requestAdmission?.release(scope: admissionGrant.scope)
+            }
             if NetworkError.isCancellation(error) {
                 await runtime.circuitBreakers.recordCancellation(request: identityRequest, policy: policy)
             } else {

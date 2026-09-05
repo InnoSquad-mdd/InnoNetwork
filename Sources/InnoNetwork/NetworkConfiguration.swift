@@ -44,6 +44,8 @@ public struct NetworkConfiguration: Sendable {
                 requestInterceptors: [],
                 responseInterceptors: [],
                 customExecutionPolicies: [],
+                requestAdmissionPolicy: nil,
+                advancedRateLimitPolicy: nil,
                 idempotencyKeyPolicy: .disabled,
                 responseBodyBufferingPolicy: .streaming(
                     maxBytes: NetworkConfiguration.defaultResponseBodyByteLimit
@@ -77,6 +79,8 @@ public struct NetworkConfiguration: Sendable {
                 requestInterceptors: [],
                 responseInterceptors: [],
                 customExecutionPolicies: [],
+                requestAdmissionPolicy: nil,
+                advancedRateLimitPolicy: nil,
                 idempotencyKeyPolicy: .disabled,
                 responseBodyBufferingPolicy: .streaming(
                     maxBytes: NetworkConfiguration.defaultResponseBodyByteLimit
@@ -154,6 +158,11 @@ public struct NetworkConfiguration: Sendable {
     /// attempt after request adaptation/auth application and before response
     /// interceptors, status validation, cache writes, and decoding.
     package let customExecutionPolicies: [any RequestExecutionPolicy]
+    /// Optional built-in admission policy enforced only when a physical
+    /// transport attempt is about to begin.
+    package let requestAdmissionPolicy: RequestAdmissionPolicy?
+    /// Optional process-local weighted rate limiter for physical dispatches.
+    package let advancedRateLimitPolicy: AdvancedRateLimitPolicy?
     /// Optional policy that attaches one stable idempotency key to every
     /// retry attempt for the same logical request.
     package let idempotencyKeyPolicy: IdempotencyKeyPolicy
@@ -279,6 +288,8 @@ public struct NetworkConfiguration: Sendable {
         package var responseCacheSensitiveHeaderNames: Set<String>
         package var circuitBreakerPolicy: CircuitBreakerPolicy?
         package var customExecutionPolicies: [any RequestExecutionPolicy]
+        package var requestAdmissionPolicy: RequestAdmissionPolicy?
+        package var advancedRateLimitPolicy: AdvancedRateLimitPolicy?
         package var idempotencyKeyPolicy: IdempotencyKeyPolicy
         package var userAgentProvider: @Sendable () -> String
         package var acceptLanguageProvider: @Sendable () -> String
@@ -314,6 +325,8 @@ public struct NetworkConfiguration: Sendable {
             self.responseCacheSensitiveHeaderNames = preset.responseCacheSensitiveHeaderNames
             self.circuitBreakerPolicy = preset.circuitBreakerPolicy
             self.customExecutionPolicies = preset.customExecutionPolicies
+            self.requestAdmissionPolicy = preset.requestAdmissionPolicy
+            self.advancedRateLimitPolicy = preset.advancedRateLimitPolicy
             self.idempotencyKeyPolicy = preset.idempotencyKeyPolicy
             self.userAgentProvider = preset.userAgentProvider
             self.acceptLanguageProvider = preset.acceptLanguageProvider
@@ -352,6 +365,8 @@ public struct NetworkConfiguration: Sendable {
                 responseCacheSensitiveHeaderNames: responseCacheSensitiveHeaderNames,
                 circuitBreakerPolicy: circuitBreakerPolicy,
                 customExecutionPolicies: customExecutionPolicies,
+                requestAdmissionPolicy: requestAdmissionPolicy,
+                advancedRateLimitPolicy: advancedRateLimitPolicy,
                 idempotencyKeyPolicy: idempotencyKeyPolicy,
                 userAgentProvider: userAgentProvider,
                 acceptLanguageProvider: acceptLanguageProvider,
@@ -415,6 +430,8 @@ public struct NetworkConfiguration: Sendable {
         responseCacheSensitiveHeaderNames: Set<String> = [],
         circuitBreakerPolicy: CircuitBreakerPolicy? = nil,
         customExecutionPolicies: [any RequestExecutionPolicy] = [],
+        requestAdmissionPolicy: RequestAdmissionPolicy? = nil,
+        advancedRateLimitPolicy: AdvancedRateLimitPolicy? = nil,
         idempotencyKeyPolicy: IdempotencyKeyPolicy = .disabled,
         userAgentProvider: @escaping @Sendable () -> String = { HTTPHeader.defaultUserAgent.value },
         acceptLanguageProvider: @escaping @Sendable () -> String = { HTTPHeader.defaultAcceptLanguage.value },
@@ -454,6 +471,8 @@ public struct NetworkConfiguration: Sendable {
         )
         self.circuitBreakerPolicy = circuitBreakerPolicy
         self.customExecutionPolicies = customExecutionPolicies
+        self.requestAdmissionPolicy = requestAdmissionPolicy
+        self.advancedRateLimitPolicy = advancedRateLimitPolicy
         self.idempotencyKeyPolicy = idempotencyKeyPolicy
         self.userAgentProvider = userAgentProvider
         self.acceptLanguageProvider = acceptLanguageProvider
@@ -495,6 +514,8 @@ public struct NetworkConfiguration: Sendable {
         responseCacheSensitiveHeaderNames: Set<String> = [],
         circuitBreakerPolicy: CircuitBreakerPolicy? = nil,
         customExecutionPolicies: [any RequestExecutionPolicy] = [],
+        requestAdmissionPolicy: RequestAdmissionPolicy? = nil,
+        advancedRateLimitPolicy: AdvancedRateLimitPolicy? = nil,
         idempotencyKeyPolicy: IdempotencyKeyPolicy = .disabled,
         userAgentProvider: @escaping @Sendable () -> String = { HTTPHeader.defaultUserAgent.value },
         acceptLanguageProvider: @escaping @Sendable () -> String = { HTTPHeader.defaultAcceptLanguage.value },
@@ -533,6 +554,8 @@ public struct NetworkConfiguration: Sendable {
             responseCacheSensitiveHeaderNames: responseCacheSensitiveHeaderNames,
             circuitBreakerPolicy: circuitBreakerPolicy,
             customExecutionPolicies: customExecutionPolicies,
+            requestAdmissionPolicy: requestAdmissionPolicy,
+            advancedRateLimitPolicy: advancedRateLimitPolicy,
             idempotencyKeyPolicy: idempotencyKeyPolicy,
             userAgentProvider: userAgentProvider,
             acceptLanguageProvider: acceptLanguageProvider,

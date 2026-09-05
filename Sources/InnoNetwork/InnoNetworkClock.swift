@@ -14,12 +14,25 @@ package protocol InnoNetworkClock: Sendable {
     /// return the system wall clock; tests can return a virtual time so
     /// timestamp-dependent assertions stay deterministic.
     func now() -> Date
+
+    /// Returns a process-local monotonic instant expressed as elapsed time
+    /// from an arbitrary origin. Interval policies must compare this value,
+    /// not wall-clock `Date`, so clock corrections cannot refill quotas or
+    /// expire queues early.
+    func monotonicNow() -> Duration
+}
+
+package extension InnoNetworkClock {
+    func monotonicNow() -> Duration {
+        .seconds(now().timeIntervalSinceReferenceDate)
+    }
 }
 
 
 /// Production-backed clock that defers to structured-concurrency
 /// `Task.sleep(for:)`.
 package struct SystemClock: InnoNetworkClock {
+    private static let monotonicOrigin = ContinuousClock.now
     package init() {}
 
     package func sleep(for duration: Duration) async throws {
@@ -28,5 +41,9 @@ package struct SystemClock: InnoNetworkClock {
 
     package func now() -> Date {
         Date()
+    }
+
+    package func monotonicNow() -> Duration {
+        Self.monotonicOrigin.duration(to: ContinuousClock.now)
     }
 }

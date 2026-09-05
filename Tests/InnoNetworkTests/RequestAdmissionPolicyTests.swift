@@ -1,0 +1,97 @@
+import Foundation
+import InnoNetworkTestSupport
+import Testing
+
+@testable import InnoNetwork
+
+@Suite("Request Admission Policy Tests", .serialized)
+struct RequestAdmissionPolicyTests {
+    @Test("Queue capacity rejects excess work without leaking permits")
+    func boundedQueue() async throws {
+        let coordinator = RequestAdmissionCoordinator(
+            policy: RequestAdmissionPolicy(
+                maximumConcurrentRequests: 1,
+                maximumPendingRequests: 1
+            ),
+            clock: TestClock()
+        )
+        let request = URLRequest(url: URL(string: "https://api.example.test/a")!)
+        let firstScope = try await coordinator.acquire(for: request).scope
+        let second = Task { try await coordinator.acquire(for: request) }
+        await waitForPending(1, coordinator: coordinator)
+
+        await #expect(throws: RequestAdmissionFailure.queueFull) {
+            _ = try await coordinator.acquire(for: request)
+        }
+
+        second.cancel()
+        _ = try? await second.value
+        await coordinator.release(scope: firstScope)
+        let snapshot = await coordinator.snapshot
+        #expect(snapshot.active == 0)
+        #expect(snapshot.pending == 0)
+    }
+
+    @Test("Virtual queue deadline expires exactly one waiter")
+    func queueWaitDeadline() async throws {
+        let clock = TestClock()
+        let coordinator = RequestAdmissionCoordinator(
+            policy: RequestAdmissionPolicy(
+                maximumConcurrentRequests: 1,
+                maximumPendingRequests: 2,
+                maximumQueueWait: .seconds(5)
+            ),
+            clock: clock
+        )
+        let request = URLRequest(url: URL(string: "https://api.example.test/a")!)
+        let firstScope = try await coordinator.acquire(for: request).scope
+        let second = Task { try await coordinator.acquire(for: request) }
+        await waitForPending(1, coordinator: coordinator)
+        #expect(await clock.waitForWaiters(count: 1))
+
+        clock.advance(by: .seconds(5))
+        await #expect(throws: RequestAdmissionFailure.queueWaitExpired) {
+            _ = try await second.value
+        }
+        await coordinator.release(scope: firstScope)
+
+        let snapshot = await coordinator.snapshot
+        #expect(snapshot.active == 0)
+        #expect(snapshot.pending == 0)
+    }
+
+    @Test("An origin at its cap does not block another origin")
+    func scopeFairness() async throws {
+        let coordinator = RequestAdmissionCoordinator(
+            policy: RequestAdmissionPolicy(
+                maximumConcurrentRequests: 2,
+                maximumPendingRequests: 2,
+                scope: .origin,
+                maximumConcurrentRequestsPerScope: 1
+            ),
+            clock: TestClock()
+        )
+        let first = URLRequest(url: URL(string: "https://a.example.test/path")!)
+        let second = URLRequest(url: URL(string: "https://b.example.test/path")!)
+
+        let firstScope = try await coordinator.acquire(for: first).scope
+        let secondScope = try await coordinator.acquire(for: second).scope
+        let snapshot = await coordinator.snapshot
+        #expect(snapshot.active == 2)
+        #expect(snapshot.scopes == 2)
+
+        await coordinator.release(scope: firstScope)
+        await coordinator.release(scope: secondScope)
+    }
+
+    private func waitForPending(
+        _ count: Int,
+        coordinator: RequestAdmissionCoordinator
+    ) async {
+        for _ in 0..<100 {
+            if await coordinator.snapshot.pending >= count { return }
+            await Task.yield()
+        }
+        Issue.record("Admission waiter did not enqueue")
+    }
+}

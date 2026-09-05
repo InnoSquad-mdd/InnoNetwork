@@ -33,6 +33,10 @@ public enum NetworkErrorCode: Int, Sendable {
     case responseBodyLimitExceeded = 4003
     case cancelled = 4004
     case timeout = 4005
+    case requestAdmissionRejected = 4006
+    case requestAdmissionWaitExpired = 4007
+    case rateLimitQueueRejected = 4008
+    case rateLimitScopeRejected = 4009
 
     // 5xxx — trust evaluation failures.
     case trustEvaluationFailed = 5001
