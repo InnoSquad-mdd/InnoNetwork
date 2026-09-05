@@ -126,6 +126,106 @@ struct StreamingTimeoutPolicyTests {
         await execution.value
         #expect(clock.waiterCount == 0)
     }
+
+    @Test("Total budget bounds the initial network snapshot")
+    func totalBudgetIncludesInitialNetworkSnapshot() async throws {
+        let clock = TestClock()
+        let monitor = HeldStreamingNetworkMonitor(holdsInitialSnapshot: true)
+        let session = FailingStreamingTimeoutSession()
+        let configuration = streamingTimeoutConfiguration(monitor: monitor)
+        let runtime = RequestExecutionRuntime(
+            configuration: configuration,
+            inFlight: InFlightRegistry(),
+            clock: clock
+        )
+        let (sequence, sink) = StreamingOutputSequence<String>.make(buffering: .backpressured)
+        let eventHub = NetworkEventHub()
+        let executor = StreamingExecutor(session: session, eventHub: eventHub)
+        let execution = Task {
+            await executor.run(
+                request: TotalDeadlineStream(),
+                requestID: UUID(),
+                configuration: configuration,
+                executionRuntime: runtime,
+                sink: sink
+            )
+        }
+
+        var entries = monitor.entries.makeAsyncIterator()
+        #expect(await entries.next() == .initialSnapshot)
+        #expect(await clock.waitForWaiters(count: 1))
+        clock.advance(by: .seconds(1))
+
+        var iterator = sequence.makeAsyncIterator()
+        await #expect(throws: NetworkError.self) {
+            _ = try await iterator.next()
+        }
+        await execution.value
+        #expect(session.bytesCallCount == 0)
+        #expect(!monitor.hasOutstandingWait)
+        #expect(clock.waiterCount == 0)
+        await eventHub.shutdown()
+        await runtime.shutdown()
+    }
+
+    @Test("Total budget bounds retry network-change waiting")
+    func totalBudgetIncludesNetworkChangeWait() async throws {
+        let clock = TestClock()
+        let monitor = HeldStreamingNetworkMonitor(holdsInitialSnapshot: false)
+        let session = FailingStreamingTimeoutSession()
+        let configuration = streamingTimeoutConfiguration(monitor: monitor)
+        let runtime = RequestExecutionRuntime(
+            configuration: configuration,
+            inFlight: InFlightRegistry(),
+            clock: clock
+        )
+        let (sequence, sink) = StreamingOutputSequence<String>.make(buffering: .backpressured)
+        let eventHub = NetworkEventHub()
+        let executor = StreamingExecutor(session: session, eventHub: eventHub)
+        let execution = Task {
+            await executor.run(
+                request: TotalDeadlineStream(),
+                requestID: UUID(),
+                configuration: configuration,
+                executionRuntime: runtime,
+                sink: sink
+            )
+        }
+
+        var entries = monitor.entries.makeAsyncIterator()
+        #expect(await entries.next() == .networkChange)
+        #expect(await clock.waitForWaiters(count: 1))
+        #expect(monitor.lastNetworkChangeTimeout == 1)
+        clock.advance(by: .seconds(1))
+
+        var iterator = sequence.makeAsyncIterator()
+        await #expect(throws: NetworkError.self) {
+            _ = try await iterator.next()
+        }
+        await execution.value
+        #expect(session.bytesCallCount == 1)
+        #expect(!monitor.hasOutstandingWait)
+        #expect(clock.waiterCount == 0)
+        await eventHub.shutdown()
+        await runtime.shutdown()
+    }
+
+    private func streamingTimeoutConfiguration(
+        monitor: any NetworkMonitoring
+    ) -> NetworkConfiguration {
+        NetworkConfiguration(
+            baseURL: URL(string: "https://example.com")!,
+            retryPolicy: ExponentialBackoffRetryPolicy(
+                maxRetries: 1,
+                maxTotalRetries: 1,
+                retryDelay: 0,
+                jitterRatio: 0,
+                waitsForNetworkChanges: true,
+                networkChangeTimeout: nil
+            ),
+            networkMonitor: monitor
+        )
+    }
 }
 
 private struct TotalDeadlineStream: StreamingAPIDefinition {
@@ -137,4 +237,106 @@ private struct TotalDeadlineStream: StreamingAPIDefinition {
     let timeoutPolicy = StreamingTimeoutPolicy(total: .seconds(1))
 
     func decode(line: String) throws -> String? { line }
+}
+
+private final class FailingStreamingTimeoutSession: URLSessionProtocol, Sendable {
+    private let count = OSAllocatedUnfairLock(initialState: 0)
+
+    var bytesCallCount: Int { count.withLock { $0 } }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        _ = request
+        throw URLError(.notConnectedToInternet)
+    }
+
+    func bytes(for request: URLRequest, context: NetworkRequestContext) async throws -> (
+        URLSession.AsyncBytes, URLResponse
+    ) {
+        _ = (request, context)
+        count.withLock { $0 += 1 }
+        throw URLError(.notConnectedToInternet)
+    }
+}
+
+private final class HeldStreamingNetworkMonitor: NetworkMonitoring, @unchecked Sendable {
+    enum Entry: Sendable, Equatable {
+        case initialSnapshot
+        case networkChange
+    }
+
+    private struct State {
+        var continuation: CheckedContinuation<NetworkSnapshot?, Never>?
+        var holdsInitialSnapshot: Bool
+        var lastNetworkChangeTimeout: TimeInterval?
+    }
+
+    let entries: AsyncStream<Entry>
+    private let entryContinuation: AsyncStream<Entry>.Continuation
+    private let state: OSAllocatedUnfairLock<State>
+
+    init(holdsInitialSnapshot: Bool) {
+        let pair = AsyncStream<Entry>.makeStream(bufferingPolicy: .unbounded)
+        entries = pair.stream
+        entryContinuation = pair.continuation
+        state = OSAllocatedUnfairLock(
+            initialState: State(
+                continuation: nil,
+                holdsInitialSnapshot: holdsInitialSnapshot,
+                lastNetworkChangeTimeout: nil
+            )
+        )
+    }
+
+    var hasOutstandingWait: Bool {
+        state.withLock { $0.continuation != nil }
+    }
+
+    var lastNetworkChangeTimeout: TimeInterval? {
+        state.withLock { $0.lastNetworkChangeTimeout }
+    }
+
+    func currentSnapshot() async -> NetworkSnapshot? {
+        let shouldHold = state.withLock { state in
+            guard state.holdsInitialSnapshot else { return false }
+            state.holdsInitialSnapshot = false
+            return true
+        }
+        guard shouldHold else { return nil }
+        entryContinuation.yield(.initialSnapshot)
+        return await suspendUntilCancelled()
+    }
+
+    func waitForChange(
+        from snapshot: NetworkSnapshot?,
+        timeout: TimeInterval?
+    ) async -> NetworkSnapshot? {
+        _ = snapshot
+        state.withLock { $0.lastNetworkChangeTimeout = timeout }
+        entryContinuation.yield(.networkChange)
+        return await suspendUntilCancelled()
+    }
+
+    func snapshots() async -> AsyncStream<NetworkSnapshot> {
+        AsyncStream { $0.finish() }
+    }
+
+    private func suspendUntilCancelled() async -> NetworkSnapshot? {
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                let shouldResume = state.withLock { state in
+                    if Task.isCancelled { return true }
+                    state.continuation = continuation
+                    return false
+                }
+                if shouldResume { continuation.resume(returning: nil) }
+            }
+        } onCancel: {
+            let continuation = self.state.withLock { state in
+                let continuation = state.continuation
+                state.continuation = nil
+                return continuation
+            }
+            continuation?.resume(returning: nil)
+        }
+    }
 }

@@ -63,12 +63,38 @@ package struct StreamingExecutor: Sendable {
             return
         }
 
+        let initialNetworkSnapshot: NetworkSnapshot?
+        do {
+            initialNetworkSnapshot = try await withStreamingTimeout(
+                phase: .total,
+                phaseBudget: nil,
+                totalBudget: timeoutPolicy.total,
+                logicalStart: logicalStart,
+                clock: executionRuntime.clock
+            ) {
+                await configuration.networkMonitor?.currentSnapshot()
+            }
+        } catch {
+            let mapped = Self.mapTransportError(error, startedAt: nil)
+            let nsError = mapped as NSError
+            await eventHub.publish(
+                .requestFailed(
+                    requestID: requestID,
+                    errorCode: nsError.code,
+                    message: mapped.observabilityCategory
+                ),
+                requestID: requestID,
+                observers: configuration.eventObservers
+            )
+            await eventHub.finish(requestID: requestID)
+            sink.finish(throwing: mapped)
+            return
+        }
+
         let resumeBudget = resumePolicy.maxAttempts
         var resumeState = StreamingResumeState()
         var resumeAttempts = 0
-        var handshakeRetryState = StreamingHandshakeRetryState(
-            snapshot: await configuration.networkMonitor?.currentSnapshot()
-        )
+        var handshakeRetryState = StreamingHandshakeRetryState(snapshot: initialNetworkSnapshot)
 
         while true {
             do {
@@ -765,17 +791,38 @@ package struct StreamingExecutor: Sendable {
         var nextRetryIndex = state.retryIndex + 1
         var nextSnapshot = state.snapshot
         if policy.waitsForNetworkChanges, let monitor = configuration.networkMonitor {
-            let newSnapshot = await monitor.waitForChange(
-                from: nextSnapshot,
-                timeout: policy.networkChangeTimeout
+            let snapshotBeforeWait = nextSnapshot
+            let monitorTimeout = try boundedNetworkChangeTimeout(
+                configuredTimeout: policy.networkChangeTimeout,
+                totalBudget: timeoutPolicy.total,
+                logicalStart: logicalStart,
+                clock: executionRuntime.clock
             )
-            if policy.shouldResetAttempts(afterNetworkChangeFrom: nextSnapshot, to: newSnapshot) {
+            let newSnapshot = try await withStreamingTimeout(
+                phase: .total,
+                phaseBudget: nil,
+                totalBudget: timeoutPolicy.total,
+                logicalStart: logicalStart,
+                clock: executionRuntime.clock
+            ) {
+                await monitor.waitForChange(from: snapshotBeforeWait, timeout: monitorTimeout)
+            }
+            if policy.shouldResetAttempts(afterNetworkChangeFrom: snapshotBeforeWait, to: newSnapshot) {
                 nextRetryIndex = 0
             }
             if let newSnapshot {
                 nextSnapshot = newSnapshot
             } else {
-                nextSnapshot = await monitor.currentSnapshot() ?? nextSnapshot
+                let fallbackSnapshot = nextSnapshot
+                nextSnapshot = try await withStreamingTimeout(
+                    phase: .total,
+                    phaseBudget: nil,
+                    totalBudget: timeoutPolicy.total,
+                    logicalStart: logicalStart,
+                    clock: executionRuntime.clock
+                ) {
+                    await monitor.currentSnapshot() ?? fallbackSnapshot
+                }
             }
         }
 
@@ -879,6 +926,19 @@ package struct StreamingExecutor: Sendable {
             guard let value = try await group.next() else { throw NetworkError.cancelled }
             return value
         }
+    }
+
+    private func boundedNetworkChangeTimeout(
+        configuredTimeout: TimeInterval?,
+        totalBudget: Duration?,
+        logicalStart: Duration,
+        clock: any InnoNetworkClock
+    ) throws -> TimeInterval? {
+        guard let totalBudget else { return configuredTimeout }
+        let remaining = logicalStart + totalBudget - clock.monotonicNow()
+        guard remaining > .zero else { throw StreamingTimeoutPhase.total.error }
+        let remainingSeconds = remaining.timeInterval
+        return configuredTimeout.map { min(max(0, $0), remainingSeconds) } ?? remainingSeconds
     }
 
     private static func streamFrameTooLargeError(
