@@ -70,6 +70,10 @@ that cut and are not part of the 6.0 contract.
 - Upload retries leave terminal-retention accounting before becoming active,
   remain addressable by manager controls while running, and honor caller
   cancellation before creating or resuming another system upload task.
+- Buffered requests publish one authoritative terminal lifecycle outcome only
+  after decoding completes. Retried attempts no longer terminate logical spans,
+  and final non-cancellation failures retain guaranteed event admission under
+  partition saturation.
 - Origin-scoped admission, quota, redirect, and circuit-breaker keys now
   canonicalize scheme and host casing, implicit default ports, and IPv6
   authority formatting before comparing or allocating state.

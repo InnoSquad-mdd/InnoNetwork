@@ -48,29 +48,27 @@ package struct RetryCoordinator {
             await eventHub.finish(requestID: requestID)
             return value
         } catch {
-            // Cancellation can escape any of the three catch arms in
-            // `runRetryLoop` — `processRetryDecision` (clock.sleep,
-            // monitor.waitForChange) can throw a raw `CancellationError`
-            // that bypasses both typed catch arms. Normalize the thrown
-            // error type here so callers always observe `NetworkError.cancelled`
-            // regardless of which path produced the cancel, then publish
-            // the terminal `.requestFailed` event exactly once.
-            let propagated: Error
+            // This is the single logical-request failure chokepoint. Per-
+            // attempt failures remain represented by retry decisions and
+            // `.retryScheduled`; only the final outcome closes the request
+            // partition and completes request-level observers.
+            let propagated: NetworkError
             if NetworkError.isCancellation(error) {
-                let cancellationError = NetworkError.cancelled
-                propagated = cancellationError
-                await eventHub.publishTerminal(
-                    .requestFailed(
-                        requestID: requestID,
-                        errorCode: cancellationError.errorCode,
-                        message: cancellationError.observabilityCategory
-                    ),
-                    requestID: requestID,
-                    observers: eventObservers
-                )
+                propagated = .cancelled
+            } else if let networkError = error as? NetworkError {
+                propagated = networkError
             } else {
-                propagated = error
+                propagated = NetworkError.mapTransportError(error)
             }
+            await eventHub.publishTerminal(
+                .requestFailed(
+                    requestID: requestID,
+                    errorCode: propagated.errorCode,
+                    message: propagated.observabilityCategory
+                ),
+                requestID: requestID,
+                observers: eventObservers
+            )
             // Awaiting `finish` before propagating the error guarantees that
             // the terminal event has crossed the partition boundary into each
             // observer queue. Observer handlers intentionally remain

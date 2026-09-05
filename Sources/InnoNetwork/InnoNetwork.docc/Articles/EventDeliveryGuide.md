@@ -40,6 +40,10 @@ every observer, listener, or `AsyncStream` consumer in the
 publication snapshot even when `.dropNewest` queues are full; the same
 guarantee applies under `.dropOldest`. For request observability, those outcomes are
 `requestFinished` and `requestFailed`.
+They describe the complete logical request, not an individual retry attempt:
+`requestFinished` is emitted only after response decoding and `didDecode`
+interceptors succeed, while `requestFailed` is emitted only after retry and
+fallback decisions reach a final failure.
 When a bounded partition or consumer queue is full, its oldest queued event is
 displaced to make room for the final outcome. The manager waits for enqueue,
 not user-handler execution.

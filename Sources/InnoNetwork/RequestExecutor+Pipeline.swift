@@ -468,21 +468,4 @@ extension RequestExecutor {
         )
     }
 
-    func notifyFailure(
-        _ networkError: NetworkError,
-        requestID: UUID,
-        configuration: NetworkConfiguration
-    ) async {
-        guard !configuration.eventObservers.isEmpty else { return }
-        let nsError = networkError as NSError
-        await eventHub.publish(
-            .requestFailed(
-                requestID: requestID,
-                errorCode: nsError.code,
-                message: networkError.observabilityCategory
-            ),
-            requestID: requestID,
-            observers: configuration.eventObservers
-        )
-    }
 }

@@ -82,18 +82,23 @@ package struct RequestExecutor {
                 runtime: runtime,
                 requestID: requestID
             )
-            return try await decodeStage(
+            let decoded = try await decodeStage(
                 executable,
                 response: networkResponse,
                 configuration: configuration
             )
+            await notifySuccess(
+                networkResponse,
+                requestID: requestID,
+                configuration: configuration
+            )
+            return decoded
         } catch let recovery as StaleIfErrorRecovery {
             let surfaced =
                 configuration.captureFailurePayload
                 ? recovery.failure
                 : recovery.failure.redactingFailurePayload()
             executable.logger.log(error: surfaced)
-            await notifyFailure(surfaced, requestID: requestID, configuration: configuration)
             guard let prepared = preparedForRecovery else {
                 throw RequestExecutionFailure(
                     error: surfaced,
@@ -111,25 +116,25 @@ package struct RequestExecutor {
                         executable,
                         networkResponse: recovery.fallback,
                         prepared: prepared,
-                        configuration: configuration,
-                        requestID: requestID
+                        configuration: configuration
                     )
-                    return try await executor.decodeStage(
+                    let decoded = try await executor.decodeStage(
                         executable,
                         response: recoveredResponse,
                         configuration: configuration
                     )
+                    await executor.notifySuccess(
+                        recoveredResponse,
+                        requestID: requestID,
+                        configuration: configuration
+                    )
+                    return decoded
                 } catch let error as NetworkError {
                     let fallbackFailure =
                         configuration.captureFailurePayload
                         ? error
                         : error.redactingFailurePayload()
                     executable.logger.log(error: fallbackFailure)
-                    await executor.notifyFailure(
-                        fallbackFailure,
-                        requestID: requestID,
-                        configuration: configuration
-                    )
                     throw fallbackFailure
                 } catch {
                     let mapped = Self.mapTransportError(error, startedAt: recoveryAttemptStartedAt)
@@ -138,18 +143,12 @@ package struct RequestExecutor {
                         ? mapped
                         : mapped.redactingFailurePayload()
                     executable.logger.log(error: fallbackFailure)
-                    await executor.notifyFailure(
-                        fallbackFailure,
-                        requestID: requestID,
-                        configuration: configuration
-                    )
                     throw fallbackFailure
                 }
             }
         } catch let error as NetworkError {
             let surfaced = configuration.captureFailurePayload ? error : error.redactingFailurePayload()
             executable.logger.log(error: surfaced)
-            await notifyFailure(surfaced, requestID: requestID, configuration: configuration)
             throw RequestExecutionFailure(error: surfaced, request: retryRequest ?? surfaced.underlyingRequest)
         } catch {
             let mapped = Self.mapTransportError(
@@ -158,7 +157,6 @@ package struct RequestExecutor {
             )
             let surfaced = configuration.captureFailurePayload ? mapped : mapped.redactingFailurePayload()
             executable.logger.log(error: surfaced)
-            await notifyFailure(surfaced, requestID: requestID, configuration: configuration)
             throw RequestExecutionFailure(error: surfaced, request: retryRequest ?? surfaced.underlyingRequest)
         }
     }
@@ -295,8 +293,7 @@ package struct RequestExecutor {
             executable,
             networkResponse: networkResponse,
             prepared: prepared,
-            configuration: configuration,
-            requestID: requestID
+            configuration: configuration
         )
     }
 
@@ -305,8 +302,7 @@ package struct RequestExecutor {
         _ executable: D,
         networkResponse initialResponse: Response,
         prepared: PreparedExecutionRequest,
-        configuration: NetworkConfiguration,
-        requestID: UUID
+        configuration: NetworkConfiguration
     ) async throws -> Response {
         var networkResponse = initialResponse
         NetworkOperationDeadlineContext.mark(.responseDecoding)
@@ -336,18 +332,6 @@ package struct RequestExecutor {
         }
 
         executable.logger.log(response: networkResponse, isError: false)
-        if !configuration.eventObservers.isEmpty {
-            await eventHub.publishTerminal(
-                .requestFinished(
-                    requestID: requestID,
-                    statusCode: networkResponse.statusCode,
-                    byteCount: networkResponse.data.count
-                ),
-                requestID: requestID,
-                observers: configuration.eventObservers
-            )
-        }
-
         return networkResponse
     }
 
@@ -377,5 +361,22 @@ package struct RequestExecutor {
             decoded = try await interceptor.didDecode(decoded, response: networkResponse)
         }
         return decoded
+    }
+
+    private func notifySuccess(
+        _ response: Response,
+        requestID: UUID,
+        configuration: NetworkConfiguration
+    ) async {
+        guard !configuration.eventObservers.isEmpty else { return }
+        await eventHub.publishTerminal(
+            .requestFinished(
+                requestID: requestID,
+                statusCode: response.statusCode,
+                byteCount: response.data.count
+            ),
+            requestID: requestID,
+            observers: configuration.eventObservers
+        )
     }
 }

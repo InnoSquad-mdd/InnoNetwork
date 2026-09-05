@@ -152,12 +152,12 @@ struct ObservabilityLifecycleTests {
             if case .requestFailed = event { return true }
             return false
         }.count
-        #expect(failedCount == 1)
+        #expect(failedCount == 0)
         let failureMessages = events.compactMap { event -> String? in
             guard case .requestFailed(_, _, let message) = event else { return nil }
             return message
         }
-        #expect(failureMessages == ["timeout.request"])
+        #expect(failureMessages.isEmpty)
 
         let finishedCount = events.filter { event in
             if case .requestFinished = event { return true }
