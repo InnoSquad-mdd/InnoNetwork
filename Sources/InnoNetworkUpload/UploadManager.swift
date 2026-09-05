@@ -39,13 +39,14 @@ public actor UploadManager {
     private var restorationWaiters: [CheckedContinuation<[UploadTask], Never>] = []
     private var restoredTaskIDs: Set<String> = []
     private var retryingTaskIDs: Set<String> = []
+    private var terminalTaskOrder: [String] = []
     private var isShutdown = false
     private let ownsBackgroundSessionIdentifier: Bool
 
     /// Creates a manager for the supplied upload domain.
     public init(configuration: UploadConfiguration = .safeDefaults()) throws(UploadError) {
         let ownsIdentifier = try Self.claimBackgroundSessionIdentifier(for: configuration)
-        let channel = UploadDelegateEventChannel()
+        let channel = UploadDelegateEventChannel(limits: configuration.resourcePolicy)
         let delegate = UploadSessionDelegate(channel: channel)
         let sessionConfiguration = configuration.makeURLSessionConfiguration()
         let session = URLSession(
@@ -68,7 +69,7 @@ public actor UploadManager {
         self.ownsBackgroundSessionIdentifier = ownsIdentifier
 
         let task = Task { [weak self] in
-            for await event in channel.stream {
+            while let event = await channel.next() {
                 guard let self else { return }
                 await self.process(event)
             }
@@ -97,7 +98,7 @@ public actor UploadManager {
         self.ownsBackgroundSessionIdentifier = false
 
         let task = Task { [weak self] in
-            for await event in channel.stream {
+            while let event = await channel.next() {
                 guard let self else { return }
                 await self.process(event)
             }
@@ -133,6 +134,9 @@ public actor UploadManager {
         }
         guard !isShutdown else { throw .managerShutdown }
         try Self.validate(request: request, fileURL: fileURL, configuration: configuration)
+        guard tasks.count < configuration.resourcePolicy.maximumTrackedTasks else {
+            throw .resourceLimitExceeded(limit: configuration.resourcePolicy.maximumTrackedTasks)
+        }
 
         guard let url = request.url else {
             throw .invalidRequest("Upload request URL disappeared after validation")
@@ -193,6 +197,10 @@ public actor UploadManager {
 
             let descriptor = UploadTaskDescription.decode(urlTask.taskDescription)
             let id = uniqueTaskID(descriptor.id)
+            guard tasks[id] != nil || tasks.count < configuration.resourcePolicy.maximumTrackedTasks else {
+                urlTask.cancel()
+                continue
+            }
             urlTask.taskDescription =
                 descriptor.intent == .paused
                 ? UploadTaskDescription.paused(id: id)
@@ -403,6 +411,7 @@ public actor UploadManager {
         uploadTasks[task.id]?.cancel()
         guard await task.fail(with: .cancelled) else { return }
         await eventHub.publishTerminalAndFinish(.failed(.cancelled), for: task.id)
+        recordTerminal(task.id)
         removeRuntime(for: task.id)
     }
 
@@ -427,9 +436,11 @@ public actor UploadManager {
         pendingDelegateEvents.removeAll()
         let active = Array(uploadTasks.values)
         for urlTask in active { urlTask.cancel() }
-        for task in tasks.values where !(await task.state.isTerminal) {
-            await task.fail(with: .managerShutdown)
-            await eventHub.publishTerminalAndFinish(.failed(.managerShutdown), for: task.id)
+        for task in Array(tasks.values) where !(await task.state.isTerminal) {
+            if await task.fail(with: .managerShutdown) {
+                await eventHub.publishTerminalAndFinish(.failed(.managerShutdown), for: task.id)
+                recordTerminal(task.id)
+            }
         }
         uploadTasks.removeAll()
         logicalIDsBySystemIdentifier.removeAll()
@@ -438,6 +449,7 @@ public actor UploadManager {
         forcedFailures.removeAll()
         idempotencyKeys.removeAll()
         retryingTaskIDs.removeAll()
+        terminalTaskOrder.removeAll()
         session.invalidateAndCancel()
         let invalidated = await invalidationBarrier.wait(timeout: invalidationTimeout)
         if !invalidated {
@@ -474,10 +486,18 @@ public actor UploadManager {
             await invalidationBarrier.complete()
         case .backgroundEventsFinished:
             backgroundCompletionStore.markEventsFinished()?()
+        case .overflow(let identifier, let byteLimit):
+            guard !retiredSystemIdentifiers.contains(identifier) else { return }
+            guard let task = task(forSystemIdentifier: identifier) else {
+                bufferPending(event, for: identifier)
+                return
+            }
+            uploadTasks[task.id]?.cancel()
+            await fail(task, with: .delegateBufferExceeded(limit: byteLimit))
         case .progress(let identifier, let bytesSent, let totalBytesSent, let expected):
             guard !retiredSystemIdentifiers.contains(identifier) else { return }
             guard let task = task(forSystemIdentifier: identifier) else {
-                pendingDelegateEvents[identifier, default: []].append(event)
+                bufferPending(event, for: identifier)
                 return
             }
             guard !(await task.state.isTerminal) else { return }
@@ -491,7 +511,7 @@ public actor UploadManager {
         case .data(let identifier, let data):
             guard !retiredSystemIdentifiers.contains(identifier) else { return }
             guard logicalIDsBySystemIdentifier[identifier] != nil else {
-                pendingDelegateEvents[identifier, default: []].append(event)
+                bufferPending(event, for: identifier)
                 return
             }
             if let task = task(forSystemIdentifier: identifier), await task.state.isTerminal {
@@ -519,9 +539,10 @@ public actor UploadManager {
                     let request = currentRequest ?? originalRequest,
                     let url = request.url
                 else {
-                    pendingDelegateEvents[identifier, default: []].append(event)
+                    bufferPending(event, for: identifier)
                     return
                 }
+                guard tasks.count < configuration.resourcePolicy.maximumTrackedTasks else { return }
                 let id = uniqueTaskID(UploadTaskDescription.decode(taskDescription).id)
                 let adopted = UploadTask(
                     id: id,
@@ -601,12 +622,14 @@ public actor UploadManager {
                     .failed(.unacceptableStatusCode(response.statusCode)),
                     for: task.id
                 )
+                recordTerminal(task.id)
                 removeRuntime(for: task.id)
                 return
             }
 
             guard await task.complete(with: receipt) else { return }
             await eventHub.publishTerminalAndFinish(.completed(receipt), for: task.id)
+            recordTerminal(task.id)
             removeRuntime(for: task.id)
         }
     }
@@ -614,11 +637,35 @@ public actor UploadManager {
     private func fail(_ task: UploadTask, with error: UploadError) async {
         guard await task.fail(with: error) else { return }
         await eventHub.publishTerminalAndFinish(.failed(error), for: task.id)
+        recordTerminal(task.id)
         removeRuntime(for: task.id)
     }
 
     private func task(forSystemIdentifier identifier: Int) -> UploadTask? {
         logicalIDsBySystemIdentifier[identifier].flatMap { tasks[$0] }
+    }
+
+    private func bufferPending(_ event: UploadDelegateEvent, for identifier: Int) {
+        if pendingDelegateEvents[identifier] == nil,
+            pendingDelegateEvents.count >= configuration.resourcePolicy.maximumPendingUnknownTasks
+        {
+            return
+        }
+        let maximumPerTask = configuration.resourcePolicy.maximumBufferedDelegateEvents
+        guard pendingDelegateEvents[identifier, default: []].count < maximumPerTask else { return }
+        pendingDelegateEvents[identifier, default: []].append(event)
+    }
+
+    private func recordTerminal(_ logicalID: String) {
+        terminalTaskOrder.removeAll { $0 == logicalID }
+        terminalTaskOrder.append(logicalID)
+        guard let maximum = configuration.resourcePolicy.maximumRetainedTerminalTasks else { return }
+        while terminalTaskOrder.count > maximum {
+            let evicted = terminalTaskOrder.removeFirst()
+            tasks.removeValue(forKey: evicted)
+            idempotencyKeys.removeValue(forKey: evicted)
+            restoredTaskIDs.remove(evicted)
+        }
     }
 
     private func removeRuntime(for logicalID: String) {

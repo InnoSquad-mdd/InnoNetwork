@@ -70,6 +70,8 @@ public enum UploadError: Error, Sendable, Equatable {
     case sensitiveHeadersRequireForeground([String])
     case duplicateSessionIdentifier(String)
     case responseTooLarge(limit: Int)
+    case delegateBufferExceeded(limit: Int)
+    case resourceLimitExceeded(limit: Int)
     case invalidResponse
     case unacceptableStatusCode(Int)
     case network(SendableUnderlyingError)
@@ -90,6 +92,10 @@ extension UploadError: LocalizedError {
             "Another upload manager already owns background session \(identifier)"
         case .responseTooLarge(let limit):
             "Upload response exceeded the \(limit)-byte buffer limit"
+        case .delegateBufferExceeded(let limit):
+            "Upload delegate buffering exceeded the \(limit)-byte limit"
+        case .resourceLimitExceeded(let limit):
+            "Upload manager reached its \(limit)-task resource limit"
         case .invalidResponse:
             "The upload did not return an HTTP response"
         case .unacceptableStatusCode(let statusCode):

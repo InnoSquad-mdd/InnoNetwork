@@ -1,6 +1,44 @@
 import Foundation
 import InnoNetwork
 
+/// Memory and lifecycle limits applied before upload delegate events enter
+/// the manager actor.
+public struct UploadResourcePolicy: Sendable, Equatable {
+    public let maximumTrackedTasks: Int
+    public let maximumBufferedDelegateEvents: Int
+    public let maximumBufferedDelegateBytes: Int
+    public let maximumPendingUnknownTasks: Int
+    public let maximumRetainedTerminalTasks: Int?
+
+    /// A conservative process-local resource profile.
+    public static let safeDefaults = UploadResourcePolicy(
+        maximumTrackedTasks: 256,
+        maximumBufferedDelegateEvents: 512,
+        maximumBufferedDelegateBytes: 2 * 1_048_576,
+        maximumPendingUnknownTasks: 64,
+        maximumRetainedTerminalTasks: nil
+    )
+
+    /// Creates an explicit upload resource profile.
+    ///
+    /// Pass `nil` for `maximumRetainedTerminalTasks` to preserve every
+    /// terminal task until the manager is released. Other limits must be
+    /// positive and are clamped to one when necessary.
+    public init(
+        maximumTrackedTasks: Int,
+        maximumBufferedDelegateEvents: Int,
+        maximumBufferedDelegateBytes: Int,
+        maximumPendingUnknownTasks: Int,
+        maximumRetainedTerminalTasks: Int? = nil
+    ) {
+        self.maximumTrackedTasks = max(1, maximumTrackedTasks)
+        self.maximumBufferedDelegateEvents = max(1, maximumBufferedDelegateEvents)
+        self.maximumBufferedDelegateBytes = max(1, maximumBufferedDelegateBytes)
+        self.maximumPendingUnknownTasks = max(1, maximumPendingUnknownTasks)
+        self.maximumRetainedTerminalTasks = maximumRetainedTerminalTasks.map { max(0, $0) }
+    }
+}
+
 /// Configures file-upload transport, response buffering, and event delivery.
 ///
 /// The configuration is an opaque command. Use ``safeDefaults()`` for a
@@ -22,6 +60,7 @@ public struct UploadConfiguration: Sendable {
     package let acceptableStatusCodes: Set<Int>
     package let eventDeliveryPolicy: EventDeliveryPolicy
     package let eventMetricsReporter: (any EventPipelineMetricsReporting)?
+    package let resourcePolicy: UploadResourcePolicy
 
     /// Creates the secure foreground configuration.
     ///
@@ -36,7 +75,8 @@ public struct UploadConfiguration: Sendable {
             maximumResponseBytes: 1_048_576,
             acceptableStatusCodes: Set(200...299),
             eventDeliveryPolicy: .default,
-            eventMetricsReporter: nil
+            eventMetricsReporter: nil,
+            resourcePolicy: .safeDefaults
         )
     }
 
@@ -46,7 +86,8 @@ public struct UploadConfiguration: Sendable {
         maximumResponseBytes: Int = 1_048_576,
         acceptableStatusCodes: Set<Int> = Set(200...299),
         eventDeliveryPolicy: EventDeliveryPolicy = .default,
-        eventMetricsReporter: (any EventPipelineMetricsReporting)? = nil
+        eventMetricsReporter: (any EventPipelineMetricsReporting)? = nil,
+        resourcePolicy: UploadResourcePolicy = .safeDefaults
     ) -> Self {
         Self(
             sessionMode: .foreground,
@@ -56,7 +97,8 @@ public struct UploadConfiguration: Sendable {
             maximumResponseBytes: max(0, maximumResponseBytes),
             acceptableStatusCodes: acceptableStatusCodes,
             eventDeliveryPolicy: eventDeliveryPolicy,
-            eventMetricsReporter: eventMetricsReporter
+            eventMetricsReporter: eventMetricsReporter,
+            resourcePolicy: resourcePolicy
         )
     }
 
@@ -73,7 +115,8 @@ public struct UploadConfiguration: Sendable {
         maximumResponseBytes: Int = 1_048_576,
         acceptableStatusCodes: Set<Int> = Set(200...299),
         eventDeliveryPolicy: EventDeliveryPolicy = .default,
-        eventMetricsReporter: (any EventPipelineMetricsReporting)? = nil
+        eventMetricsReporter: (any EventPipelineMetricsReporting)? = nil,
+        resourcePolicy: UploadResourcePolicy = .safeDefaults
     ) -> Self {
         Self(
             sessionMode: .background,
@@ -83,7 +126,8 @@ public struct UploadConfiguration: Sendable {
             maximumResponseBytes: max(0, maximumResponseBytes),
             acceptableStatusCodes: acceptableStatusCodes,
             eventDeliveryPolicy: eventDeliveryPolicy,
-            eventMetricsReporter: eventMetricsReporter
+            eventMetricsReporter: eventMetricsReporter,
+            resourcePolicy: resourcePolicy
         )
     }
 
