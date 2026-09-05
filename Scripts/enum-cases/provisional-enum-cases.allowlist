@@ -28,10 +28,15 @@ NetworkErrorCode.configurationInvalidRequest
 NetworkErrorCode.configurationOffline
 NetworkErrorCode.decoding
 NetworkErrorCode.nonHTTPResponse
+NetworkErrorCode.rateLimitQueueRejected
+NetworkErrorCode.rateLimitScopeRejected
 NetworkErrorCode.reachability
+NetworkErrorCode.requestAdmissionRejected
+NetworkErrorCode.requestAdmissionWaitExpired
 NetworkErrorCode.responseBodyLimitExceeded
 NetworkErrorCode.statusCode
 NetworkErrorCode.streamFrameTooLarge
+NetworkErrorCode.streamingPhaseTimeout
 NetworkErrorCode.timeout
 NetworkErrorCode.trustEvaluationFailed
 NetworkErrorCode.underlying
@@ -74,6 +79,7 @@ StreamingBufferingPolicy.unbounded
 StreamingResumePolicy.cursor
 StreamingResumePolicy.disabled
 StreamingResumePolicy.lastEventID
+StreamingResumePolicy.serverSentEvents
 
 TrustFailureReason.custom
 TrustFailureReason.hostNotPinned
