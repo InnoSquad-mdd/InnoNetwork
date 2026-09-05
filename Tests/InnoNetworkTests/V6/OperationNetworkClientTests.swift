@@ -325,7 +325,7 @@ struct OperationNetworkClientTests {
             deadline: NetworkOperationDeadline(after: .seconds(10))
         )
 
-        #expect(await session.waitUntilStarted())
+        await session.waitUntilStarted()
         #expect(await clock.waitForWaiters(count: 2))
         clock.advance(by: .seconds(1))
         let shortFailure = await failure(from: short)
@@ -398,23 +398,27 @@ private actor DeadlineFailingURLSession: URLSessionProtocol {
 
 private actor DeadlineBlockingURLSession: URLSessionProtocol {
     private var continuations: [CheckedContinuation<(Data, URLResponse), Error>] = []
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
     private(set) var requestCount = 0
 
     func data(for request: URLRequest) async throws -> (Data, URLResponse) {
         _ = request
         requestCount += 1
+        let pendingStarts = startWaiters
+        startWaiters.removeAll(keepingCapacity: false)
+        for waiter in pendingStarts {
+            waiter.resume()
+        }
         return try await withCheckedThrowingContinuation { continuation in
             continuations.append(continuation)
         }
     }
 
-    func waitUntilStarted() async -> Bool {
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: .seconds(1))
-        while requestCount == 0, clock.now < deadline {
-            try? await Task.sleep(for: .milliseconds(1))
+    func waitUntilStarted() async {
+        guard requestCount == 0 else { return }
+        await withCheckedContinuation { continuation in
+            startWaiters.append(continuation)
         }
-        return requestCount > 0
     }
 
     func succeed(with response: PreviewResponse) throws {

@@ -437,6 +437,8 @@ actor CancellationFirstURLSessionState {
     private var queue: [ResilienceQueuedHTTPResponse]
     private var requests: [URLRequest] = []
     private var cancellationCount = 0
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var cancellationWaiters: [CheckedContinuation<Void, Never>] = []
 
     init(queue: [ResilienceQueuedHTTPResponse]) {
         self.queue = queue
@@ -444,11 +446,35 @@ actor CancellationFirstURLSessionState {
 
     func recordAndShouldWaitForCancellation(_ request: URLRequest) -> Bool {
         requests.append(request)
+        let waiters = startWaiters
+        startWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
         return requests.count == 1
     }
 
     func recordCancellation() {
         cancellationCount += 1
+        let waiters = cancellationWaiters
+        cancellationWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    func waitUntilStarted() async {
+        guard requests.isEmpty else { return }
+        await withCheckedContinuation { continuation in
+            startWaiters.append(continuation)
+        }
+    }
+
+    func waitUntilCancelled() async {
+        guard cancellationCount == 0 else { return }
+        await withCheckedContinuation { continuation in
+            cancellationWaiters.append(continuation)
+        }
     }
 
     func dequeue() throws -> (Data, URLResponse) {
@@ -486,6 +512,14 @@ final class CancellationFirstURLSession: URLSessionProtocol, Sendable {
         get async {
             await state.cancelledRequestCount
         }
+    }
+
+    func waitUntilStarted() async {
+        await state.waitUntilStarted()
+    }
+
+    func waitUntilCancelled() async {
+        await state.waitUntilCancelled()
     }
 
     func data(for request: URLRequest) async throws -> (Data, URLResponse) {

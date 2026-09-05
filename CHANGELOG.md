@@ -67,6 +67,20 @@ that cut and are not part of the 6.0 contract.
 
 ### Fixed for 6.1.0
 
+- Half-open circuit-breaker probes bypass request coalescing so every granted
+  probe performs its own physical transport instead of joining an older
+  in-flight request.
+- Buffered requests recheck cancellation after every decoding interceptor,
+  including caller, cancellation-tag, and operation-handle cancellation.
+- Streaming total deadlines return promptly even when application response
+  interceptors do not cooperate with cancellation. Late transport, quota, and
+  stream-admission results are cancelled, refunded, or released.
+- Physical attempt spans use their own monotonically increasing index, so
+  authentication refresh replays and other repeated dispatches inside one
+  retry decision are exported as distinct child attempts.
+- Managed-upload retries compare the supplied HTTP method with the original
+  case-sensitive token exactly and reject case-only substitutions before
+  starting a replacement task.
 - Upload retries leave terminal-retention accounting before becoming active,
   remain addressable by manager controls while running, and honor caller
   cancellation before creating or resuming another system upload task.

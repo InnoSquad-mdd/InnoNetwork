@@ -241,7 +241,7 @@ extension ResiliencePolicyTests {
             session: session
         )
         let task = Task { try await client.request(ResilienceGetRequest()) }
-        try await waitUntil { await session.requestCount == 1 }
+        await session.waitUntilStarted()
 
         task.cancel()
 

@@ -278,7 +278,8 @@ Their supporting public values are `AdvancedRateLimitAlgorithm`,
   will remain available throughout 6.x. URLSession-backed execution fails
   before transport if Foundation cannot preserve a token's exact spelling;
   retry, redirect, cache, coalescing, and diagnostics never normalize method
-  case on the caller's behalf.
+  case on the caller's behalf. `UploadManager.retry(_:with:fromFile:)` also
+  requires an exact case-sensitive match with the original method token.
 - `ResponseBodyBufferingPolicy` — the default inline request path is
   streaming. Its `streaming(maxBytes:)` and `buffered(maxBytes:)` cases are
   the single source of truth for collection mode and byte ceiling.
@@ -307,7 +308,9 @@ Their supporting public values are `AdvancedRateLimitAlgorithm`,
   `Authorization` require both the caller's privacy opt-in and an RFC 9111
   permission directive (`public`, `must-revalidate`, or `s-maxage`). Core
   URLSession transports clear session-configured additional-header values on
-  cross-origin redirects while preserving them on same-origin hops.
+  cross-origin redirects while preserving them on same-origin hops. A granted
+  half-open probe always owns a fresh physical transport and never joins a
+  request-coalescing entry created before that probe was granted.
 - `NetworkConfigurationFailureReason` — typed payload for
   ``NetworkError/configuration(reason:)``. Carries
   `invalidBaseURL` / `invalidRequest` / `offline` cases. The standalone
@@ -340,6 +343,11 @@ Their supporting public values are `AdvancedRateLimitAlgorithm`,
   lifecycle events to semantic HTTP attributes. Event names and InnoNetwork
   extension attributes may gain additive cases while the exporter boundary
   remains vendor-neutral.
+- `NetworkSpanObserver` — `NetworkSpan.attemptIndex` is the zero-based physical
+  dispatch order within one logical request, independent of retry-policy
+  indexing. Authentication refresh replays and repeated custom-policy
+  dispatches therefore create distinct attempt spans; cache hits and
+  coalesced followers create none.
 - `RateLimitExecutionPolicy` — experimental cancellation-aware fixed-window
   admission around each transport attempt. Copies share one limiter; retry
   attempts consume capacity independently. Its scheduling algorithm may be
@@ -400,7 +408,8 @@ Their supporting public values are `AdvancedRateLimitAlgorithm`,
   extensions.
 - `DecodingInterceptor` — protocol may grow new optional hooks with
   default implementations as additional decode-boundary use cases
-  surface.
+  surface. Cancellation is rechecked after each `didDecode` hook, so a hook
+  cannot convert caller, tag, or operation cancellation into success.
 - `StreamingBufferingPolicy` — bounded buffering cases may gain additional
   policy knobs, but `stream(_:)` stays lossless and backpressured by default
   for 6.x. Explicit bounded buffers remain incompatible with
@@ -422,7 +431,9 @@ Their supporting public values are `AdvancedRateLimitAlgorithm`,
 - `stream(_:)` / `stream(_:bufferingPolicy:)` — every failure the returned
   ``StreamingOutputSequence`` finishes with is a `NetworkError`. Its iterator
   exposes typed `throws(NetworkError)` on every supported platform floor, so
-  callers do not need a cast to exhaustively switch over the failure.
+  callers do not need a cast to exhaustively switch over the failure. Total
+  deadlines do not await cancellation-noncooperative application callbacks;
+  executor-owned late transports and admission reservations are reclaimed.
 - `TraceContextInterceptor` and `W3CTraceContext` — W3C header propagation
   remains additive; future minors may add richer correlation helpers without
   changing `NetworkEvent` case shape.

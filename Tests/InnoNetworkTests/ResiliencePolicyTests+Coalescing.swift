@@ -244,17 +244,13 @@ extension ResiliencePolicyTests {
             try await client.request(ResilienceGetRequest())
         }
 
-        try await waitUntil {
-            await session.requestCount == 1
-        }
+        await session.waitUntilStarted()
         first.cancel()
         second.cancel()
 
         await expectCancelled(first)
         await expectCancelled(second)
-        try await waitUntil {
-            await session.cancelledRequestCount == 1
-        }
+        await session.waitUntilCancelled()
 
         let recovered = try await client.request(ResilienceGetRequest())
 
