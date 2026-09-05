@@ -130,6 +130,11 @@ public struct CircuitBreakerOpenError: Error, Sendable, Equatable, LocalizedErro
 }
 
 
+package struct CircuitBreakerProbe: Sendable, Equatable {
+    fileprivate let key: String
+    fileprivate let id: UUID
+}
+
 package actor CircuitBreakerRegistry {
     /// Idle state TTL: hosts that have not been touched for this duration are
     /// garbage-collected on the next access. Long-running clients with bursty
@@ -144,7 +149,7 @@ package actor CircuitBreakerRegistry {
     private enum Mode: Equatable {
         case closed(ClosedState)
         case open(openedAt: Date, until: Date, resetAfter: Duration)
-        case halfOpen(probeInFlight: Bool, successCount: Int, resetAfter: Duration)
+        case halfOpen(probeID: UUID?, successCount: Int, resetAfter: Duration)
     }
 
     private struct Entry {
@@ -159,14 +164,18 @@ package actor CircuitBreakerRegistry {
         self.clock = clock
     }
 
-    package func prepare(request: URLRequest, policy: CircuitBreakerPolicy?) throws {
-        guard policy != nil, let key = Self.hostKey(for: request) else { return }
+    @discardableResult
+    package func prepare(
+        request: URLRequest,
+        policy: CircuitBreakerPolicy?
+    ) throws -> CircuitBreakerProbe? {
+        guard policy != nil, let key = Self.hostKey(for: request) else { return nil }
         let now = clock.now()
         garbageCollect(now: now)
         let entry = states[key] ?? Entry(mode: .closed(ClosedState(window: [])), lastAccessAt: now)
         switch entry.mode {
         case .closed:
-            return
+            return nil
         case .open(let openedAt, let until, let resetAfter):
             // Defend against system-clock regression (NTP corrections, manual
             // timezone changes, leap-second walks). `until` was computed at
@@ -179,45 +188,65 @@ package actor CircuitBreakerRegistry {
             // outlived its monotone deadline.
             let elapsed = now.timeIntervalSince(openedAt)
             if elapsed < 0 || elapsed >= resetAfter.timeInterval || now >= until {
+                let probe = CircuitBreakerProbe(key: key, id: UUID())
                 states[key] = Entry(
-                    mode: .halfOpen(probeInFlight: true, successCount: 0, resetAfter: resetAfter),
+                    mode: .halfOpen(probeID: probe.id, successCount: 0, resetAfter: resetAfter),
                     lastAccessAt: now
                 )
-                return
+                return probe
             }
             throw NetworkError.underlying(
                 SendableUnderlyingError(CircuitBreakerOpenError(host: key, retryAfter: until.timeIntervalSince(now))),
                 nil
             )
-        case .halfOpen(let probeInFlight, let successCount, let resetAfter):
-            guard !probeInFlight else {
+        case .halfOpen(let probeID, let successCount, let resetAfter):
+            guard probeID == nil else {
                 throw NetworkError.underlying(
                     SendableUnderlyingError(CircuitBreakerOpenError(host: key, retryAfter: resetAfter.timeInterval)),
                     nil
                 )
             }
+            let probe = CircuitBreakerProbe(key: key, id: UUID())
             states[key] = Entry(
-                mode: .halfOpen(probeInFlight: true, successCount: successCount, resetAfter: resetAfter),
+                mode: .halfOpen(probeID: probe.id, successCount: successCount, resetAfter: resetAfter),
                 lastAccessAt: now
             )
+            return probe
         }
     }
 
-    package func recordSuccess(request: URLRequest, policy: CircuitBreakerPolicy?) {
+    package func recordSuccess(
+        request: URLRequest,
+        policy: CircuitBreakerPolicy?,
+        probe: CircuitBreakerProbe? = nil
+    ) {
         guard let policy, let key = Self.hostKey(for: request) else { return }
-        recordOutcome(key: key, isFailure: false, policy: policy)
+        recordOutcome(key: key, isFailure: false, policy: policy, probe: probe)
     }
 
-    package func recordFailure(request: URLRequest, policy: CircuitBreakerPolicy?, error: Error) {
+    package func recordFailure(
+        request: URLRequest,
+        policy: CircuitBreakerPolicy?,
+        error: Error,
+        probe: CircuitBreakerProbe? = nil
+    ) {
         guard let policy, let key = Self.hostKey(for: request) else { return }
-        guard isCountable(error: error, policy: policy) else { return }
-        recordOutcome(key: key, isFailure: true, policy: policy)
+        guard isCountable(error: error, policy: policy) else {
+            abandon(probe)
+            return
+        }
+        recordOutcome(key: key, isFailure: true, policy: policy, probe: probe)
     }
 
-    package func recordStatus(request: URLRequest, policy: CircuitBreakerPolicy?, statusCode: Int) {
+    package func recordStatus(
+        request: URLRequest,
+        policy: CircuitBreakerPolicy?,
+        statusCode: Int,
+        probe: CircuitBreakerProbe? = nil
+    ) {
         guard let policy, let key = Self.hostKey(for: request) else { return }
         if (500...599).contains(statusCode) {
-            recordOutcome(key: key, isFailure: true, policy: policy)
+            recordOutcome(key: key, isFailure: true, policy: policy, probe: probe)
         } else if (400...499).contains(statusCode) {
             // 4xx responses indicate a working transport with a client-side
             // semantic problem. They do not advance the rolling window in
@@ -225,25 +254,24 @@ package actor CircuitBreakerRegistry {
             // successes and follow the same configured hysteresis as 2xx/3xx
             // probes before fully closing the circuit.
             if case .halfOpen = states[key]?.mode {
-                recordOutcome(key: key, isFailure: false, policy: policy)
+                recordOutcome(key: key, isFailure: false, policy: policy, probe: probe)
             }
         } else {
             // 2xx/3xx and other non-error status families confirm the host is
             // healthy.
-            recordOutcome(key: key, isFailure: false, policy: policy)
+            recordOutcome(key: key, isFailure: false, policy: policy, probe: probe)
         }
     }
 
-    /// Releases a half-open probe slot when the probe is cancelled before it
-    /// can record success or failure. Closed-state failure counts are
-    /// preserved.
-    package func recordCancellation(request: URLRequest, policy: CircuitBreakerPolicy?) {
-        guard policy != nil, let key = Self.hostKey(for: request) else { return }
-        guard let entry = states[key] else { return }
+    /// Releases only the half-open slot owned by `probe`. A stale completion
+    /// cannot release a newer request's probe.
+    package func abandon(_ probe: CircuitBreakerProbe?) {
+        guard let probe, let entry = states[probe.key] else { return }
         switch entry.mode {
-        case .halfOpen(_, let successCount, let resetAfter):
-            states[key] = Entry(
-                mode: .halfOpen(probeInFlight: false, successCount: successCount, resetAfter: resetAfter),
+        case .halfOpen(let probeID, let successCount, let resetAfter):
+            guard probeID == probe.id else { return }
+            states[probe.key] = Entry(
+                mode: .halfOpen(probeID: nil, successCount: successCount, resetAfter: resetAfter),
                 lastAccessAt: clock.now()
             )
         case .closed, .open:
@@ -254,11 +282,17 @@ package actor CircuitBreakerRegistry {
         }
     }
 
-    private func recordOutcome(key: String, isFailure: Bool, policy: CircuitBreakerPolicy) {
+    private func recordOutcome(
+        key: String,
+        isFailure: Bool,
+        policy: CircuitBreakerPolicy,
+        probe: CircuitBreakerProbe?
+    ) {
         let now = clock.now()
         let mode = states[key]?.mode ?? .closed(ClosedState(window: []))
         switch mode {
         case .closed(var state):
+            guard probe == nil else { return }
             state.window.append(isFailure)
             if state.window.count > policy.windowSize {
                 state.window.removeFirst(state.window.count - policy.windowSize)
@@ -283,7 +317,8 @@ package actor CircuitBreakerRegistry {
             // this branch as a no-op so stale async completions cannot mutate
             // the open window.
             return
-        case .halfOpen(_, let successCount, let resetAfter):
+        case .halfOpen(let probeID, let successCount, let resetAfter):
+            guard probe?.key == key, probe?.id == probeID else { return }
             if isFailure {
                 let doubled = min(resetAfter.timeInterval * 2, policy.maxResetAfter.timeInterval)
                 let next = Duration.milliseconds(Int64((doubled * 1000).rounded()))
@@ -308,7 +343,7 @@ package actor CircuitBreakerRegistry {
                     // next probe can be admitted.
                     states[key] = Entry(
                         mode: .halfOpen(
-                            probeInFlight: false,
+                            probeID: nil,
                             successCount: updatedSuccess,
                             resetAfter: resetAfter
                         ),

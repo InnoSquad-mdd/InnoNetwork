@@ -117,11 +117,11 @@ struct CircuitBreakerRegistryHardeningTests {
         await registry.recordStatus(request: request, policy: policy, statusCode: 500)
 
         // First probe — admitted because resetAfter is .zero.
-        try await registry.prepare(request: request, policy: policy)
-        await registry.recordStatus(request: request, policy: policy, statusCode: 200)
+        let firstProbe = try await registry.prepare(request: request, policy: policy)
+        await registry.recordStatus(request: request, policy: policy, statusCode: 200, probe: firstProbe)
         // Still half-open after a single success: a second probe must be admitted.
-        try await registry.prepare(request: request, policy: policy)
-        await registry.recordStatus(request: request, policy: policy, statusCode: 200)
+        let secondProbe = try await registry.prepare(request: request, policy: policy)
+        await registry.recordStatus(request: request, policy: policy, statusCode: 200, probe: secondProbe)
 
         // After two successes the breaker is closed; further requests proceed.
         try await registry.prepare(request: request, policy: policy)
@@ -139,42 +139,43 @@ struct CircuitBreakerRegistryHardeningTests {
         let request = URLRequest(url: URL(string: "https://api.example.com/herd")!)
         await registry.recordStatus(request: request, policy: policy, statusCode: 500)
 
-        let results = await withTaskGroup(of: Bool.self) { group in
+        let results = await withTaskGroup(of: CircuitBreakerProbe?.self) { group in
             for _ in 0..<32 {
                 group.addTask {
                     do {
-                        try await registry.prepare(request: request, policy: policy)
-                        return true
+                        return try await registry.prepare(request: request, policy: policy)
                     } catch let error as NetworkError {
                         guard case .underlying(let underlying, _) = error,
                             underlying.domain == CircuitBreakerOpenError.errorDomain
                         else {
                             Issue.record("Expected CircuitBreakerOpenError, got \(error)")
-                            return false
+                            return nil
                         }
-                        return false
+                        return nil
                     } catch {
                         Issue.record("Expected NetworkError, got \(error)")
-                        return false
+                        return nil
                     }
                 }
             }
 
             var admitted = 0
             var rejected = 0
+            var admittedProbe: CircuitBreakerProbe?
             for await result in group {
-                if result {
+                if let result {
                     admitted += 1
+                    admittedProbe = result
                 } else {
                     rejected += 1
                 }
             }
-            return (admitted, rejected)
+            return (admitted, rejected, admittedProbe)
         }
 
         #expect(results.0 == 1)
         #expect(results.1 == 31)
-        await registry.recordStatus(request: request, policy: policy, statusCode: 200)
+        await registry.recordStatus(request: request, policy: policy, statusCode: 200, probe: results.2)
         try await registry.prepare(request: request, policy: policy)
     }
 
@@ -191,18 +192,18 @@ struct CircuitBreakerRegistryHardeningTests {
         let request = URLRequest(url: URL(string: "https://api.example.com/x")!)
 
         await registry.recordStatus(request: request, policy: policy, statusCode: 500)
-        try await registry.prepare(request: request, policy: policy)
+        var probe = try await registry.prepare(request: request, policy: policy)
         for statusCode in [404, 401] {
-            await registry.recordStatus(request: request, policy: policy, statusCode: statusCode)
+            await registry.recordStatus(request: request, policy: policy, statusCode: statusCode, probe: probe)
 
             // The healthy probe releases its slot, but the circuit stays
             // half-open until the configured success threshold is reached.
-            try await registry.prepare(request: request, policy: policy)
+            probe = try await registry.prepare(request: request, policy: policy)
             await #expect(throws: NetworkError.self) {
                 try await registry.prepare(request: request, policy: policy)
             }
         }
-        await registry.recordStatus(request: request, policy: policy, statusCode: 422)
+        await registry.recordStatus(request: request, policy: policy, statusCode: 422, probe: probe)
 
         // The third transport-health success closes the circuit, so prepares
         // no longer reserve a single half-open probe slot.
@@ -223,16 +224,16 @@ struct CircuitBreakerRegistryHardeningTests {
         let request = URLRequest(url: URL(string: "https://api.example.com/x")!)
 
         await registry.recordStatus(request: request, policy: policy, statusCode: 500)
-        try await registry.prepare(request: request, policy: policy)
+        let firstProbe = try await registry.prepare(request: request, policy: policy)
 
-        await registry.recordStatus(request: request, policy: policy, statusCode: 404)
-        try await registry.prepare(request: request, policy: policy)
-        await registry.recordStatus(request: request, policy: policy, statusCode: 204)
-        try await registry.prepare(request: request, policy: policy)
+        await registry.recordStatus(request: request, policy: policy, statusCode: 404, probe: firstProbe)
+        let secondProbe = try await registry.prepare(request: request, policy: policy)
+        await registry.recordStatus(request: request, policy: policy, statusCode: 204, probe: secondProbe)
+        let thirdProbe = try await registry.prepare(request: request, policy: policy)
 
         // The two status families contribute to the same healthy-probe count;
         // the third success closes the circuit.
-        await registry.recordStatus(request: request, policy: policy, statusCode: 304)
+        await registry.recordStatus(request: request, policy: policy, statusCode: 304, probe: thirdProbe)
         try await registry.prepare(request: request, policy: policy)
         try await registry.prepare(request: request, policy: policy)
     }
@@ -262,13 +263,78 @@ struct CircuitBreakerRegistryHardeningTests {
         let request = URLRequest(url: URL(string: "https://api.example.com/x")!)
 
         await registry.recordStatus(request: request, policy: policy, statusCode: 500)
-        await registry.recordCancellation(request: request, policy: policy)
+        await registry.abandon(nil)
         // The window must still hold the prior failure; one more 500 trips.
         await registry.recordStatus(request: request, policy: policy, statusCode: 500)
 
         await #expect(throws: NetworkError.self) {
             try await registry.prepare(request: request, policy: policy)
         }
+    }
+
+    @Test("A stale probe cannot release a newer half-open probe")
+    func staleProbeCannotReleaseCurrentOwner() async throws {
+        let registry = CircuitBreakerRegistry()
+        let policy = CircuitBreakerPolicy(failureThreshold: 1, windowSize: 1, resetAfter: .zero)
+        let request = URLRequest(url: URL(string: "https://api.example.com/x")!)
+        await registry.recordStatus(request: request, policy: policy, statusCode: 500)
+
+        let staleProbe = try #require(try await registry.prepare(request: request, policy: policy))
+        await registry.abandon(staleProbe)
+        let currentProbe = try #require(try await registry.prepare(request: request, policy: policy))
+
+        await registry.abandon(staleProbe)
+        await #expect(throws: NetworkError.self) {
+            _ = try await registry.prepare(request: request, policy: policy)
+        }
+
+        await registry.recordStatus(
+            request: request,
+            policy: policy,
+            statusCode: 200,
+            probe: currentProbe
+        )
+        _ = try await registry.prepare(request: request, policy: policy)
+    }
+
+    @Test("A local admission rejection releases its half-open probe")
+    func localAdmissionRejectionReleasesProbe() async throws {
+        let policy = CircuitBreakerPolicy(failureThreshold: 1, windowSize: 1, resetAfter: .zero)
+        let configuration = NetworkConfiguration(
+            baseURL: URL(string: "https://api.example.com")!,
+            networkMonitor: nil,
+            circuitBreakerPolicy: policy,
+            requestAdmissionPolicy: RequestAdmissionPolicy(
+                maximumConcurrentRequests: 1,
+                maximumPendingRequests: 0
+            )
+        )
+        let runtime = RequestExecutionRuntime(configuration: configuration, inFlight: InFlightRegistry())
+        let eventHub = NetworkEventHub()
+        let executor = RequestExecutor(session: MockURLSession(), eventHub: eventHub)
+        let request = URLRequest(url: URL(string: "https://api.example.com/x")!)
+        let admission = try #require(runtime.requestAdmission)
+        let heldGrant = try await admission.acquire(for: request)
+        await runtime.circuitBreakers.recordStatus(request: request, policy: policy, statusCode: 500)
+
+        await #expect(throws: NetworkError.self) {
+            _ = try await executor.performTransportResult(
+                request: request,
+                identityRequest: request,
+                bodySource: .inline,
+                configuration: configuration,
+                context: NetworkRequestContext(),
+                runtime: runtime,
+                allowsRequestCoalescing: false
+            )
+        }
+        await admission.release(scope: heldGrant.scope)
+
+        let recoveredProbe = try await runtime.circuitBreakers.prepare(request: request, policy: policy)
+        #expect(recoveredProbe != nil)
+        await runtime.circuitBreakers.abandon(recoveredProbe)
+        await eventHub.shutdown()
+        await runtime.shutdown()
     }
 
     @Test("DNS lookup failure remains a countable underlying transport failure")

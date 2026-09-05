@@ -63,13 +63,13 @@ extension RequestExecutor {
         runtime: RequestExecutionRuntime,
         allowsRequestCoalescing: Bool
     ) async throws -> TransportResult {
-        try await runtime.circuitBreakers.prepare(
+        let circuitProbe = try await runtime.circuitBreakers.prepare(
             request: identityRequest,
             policy: configuration.circuitBreakerPolicy
         )
 
-        // `prepare()` may have flipped a half-open probe slot to
-        // `probeInFlight: true`. The await on `refreshLaneIfInProgress` and
+        // `prepare()` may have returned ownership of a half-open probe. The
+        // await on `refreshLaneIfInProgress` and
         // the coalescer dispatch below are both cancellation points; if the
         // outer task is cancelled before transport runs, no `recordX` would
         // fire and the probe slot would stay held until GC. Wrap the rest
@@ -105,7 +105,8 @@ extension RequestExecutor {
                         configuration: configuration,
                         context: context,
                         runtime: runtime,
-                        policy: configuration.circuitBreakerPolicy
+                        policy: configuration.circuitBreakerPolicy,
+                        circuitProbe: circuitProbe
                     )
                 }
             }
@@ -117,7 +118,8 @@ extension RequestExecutor {
                 configuration: configuration,
                 context: context,
                 runtime: runtime,
-                policy: configuration.circuitBreakerPolicy
+                policy: configuration.circuitBreakerPolicy,
+                circuitProbe: circuitProbe
             )
         } catch let handled as CircuitBreakerHandledError {
             // Inner already recorded (cancellation OR failure); just unwrap
@@ -125,24 +127,10 @@ extension RequestExecutor {
             // `NetworkError.isCancellation`) never observe the sentinel.
             throw handled.underlying
         } catch {
-            // Anything reaching here did NOT pass through
-            // `transportAndRecordCircuit`'s catch arm — typed throws from
-            // `prepare()` (e.g. `circuitBreakerOpen`) and pre-transport
-            // cancellation both land here. Only cancellation needs to
-            // release the half-open probe slot; other typed errors are
-            // owned by `prepare()` and should propagate unchanged. A rare
-            // race where a coalescer-follower self-cancels while the
-            // leader is still transporting can lead to two
-            // `recordCancellation` calls for the same host key — the
-            // operation is idempotent on `halfOpen(probeInFlight: true →
-            // false)` and a no-op in `closed`/`open`, so this absorbs
-            // safely without state corruption.
-            if NetworkError.isCancellation(error) {
-                await runtime.circuitBreakers.recordCancellation(
-                    request: identityRequest,
-                    policy: configuration.circuitBreakerPolicy
-                )
-            }
+            // The transport did not produce an outcome. Release only this
+            // request's half-open probe for local admission/rate-limit
+            // failures, coalescer errors, and cancellation alike.
+            await runtime.circuitBreakers.abandon(circuitProbe)
             throw error
         }
     }
@@ -154,7 +142,8 @@ extension RequestExecutor {
         configuration: NetworkConfiguration,
         context: NetworkRequestContext,
         runtime: RequestExecutionRuntime,
-        policy: CircuitBreakerPolicy?
+        policy: CircuitBreakerPolicy?,
+        circuitProbe: CircuitBreakerProbe?
     ) async throws -> TransportResult {
         let rateReservation: RateLimitReservation?
         do {
@@ -315,7 +304,8 @@ extension RequestExecutor {
             await runtime.circuitBreakers.recordStatus(
                 request: identityRequest,
                 policy: policy,
-                statusCode: result.response.statusCode
+                statusCode: result.response.statusCode,
+                probe: circuitProbe
             )
             if let admissionGrant {
                 await runtime.requestAdmission?.release(scope: admissionGrant.scope)
@@ -327,12 +317,13 @@ extension RequestExecutor {
                 await runtime.requestAdmission?.release(scope: admissionGrant.scope)
             }
             if NetworkError.isCancellation(error) {
-                await runtime.circuitBreakers.recordCancellation(request: identityRequest, policy: policy)
+                await runtime.circuitBreakers.abandon(circuitProbe)
             } else {
                 await runtime.circuitBreakers.recordFailure(
                     request: identityRequest,
                     policy: policy,
-                    error: error
+                    error: error,
+                    probe: circuitProbe
                 )
             }
             // Tag the error so `runWithCircuitBreaker`'s outer catch knows

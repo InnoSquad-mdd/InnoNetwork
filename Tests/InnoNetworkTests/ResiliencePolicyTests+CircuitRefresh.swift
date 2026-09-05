@@ -252,10 +252,10 @@ extension ResiliencePolicyTests {
         let request = URLRequest(url: URL(string: "https://api.example.com/users/1")!)
 
         await registry.recordStatus(request: request, policy: policy, statusCode: 500)
-        try await registry.prepare(request: request, policy: policy)
-        await registry.recordCancellation(request: request, policy: policy)
+        let probe = try await registry.prepare(request: request, policy: policy)
+        await registry.abandon(probe)
 
-        try await registry.prepare(request: request, policy: policy)
+        _ = try await registry.prepare(request: request, policy: policy)
     }
 
     @Test("401 does not open circuit breaker")
@@ -289,12 +289,12 @@ extension ResiliencePolicyTests {
         let request = URLRequest(url: URL(string: "https://api.example.com/users/1")!)
 
         await registry.recordStatus(request: request, policy: policy, statusCode: 500)
-        // prepare(...) transitions open → halfOpen(probeInFlight: true) once
+        // prepare(...) transitions open to half-open and returns its probe.
         // resetAfter (here .zero) elapses.
-        try await registry.prepare(request: request, policy: policy)
+        let probe = try await registry.prepare(request: request, policy: policy)
         // The probe came back with 404 — semantic failure, but the transport
         // worked. The slot must be released so subsequent traffic is admitted.
-        await registry.recordStatus(request: request, policy: policy, statusCode: 404)
+        await registry.recordStatus(request: request, policy: policy, statusCode: 404, probe: probe)
 
         try await registry.prepare(request: request, policy: policy)
     }
