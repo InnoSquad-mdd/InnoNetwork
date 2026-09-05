@@ -5,7 +5,7 @@ import os
 
 @testable import InnoNetwork
 
-@Suite("Streaming Timeout Policy Tests", .serialized)
+@Suite("Streaming Timeout Policy Tests", .serialized, .timeLimit(.minutes(1)))
 struct StreamingTimeoutPolicyTests {
     @Test("First-event budget cancels an accepted response exactly once")
     func firstEventTimeout() async throws {
@@ -210,6 +210,51 @@ struct StreamingTimeoutPolicyTests {
         await runtime.shutdown()
     }
 
+    @Test("Total timeout surfaces before a noncooperative interceptor returns")
+    func totalTimeoutDoesNotWaitForInterceptorCompletion() async throws {
+        let clock = TestClock()
+        let gate = HeldStreamingInterceptorGate()
+        let session = MockURLSession()
+        let configuration = NetworkConfiguration(
+            baseURL: URL(string: "https://example.com")!,
+            networkMonitor: nil,
+            requestInterceptors: [HeldStreamingRequestInterceptor(gate: gate)]
+        )
+        let runtime = RequestExecutionRuntime(
+            configuration: configuration,
+            inFlight: InFlightRegistry(),
+            clock: clock
+        )
+        let eventHub = NetworkEventHub()
+        let (sequence, sink) = StreamingOutputSequence<String>.make(buffering: .backpressured)
+        let executor = StreamingExecutor(session: session, eventHub: eventHub)
+        let execution = Task {
+            await executor.run(
+                request: TotalDeadlineStream(),
+                requestID: UUID(),
+                configuration: configuration,
+                executionRuntime: runtime,
+                sink: sink
+            )
+        }
+
+        await gate.waitUntilEntered()
+        #expect(await clock.waitForWaiters(count: 1))
+        clock.advance(by: .seconds(1))
+        await gate.waitUntilCancelled()
+
+        var iterator = sequence.makeAsyncIterator()
+        await #expect(throws: NetworkError.self) {
+            _ = try await iterator.next()
+        }
+        await execution.value
+        #expect(session.capturedRequestsInOrder.isEmpty)
+
+        await gate.release()
+        await eventHub.shutdown()
+        await runtime.shutdown()
+    }
+
     private func streamingTimeoutConfiguration(
         monitor: any NetworkMonitoring
     ) -> NetworkConfiguration {
@@ -225,6 +270,47 @@ struct StreamingTimeoutPolicyTests {
             ),
             networkMonitor: monitor
         )
+    }
+}
+
+private actor HeldStreamingInterceptorGate {
+    let entered = AsyncStream<Void>.makeStream()
+    let cancelled = AsyncStream<Void>.makeStream()
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                self.continuation = continuation
+                entered.continuation.yield()
+            }
+        } onCancel: {
+            cancelled.continuation.yield()
+        }
+    }
+
+    func waitUntilEntered() async {
+        var iterator = entered.stream.makeAsyncIterator()
+        _ = await iterator.next()
+    }
+
+    func waitUntilCancelled() async {
+        var iterator = cancelled.stream.makeAsyncIterator()
+        _ = await iterator.next()
+    }
+
+    func release() {
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+private struct HeldStreamingRequestInterceptor: RequestInterceptor {
+    let gate: HeldStreamingInterceptorGate
+
+    func adapt(_ request: URLRequest) async throws -> URLRequest {
+        await gate.wait()
+        return request
     }
 }
 

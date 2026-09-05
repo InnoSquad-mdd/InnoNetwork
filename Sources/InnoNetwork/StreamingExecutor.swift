@@ -1,5 +1,33 @@
 import Foundation
 
+private actor StreamingTimeoutResultGate<Value: Sendable> {
+    private var result: Result<Value, any Error>?
+    private var waiters: [CheckedContinuation<Result<Value, any Error>, Never>] = []
+
+    func wait() async -> Result<Value, any Error> {
+        if let result { return result }
+        return await withCheckedContinuation { continuation in
+            if let result {
+                continuation.resume(returning: result)
+            } else {
+                waiters.append(continuation)
+            }
+        }
+    }
+
+    @discardableResult
+    func resolve(_ result: Result<Value, any Error>) -> Bool {
+        guard self.result == nil else { return false }
+        self.result = result
+        let pending = waiters
+        waiters.removeAll(keepingCapacity: false)
+        for waiter in pending {
+            waiter.resume(returning: result)
+        }
+        return true
+    }
+}
+
 /// Executes a ``StreamingAPIDefinition`` request as a long-lived line-delimited
 /// stream. Owns per-attempt request preparation, line iteration, optional
 /// Last-Event-ID resume, response interceptor application, and lifecycle event
@@ -385,10 +413,12 @@ package struct StreamingExecutor: Sendable {
                         phaseBudget: timeoutPolicy.firstResponse,
                         totalBudget: timeoutPolicy.total,
                         logicalStart: logicalStart,
-                        clock: executionRuntime.clock
-                    ) {
-                        try await session.bytes(for: transportRequest, context: context)
-                    }
+                        clock: executionRuntime.clock,
+                        onDiscarded: { result in result.0.task.cancel() },
+                        operation: {
+                            try await session.bytes(for: transportRequest, context: context)
+                        }
+                    )
                 } catch {
                     throw StreamingAttemptFailure(
                         error: error,
@@ -514,10 +544,16 @@ package struct StreamingExecutor: Sendable {
                 phaseBudget: nil,
                 totalBudget: totalBudget,
                 logicalStart: logicalStart,
-                clock: executionRuntime.clock
-            ) {
-                try await executionRuntime.rateLimit?.reserve(for: request)
-            }
+                clock: executionRuntime.clock,
+                onDiscarded: { reservation in
+                    if let reservation {
+                        await executionRuntime.rateLimit?.refund(reservation)
+                    }
+                },
+                operation: {
+                    try await executionRuntime.rateLimit?.reserve(for: request)
+                }
+            )
         } catch RateLimitAdmissionFailure.queueFull {
             throw NetworkError.underlying(
                 SendableUnderlyingError(
@@ -562,10 +598,16 @@ package struct StreamingExecutor: Sendable {
                     phaseBudget: nil,
                     totalBudget: totalBudget,
                     logicalStart: logicalStart,
-                    clock: executionRuntime.clock
-                ) {
-                    try await executionRuntime.streamAdmission?.acquire(for: request)
-                }
+                    clock: executionRuntime.clock,
+                    onDiscarded: { grant in
+                        if let grant {
+                            await executionRuntime.streamAdmission?.release(scope: grant.scope)
+                        }
+                    },
+                    operation: {
+                        try await executionRuntime.streamAdmission?.acquire(for: request)
+                    }
+                )
                 if let grant {
                     await eventHub.publish(
                         .decision(
@@ -921,6 +963,7 @@ package struct StreamingExecutor: Sendable {
         totalBudget: Duration?,
         logicalStart: Duration,
         clock: any InnoNetworkClock,
+        onDiscarded: @escaping @Sendable (Value) async -> Void = { _ in },
         operation: @escaping @Sendable () async throws -> Value
     ) async throws -> Value {
         var budgets: [(Duration, StreamingTimeoutPhase)] = []
@@ -934,16 +977,43 @@ package struct StreamingExecutor: Sendable {
         }
         guard selected.0 > .zero else { throw selected.1.error }
 
-        return try await withThrowingTaskGroup(of: Value.self) { group in
-            group.addTask { try await operation() }
-            group.addTask {
-                try await clock.sleep(for: selected.0)
-                throw selected.1.error
+        // A structured task group cannot return until every child finishes,
+        // even after cancelling the losing child. Interceptors and callback
+        // bridges are allowed to observe cancellation without returning
+        // immediately, so use an explicit single-result gate: the caller gets
+        // the deadline promptly while the losing task is cancelled and any
+        // resource it acquires late is discarded by the supplied cleanup.
+        let gate = StreamingTimeoutResultGate<Value>()
+        let operationTask = Task {
+            do {
+                let value = try await operation()
+                if !(await gate.resolve(.success(value))) {
+                    await onDiscarded(value)
+                }
+            } catch {
+                _ = await gate.resolve(.failure(error))
             }
-            defer { group.cancelAll() }
-            guard let value = try await group.next() else { throw NetworkError.cancelled }
-            return value
         }
+        let timeoutTask = Task {
+            do {
+                try await clock.sleep(for: selected.0)
+            } catch {
+                return
+            }
+            _ = await gate.resolve(.failure(selected.1.error))
+        }
+        let result = await withTaskCancellationHandler {
+            await gate.wait()
+        } onCancel: {
+            operationTask.cancel()
+            timeoutTask.cancel()
+            Task {
+                _ = await gate.resolve(.failure(CancellationError()))
+            }
+        }
+        operationTask.cancel()
+        timeoutTask.cancel()
+        return try result.get()
     }
 
     private func boundedNetworkChangeTimeout(
