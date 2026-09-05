@@ -89,7 +89,13 @@ extension RequestExecutor {
             // `Authorization` it is the actual safeguard.
             let refreshLane: UUID? = await refreshLaneIfInProgress(coordinator: runtime.refreshCoordinator)
 
-            if allowsRequestCoalescing,
+            // A half-open probe is ownership of a real transport outcome. It
+            // must not join a transport that started while the circuit was
+            // closed because that older transport has no matching probe to
+            // release or complete. Keep ordinary closed-state coalescing, but
+            // give recovery probes their own physical dispatch.
+            if circuitProbe == nil,
+                allowsRequestCoalescing,
                 case .inline = bodySource,
                 let key = RequestDedupKey(
                     request: identityRequest,

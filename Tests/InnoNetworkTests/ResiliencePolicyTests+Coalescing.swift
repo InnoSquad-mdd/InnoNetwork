@@ -5,7 +5,102 @@ import os
 
 @testable import InnoNetwork
 
+private actor HalfOpenCoalescingSession: URLSessionProtocol {
+    private var callCount = 0
+    private var isReleased = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        callCount += 1
+        if !isReleased {
+            await withCheckedContinuation { continuation in
+                waiters.append(continuation)
+            }
+        }
+        return (
+            Data(),
+            HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+        )
+    }
+
+    func release() {
+        isReleased = true
+        let pending = waiters
+        waiters.removeAll(keepingCapacity: false)
+        for waiter in pending {
+            waiter.resume()
+        }
+    }
+
+    var requestCount: Int { callCount }
+}
+
 extension ResiliencePolicyTests {
+    @Test("Half-open probes do not join transports admitted before the circuit opened")
+    func halfOpenProbeUsesIndependentTransport() async throws {
+        let clock = TestClock()
+        let session = HalfOpenCoalescingSession()
+        let policy = CircuitBreakerPolicy(
+            failureThreshold: 1,
+            windowSize: 1,
+            resetAfter: .seconds(1)
+        )
+        let configuration = makeTestNetworkConfiguration(
+            baseURL: "https://api.example.com",
+            requestCoalescingPolicy: .getOnly,
+            circuitBreakerPolicy: policy
+        )
+        let runtime = RequestExecutionRuntime(
+            configuration: configuration,
+            inFlight: InFlightRegistry(),
+            clock: clock
+        )
+        let eventHub = NetworkEventHub()
+        let executor = RequestExecutor(session: session, eventHub: eventHub)
+        let request = URLRequest(url: URL(string: "https://api.example.com/users/1")!)
+
+        let execute = { @Sendable in
+            try await executor.performTransportResult(
+                request: request,
+                identityRequest: request,
+                bodySource: .inline,
+                configuration: configuration,
+                context: NetworkRequestContext(),
+                runtime: runtime,
+                allowsRequestCoalescing: true
+            )
+        }
+
+        let original = Task { try await execute() }
+        #expect(await eventHubWaitForCondition(timeout: 1) {
+            await session.requestCount == 1
+        })
+
+        await runtime.circuitBreakers.recordStatus(
+            request: request,
+            policy: policy,
+            statusCode: 500
+        )
+        clock.advance(by: .seconds(1))
+        let probe = Task { try await execute() }
+
+        #expect(await eventHubWaitForCondition(timeout: 1) {
+            await session.requestCount == 2
+        })
+        await session.release()
+        _ = try await original.value
+        _ = try await probe.value
+
+        #expect(try await runtime.circuitBreakers.prepare(request: request, policy: policy) == nil)
+        await eventHub.shutdown()
+        await runtime.shutdown()
+    }
+
     @Test("GET coalescing shares one transport")
     func getCoalescingSharesTransport() async throws {
         let session = try ResilienceSequenceURLSession(
