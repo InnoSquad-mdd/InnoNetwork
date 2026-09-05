@@ -73,9 +73,12 @@ public struct OperationNetworkClient<Base: NetworkClient>: Sendable {
         let task = Task { [base] in
             continuation.yield(.started(id: id))
             let tracker = NetworkOperationDeadlineTracker()
+            // Establish the initial stage before the request and deadline
+            // tasks race. A zero-duration deadline may otherwise resolve the
+            // gate before the request task reaches its first instruction.
+            tracker.mark(.requestPreparation)
             let requestTask = Task<Result<Request.APIResponse, NetworkFailure>, Never> {
                 await NetworkOperationDeadlineContext.$tracker.withValue(tracker) {
-                    tracker.mark(.requestPreparation)
                     do {
                         let value = try await base.request(request, tag: tag)
                         return .success(value)
