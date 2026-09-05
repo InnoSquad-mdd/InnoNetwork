@@ -337,7 +337,7 @@ package struct RequestExecutor {
 
         executable.logger.log(response: networkResponse, isError: false)
         if !configuration.eventObservers.isEmpty {
-            await eventHub.publish(
+            await eventHub.publishTerminal(
                 .requestFinished(
                     requestID: requestID,
                     statusCode: networkResponse.statusCode,

@@ -326,7 +326,7 @@ extension EventHubTests {
             observers: [observer]
         )
         await gate.waitUntilStarted()
-        await hub.publish(
+        await hub.publishTerminal(
             .requestFinished(requestID: requestID, statusCode: 200, byteCount: 0),
             requestID: requestID,
             observers: [observer]
@@ -378,7 +378,7 @@ extension EventHubTests {
             requestID: requestID,
             observers: [observer]
         )
-        await hub.publish(
+        await hub.publishTerminal(
             .requestFinished(requestID: requestID, statusCode: 200, byteCount: 4),
             requestID: requestID,
             observers: [observer]

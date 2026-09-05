@@ -49,7 +49,7 @@ package struct StreamingExecutor: Sendable {
         } catch {
             let mapped = Self.mapTransportError(error, startedAt: nil)
             let nsError = mapped as NSError
-            await eventHub.publish(
+            await eventHub.publishTerminal(
                 .requestFailed(
                     requestID: requestID,
                     errorCode: nsError.code,
@@ -77,7 +77,7 @@ package struct StreamingExecutor: Sendable {
         } catch {
             let mapped = Self.mapTransportError(error, startedAt: nil)
             let nsError = mapped as NSError
-            await eventHub.publish(
+            await eventHub.publishTerminal(
                 .requestFailed(
                     requestID: requestID,
                     errorCode: nsError.code,
@@ -167,7 +167,7 @@ package struct StreamingExecutor: Sendable {
                         continue
                     }
                     // Stream completed cleanly.
-                    await eventHub.publish(
+                    await eventHub.publishTerminal(
                         .requestFinished(
                             requestID: requestID,
                             statusCode: networkResponse.statusCode,
@@ -203,7 +203,7 @@ package struct StreamingExecutor: Sendable {
                     )
                     let surfaced = configuration.captureFailurePayload ? mapped : mapped.redactingFailurePayload()
                     let nsError = surfaced as NSError
-                    await eventHub.publish(
+                    await eventHub.publishTerminal(
                         .requestFailed(
                             requestID: requestID,
                             errorCode: nsError.code,
@@ -223,7 +223,7 @@ package struct StreamingExecutor: Sendable {
                 )
                 let surfaced = configuration.captureFailurePayload ? mapped : mapped.redactingFailurePayload()
                 let nsError = surfaced as NSError
-                await eventHub.publish(
+                await eventHub.publishTerminal(
                     .requestFailed(
                         requestID: requestID,
                         errorCode: nsError.code,

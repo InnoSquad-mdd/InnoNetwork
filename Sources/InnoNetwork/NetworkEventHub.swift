@@ -5,6 +5,7 @@ package actor NetworkEventHub {
         let event: NetworkEvent
         let observers: [any NetworkEventObserving]
         let enqueuedAt: Date
+        let guaranteesAdmission: Bool
     }
 
     private struct PartitionState {
@@ -73,17 +74,38 @@ package actor NetworkEventHub {
     /// Enqueues `event` for delivery to `observers` partitioned by `requestID`.
     ///
     /// Observers are bound at publish time, so this hub does not retain
-    /// historical events for late subscribers. A terminal request outcome
-    /// atomically closes the active partition; ``finish(requestID:)`` joins
-    /// its queue handoff. Publishes serialized while the partition retires are
+    /// historical events for late subscribers. ``finish(requestID:)`` closes
+    /// the active partition, so publishes serialized while it retires are
     /// dropped. Request IDs are one-use lifecycle identifiers and must not be
     /// reused after finish; the hub discards closed partition tombstones once
     /// observer-queue handoff completes.
     package func publish(_ event: NetworkEvent, requestID: UUID, observers: [any NetworkEventObserving]) {
+        enqueue(event, requestID: requestID, observers: observers, guaranteesAdmission: false)
+    }
+
+    /// Guarantees admission of the authoritative terminal request outcome and
+    /// atomically seals its partition before a late publisher can displace it.
+    package func publishTerminal(
+        _ event: NetworkEvent,
+        requestID: UUID,
+        observers: [any NetworkEventObserving]
+    ) {
+        guard event.isTerminalRequestOutcome else {
+            enqueue(event, requestID: requestID, observers: observers, guaranteesAdmission: false)
+            return
+        }
+        enqueue(event, requestID: requestID, observers: observers, guaranteesAdmission: true)
+    }
+
+    private func enqueue(
+        _ event: NetworkEvent,
+        requestID: UUID,
+        observers: [any NetworkEventObserving],
+        guaranteesAdmission: Bool
+    ) {
         guard !observers.isEmpty else { return }
         var partition = partitions[requestID] ?? PartitionState()
         guard !partition.isClosed else { return }
-        let guaranteesAdmission = event.isTerminalRequestOutcome
         if partition.queue.count >= policy.maxBufferedEventsPerPartition {
             partition.droppedEventCount += 1
             if guaranteesAdmission {
@@ -103,7 +125,8 @@ package actor NetworkEventHub {
             PendingEvent(
                 event: event,
                 observers: observers,
-                enqueuedAt: clock.now()
+                enqueuedAt: clock.now(),
+                guaranteesAdmission: guaranteesAdmission
             )
         )
         if guaranteesAdmission {
@@ -147,7 +170,7 @@ package actor NetworkEventHub {
         while let pending = popNextEvent(requestID: requestID) {
             for (index, observer) in pending.observers.enumerated() {
                 let chain = observerChain(for: requestID, index: index, observer: observer)
-                if pending.event.isTerminalRequestOutcome {
+                if pending.guaranteesAdmission {
                     await chain.enqueueGuaranteed(
                         pending.event,
                         enqueuedAt: pending.enqueuedAt

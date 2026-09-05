@@ -59,7 +59,7 @@ package struct RetryCoordinator {
             if NetworkError.isCancellation(error) {
                 let cancellationError = NetworkError.cancelled
                 propagated = cancellationError
-                await eventHub.publish(
+                await eventHub.publishTerminal(
                     .requestFailed(
                         requestID: requestID,
                         errorCode: cancellationError.errorCode,
