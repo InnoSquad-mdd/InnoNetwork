@@ -390,6 +390,7 @@ public actor UploadManager {
         fromFile fileURL: URL
     ) async throws(UploadError) -> UploadOperation {
         guard !isShutdown else { throw .managerShutdown }
+        guard !Task.isCancelled else { throw .cancelled }
         guard tasks[task.id] === task else {
             throw .invalidRequest("The upload task is not owned by this manager")
         }
@@ -420,15 +421,21 @@ public actor UploadManager {
             throw .invalidRequest("Retry must reuse the original upload's Idempotency-Key")
         }
 
-        let stream = await eventHub.stream(for: task.id)
+        guard !Task.isCancelled else { throw .cancelled }
         guard !isShutdown else { throw .managerShutdown }
         guard await task.prepareForRetry() else {
             throw .invalidRequest("Only one retry can restart a failed upload")
         }
+        terminalTaskOrder.removeAll { $0 == task.id }
+        let stream = await eventHub.stream(for: task.id)
+        if Task.isCancelled {
+            await terminateRetry(task, with: .cancelled)
+            throw .cancelled
+        }
         guard !isShutdown else {
             // Shutdown may have observed a previously failed task before the
             // cross-actor retry transition changed it back to waiting.
-            await task.fail(with: .managerShutdown)
+            await terminateRetry(task, with: .managerShutdown)
             throw .managerShutdown
         }
         let urlTask = session.makeUploadTask(with: request, fromFile: fileURL)
@@ -437,9 +444,31 @@ public actor UploadManager {
         logicalIDsBySystemIdentifier[urlTask.taskIdentifier] = task.id
         responseBodies[urlTask.taskIdentifier] = Data()
 
-        guard await task.begin() else { throw .managerShutdown }
+        guard await task.begin() else {
+            urlTask.cancel()
+            removeRuntime(for: task.id)
+            await terminateRetry(task, with: .managerShutdown)
+            throw .managerShutdown
+        }
+        if Task.isCancelled {
+            urlTask.cancel()
+            removeRuntime(for: task.id)
+            await terminateRetry(task, with: .cancelled)
+            throw .cancelled
+        }
         await eventHub.publish(.stateChanged(.uploading), for: task.id)
-        guard !isShutdown else { throw .managerShutdown }
+        if Task.isCancelled {
+            urlTask.cancel()
+            removeRuntime(for: task.id)
+            await terminateRetry(task, with: .cancelled)
+            throw .cancelled
+        }
+        guard !isShutdown else {
+            urlTask.cancel()
+            removeRuntime(for: task.id)
+            await terminateRetry(task, with: .managerShutdown)
+            throw .managerShutdown
+        }
         urlTask.resume()
         return UploadOperation(task: task, events: stream)
     }
@@ -682,6 +711,12 @@ public actor UploadManager {
         await eventHub.publishTerminalAndFinish(.failed(error), for: task.id)
         recordTerminal(task.id)
         removeRuntime(for: task.id)
+    }
+
+    private func terminateRetry(_ task: UploadTask, with error: UploadError) async {
+        guard await task.fail(with: error) else { return }
+        await eventHub.publishTerminalAndFinish(.failed(error), for: task.id)
+        recordTerminal(task.id)
     }
 
     private func task(forSystemIdentifier identifier: Int) -> UploadTask? {
