@@ -92,14 +92,17 @@ final class StubUploadURLSession: UploadURLSession, @unchecked Sendable {
     private let storage: OSAllocatedUnfairLock<Storage>
     private let channel: UploadDelegateEventChannel
     private let emitsInvalidationEvent: Bool
+    private let beforeListingTasks: (@Sendable () async -> Void)?
 
     init(
         channel: UploadDelegateEventChannel,
         tasks: [StubUploadURLTask] = [],
-        emitsInvalidationEvent: Bool = true
+        emitsInvalidationEvent: Bool = true,
+        beforeListingTasks: (@Sendable () async -> Void)? = nil
     ) {
         self.channel = channel
         self.emitsInvalidationEvent = emitsInvalidationEvent
+        self.beforeListingTasks = beforeListingTasks
         self.storage = OSAllocatedUnfairLock(
             initialState: Storage(
                 tasks: tasks,
@@ -131,7 +134,8 @@ final class StubUploadURLSession: UploadURLSession, @unchecked Sendable {
     }
 
     func allUploadTasks() async -> [any UploadURLTask] {
-        storage.withLock { $0.tasks.map { $0 as any UploadURLTask } }
+        await beforeListingTasks?()
+        return storage.withLock { $0.tasks.map { $0 as any UploadURLTask } }
     }
 
     func invalidateAndCancel() {
@@ -150,13 +154,15 @@ func makeUploadHarness(
     configuration: UploadConfiguration = .safeDefaults(),
     tasks: [StubUploadURLTask] = [],
     emitsInvalidationEvent: Bool = true,
-    invalidationTimeout: Duration = .seconds(5)
+    invalidationTimeout: Duration = .seconds(5),
+    beforeListingTasks: (@Sendable () async -> Void)? = nil
 ) -> (UploadManager, StubUploadURLSession, UploadDelegateEventChannel) {
     let channel = UploadDelegateEventChannel()
     let session = StubUploadURLSession(
         channel: channel,
         tasks: tasks,
-        emitsInvalidationEvent: emitsInvalidationEvent
+        emitsInvalidationEvent: emitsInvalidationEvent,
+        beforeListingTasks: beforeListingTasks
     )
     let manager = UploadManager(
         configuration: configuration,

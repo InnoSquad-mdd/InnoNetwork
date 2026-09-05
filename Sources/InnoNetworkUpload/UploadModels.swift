@@ -153,22 +153,28 @@ public actor UploadTask: Identifiable {
     public var receipt: UploadReceipt? { currentReceipt }
     public var error: UploadError? { currentError }
 
-    package func begin() {
-        guard !currentState.isTerminal else { return }
+    @discardableResult
+    package func begin() -> Bool {
+        guard !currentState.isTerminal else { return false }
         currentState = .uploading
+        return true
     }
 
-    package func pause() {
-        guard currentState == .waiting || currentState == .uploading else { return }
+    @discardableResult
+    package func pause() -> Bool {
+        guard currentState == .waiting || currentState == .uploading else { return false }
         currentState = .paused
+        return true
     }
 
-    package func update(progress: UploadProgress) {
-        guard !currentState.isTerminal else { return }
+    @discardableResult
+    package func update(progress: UploadProgress) -> Bool {
+        guard !currentState.isTerminal else { return false }
         currentProgress = progress
         if currentState != .paused {
             currentState = .uploading
         }
+        return true
     }
 
     package func prepareForRetry() -> Bool {
@@ -180,18 +186,22 @@ public actor UploadTask: Identifiable {
         return true
     }
 
-    package func complete(with receipt: UploadReceipt) {
-        guard !currentState.isTerminal else { return }
+    @discardableResult
+    package func complete(with receipt: UploadReceipt) -> Bool {
+        guard !currentState.isTerminal else { return false }
         currentReceipt = receipt
         currentError = nil
         currentState = .completed
+        return true
     }
 
-    package func fail(with error: UploadError, receipt: UploadReceipt? = nil) {
-        guard !currentState.isTerminal else { return }
+    @discardableResult
+    package func fail(with error: UploadError, receipt: UploadReceipt? = nil) -> Bool {
+        guard !currentState.isTerminal else { return false }
         currentReceipt = receipt
         currentError = error
         currentState = error == .cancelled ? .cancelled : .failed
+        return true
     }
 
     package func terminalEvent() -> UploadEvent? {

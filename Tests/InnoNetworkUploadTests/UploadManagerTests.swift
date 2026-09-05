@@ -382,6 +382,24 @@ struct UploadManagerTests {
         #expect(await retry.task.state == .uploading)
         #expect(UploadTaskDescription.decode(secondSystemTask.taskDescription).intent == .active)
 
+        // Foundation may deliver buffered callbacks from the retired attempt
+        // after the replacement task has started. They must not be adopted as
+        // a second restored task or terminate the new attempt.
+        channel.send(.data(taskIdentifier: firstSystemTask.taskIdentifier, data: Data("late".utf8)))
+        channel.send(
+            .completed(
+                taskIdentifier: firstSystemTask.taskIdentifier,
+                taskDescription: firstSystemTask.taskDescription,
+                originalRequest: request,
+                currentRequest: request,
+                response: nil,
+                error: SendableUnderlyingError(URLError(.cancelled))
+            )
+        )
+        await Task.yield()
+        #expect(await retry.task.state == .uploading)
+        #expect(await manager.allTasks().count == 1)
+
         let retryCompletion = Task { () -> UploadReceipt? in
             for await event in retry.events {
                 if case .completed(let receipt) = event { return receipt }
@@ -577,6 +595,80 @@ struct UploadManagerTests {
         await manager.shutdown()
 
         #expect(session.invalidationCallCount == 1)
+    }
+
+    @Test("A delayed restoration cannot register tasks after shutdown")
+    func restorationDoesNotOutliveShutdown() async throws {
+        let gate = UploadRestorationTestGate()
+        var request = URLRequest(url: URL(string: "https://upload.example.test/files")!)
+        request.httpMethod = "POST"
+        let restored = StubUploadURLTask(taskIdentifier: 42, request: request, taskDescription: "restored")
+        let (manager, _, _) = makeUploadHarness(
+            configuration: .background(sessionIdentifier: "test.shutdown.restore"),
+            tasks: [restored], beforeListingTasks: { await gate.wait() }
+        )
+        let restoration = Task { await manager.restoreTasks() }
+        await gate.waitUntilEntered()
+        await manager.shutdown()
+        await gate.open()
+
+        #expect(await restoration.value.isEmpty)
+        #expect(await manager.allTasks().isEmpty)
+        #expect(restored.resumeCount == 0)
+    }
+
+    @Test("Upload waiting for background restoration cannot start after shutdown")
+    func uploadWaitingForRestorationHonorsShutdown() async throws {
+        let gate = UploadRestorationTestGate()
+        let (manager, session, _) = makeUploadHarness(
+            configuration: .background(sessionIdentifier: "test.shutdown.new-upload"),
+            beforeListingTasks: { await gate.wait() }
+        )
+        let file = try makeTemporaryUploadFile()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        var request = URLRequest(url: URL(string: "https://upload.example.test/files")!)
+        request.httpMethod = "POST"
+        let upload = Task { try await manager.upload(request, fromFile: file) }
+        await gate.waitUntilEntered()
+        await manager.shutdown()
+        await gate.open()
+
+        do {
+            _ = try await upload.value
+            Issue.record("Expected managerShutdown instead of creating a post-shutdown task")
+        } catch {
+            #expect(error as? UploadError == .managerShutdown)
+        }
+        #expect(session.taskCount == 0)
+        #expect(await manager.allTasks().isEmpty)
+    }
+}
+
+private actor UploadRestorationTestGate {
+    private var entered = false
+    private var released = false
+    private var arrivalWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        entered = true
+        let waiters = arrivalWaiters
+        arrivalWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+        if !released {
+            await withCheckedContinuation { releaseWaiters.append($0) }
+        }
+    }
+
+    func waitUntilEntered() async {
+        if !entered { await withCheckedContinuation { arrivalWaiters.append($0) } }
+    }
+
+    func open() {
+        released = true
+        let waiters = releaseWaiters
+        releaseWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
     }
 }
 

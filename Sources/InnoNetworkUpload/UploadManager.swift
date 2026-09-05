@@ -26,6 +26,10 @@ public actor UploadManager {
     private var tasks: [String: UploadTask] = [:]
     private var uploadTasks: [String: any UploadURLTask] = [:]
     private var logicalIDsBySystemIdentifier: [Int: String] = [:]
+    /// URLSession identifiers whose logical attempt has already terminated.
+    /// Late delegate callbacks for these attempts must never be adopted as a
+    /// restored background upload.
+    private var retiredSystemIdentifiers: Set<Int> = []
     private var responseBodies: [Int: Data] = [:]
     private var forcedFailures: [Int: UploadError] = [:]
     private var idempotencyKeys: [String: String] = [:]
@@ -127,6 +131,7 @@ public actor UploadManager {
         if configuration.sessionMode == .background, !restorationCompleted {
             _ = await restoreTasks()
         }
+        guard !isShutdown else { throw .managerShutdown }
         try Self.validate(request: request, fileURL: fileURL, configuration: configuration)
 
         guard let url = request.url else {
@@ -135,6 +140,7 @@ public actor UploadManager {
         let method = request.httpMethod ?? "POST"
         let task = UploadTask(requestURL: url, method: method)
         let stream = await eventHub.stream(for: task.id)
+        guard !isShutdown else { throw .managerShutdown }
         let urlTask = session.makeUploadTask(with: request, fromFile: fileURL)
         urlTask.taskDescription = UploadTaskDescription.active(id: task.id)
 
@@ -146,8 +152,9 @@ public actor UploadManager {
         logicalIDsBySystemIdentifier[urlTask.taskIdentifier] = task.id
         responseBodies[urlTask.taskIdentifier] = Data()
 
-        await task.begin()
+        guard await task.begin() else { throw .managerShutdown }
         await eventHub.publish(.stateChanged(.uploading), for: task.id)
+        guard !isShutdown else { throw .managerShutdown }
         urlTask.resume()
         return UploadOperation(task: task, events: stream)
     }
@@ -165,9 +172,18 @@ public actor UploadManager {
             }
         }
         isRestoring = true
+        defer {
+            isRestoring = false
+            let waiters = restorationWaiters
+            restorationWaiters.removeAll()
+            let snapshot = isShutdown ? [] : restoredTasksSnapshot()
+            for waiter in waiters { waiter.resume(returning: snapshot) }
+        }
 
         let systemTasks = await session.allUploadTasks()
+        guard !isShutdown else { return [] }
         for urlTask in systemTasks {
+            guard !isShutdown else { return [] }
             guard let request = urlTask.currentRequest ?? urlTask.originalRequest,
                 let url = request.url
             else {
@@ -207,6 +223,7 @@ public actor UploadManager {
                 await task.fail(with: error)
             }
 
+            guard !isShutdown else { return [] }
             tasks[id] = task
             if let idempotencyKey = Self.idempotencyKey(in: request) {
                 idempotencyKeys[id] = idempotencyKey
@@ -222,6 +239,7 @@ public actor UploadManager {
                 removeRuntime(for: id)
                 continue
             }
+            guard !isShutdown else { return [] }
 
             let pending = pendingDelegateEvents.removeValue(forKey: urlTask.taskIdentifier) ?? []
             for event in pending {
@@ -229,6 +247,7 @@ public actor UploadManager {
             }
 
             guard !(await task.state.isTerminal) else { continue }
+            guard !isShutdown else { return [] }
             if descriptor.intent == .paused {
                 if urlTask.state == .running {
                     urlTask.suspend()
@@ -236,17 +255,13 @@ public actor UploadManager {
             } else if urlTask.state == .suspended {
                 await task.begin()
                 await eventHub.publish(.stateChanged(.uploading), for: id)
+                guard !isShutdown else { return [] }
                 urlTask.resume()
             }
         }
 
         restorationCompleted = true
-        isRestoring = false
-        let waiters = restorationWaiters
-        restorationWaiters.removeAll()
-        let snapshot = restoredTasksSnapshot()
-        for waiter in waiters { waiter.resume(returning: snapshot) }
-        return snapshot
+        return restoredTasksSnapshot()
     }
 
     /// Returns all tasks known to this manager, including terminal tasks.
@@ -284,28 +299,33 @@ public actor UploadManager {
     /// later manager restoration keeps the task paused instead of interpreting
     /// Foundation's suspended state as a request to resume automatically.
     public func pause(_ task: UploadTask) async {
-        guard tasks[task.id] === task, let urlTask = uploadTasks[task.id] else { return }
+        guard !isShutdown, tasks[task.id] === task, let urlTask = uploadTasks[task.id] else { return }
         let state = await task.state
+        guard !isShutdown else { return }
         guard state == .waiting || state == .uploading else { return }
         guard UploadTaskDescription.decode(urlTask.taskDescription).intent != .paused else { return }
 
         urlTask.taskDescription = UploadTaskDescription.paused(id: task.id)
         urlTask.suspend()
-        await task.pause()
+        guard await task.pause() else { return }
+        guard uploadTasks[task.id]?.taskIdentifier == urlTask.taskIdentifier else { return }
         await eventHub.publish(.stateChanged(.paused), for: task.id)
     }
 
     /// Resumes a user-paused upload owned by this manager.
     public func resume(_ task: UploadTask) async {
-        guard tasks[task.id] === task, let urlTask = uploadTasks[task.id] else { return }
+        guard !isShutdown, tasks[task.id] === task, let urlTask = uploadTasks[task.id] else { return }
         guard await task.state == .paused else { return }
+        guard !isShutdown else { return }
         guard UploadTaskDescription.decode(urlTask.taskDescription).intent == .paused else { return }
 
         // Persist active intent before resuming. If the process exits between
         // these two calls, restoration will complete the requested resume.
         urlTask.taskDescription = UploadTaskDescription.active(id: task.id)
-        await task.begin()
+        guard await task.begin() else { return }
+        guard uploadTasks[task.id]?.taskIdentifier == urlTask.taskIdentifier else { return }
         await eventHub.publish(.stateChanged(.uploading), for: task.id)
+        guard !isShutdown else { return }
         urlTask.resume()
     }
 
@@ -328,6 +348,7 @@ public actor UploadManager {
         guard await task.state == .failed else {
             throw .invalidRequest("Only failed uploads can be retried")
         }
+        guard !isShutdown else { throw .managerShutdown }
         guard !retryingTaskIDs.contains(task.id) else {
             throw .invalidRequest("An upload retry is already being prepared")
         }
@@ -352,8 +373,15 @@ public actor UploadManager {
         }
 
         let stream = await eventHub.stream(for: task.id)
+        guard !isShutdown else { throw .managerShutdown }
         guard await task.prepareForRetry() else {
             throw .invalidRequest("Only one retry can restart a failed upload")
+        }
+        guard !isShutdown else {
+            // Shutdown may have observed a previously failed task before the
+            // cross-actor retry transition changed it back to waiting.
+            await task.fail(with: .managerShutdown)
+            throw .managerShutdown
         }
         let urlTask = session.makeUploadTask(with: request, fromFile: fileURL)
         urlTask.taskDescription = UploadTaskDescription.active(id: task.id)
@@ -361,8 +389,9 @@ public actor UploadManager {
         logicalIDsBySystemIdentifier[urlTask.taskIdentifier] = task.id
         responseBodies[urlTask.taskIdentifier] = Data()
 
-        await task.begin()
+        guard await task.begin() else { throw .managerShutdown }
         await eventHub.publish(.stateChanged(.uploading), for: task.id)
+        guard !isShutdown else { throw .managerShutdown }
         urlTask.resume()
         return UploadOperation(task: task, events: stream)
     }
@@ -372,7 +401,7 @@ public actor UploadManager {
     public func cancel(_ task: UploadTask) async {
         guard tasks[task.id] === task, !(await task.state.isTerminal) else { return }
         uploadTasks[task.id]?.cancel()
-        await task.fail(with: .cancelled)
+        guard await task.fail(with: .cancelled) else { return }
         await eventHub.publishTerminalAndFinish(.failed(.cancelled), for: task.id)
         removeRuntime(for: task.id)
     }
@@ -392,6 +421,10 @@ public actor UploadManager {
             return
         }
         isShutdown = true
+        let waiters = restorationWaiters
+        restorationWaiters.removeAll()
+        for waiter in waiters { waiter.resume(returning: []) }
+        pendingDelegateEvents.removeAll()
         let active = Array(uploadTasks.values)
         for urlTask in active { urlTask.cancel() }
         for task in tasks.values where !(await task.state.isTerminal) {
@@ -400,6 +433,7 @@ public actor UploadManager {
         }
         uploadTasks.removeAll()
         logicalIDsBySystemIdentifier.removeAll()
+        retiredSystemIdentifiers.removeAll()
         responseBodies.removeAll()
         forcedFailures.removeAll()
         idempotencyKeys.removeAll()
@@ -421,12 +455,27 @@ public actor UploadManager {
     }
 
     private func process(_ event: UploadDelegateEvent) async {
+        if isShutdown {
+            // Only session-lifecycle acknowledgements are meaningful after
+            // shutdown. Buffered transfer callbacks must not adopt new tasks
+            // or rebuild pending response buffers while teardown is awaiting.
+            switch event {
+            case .invalidated:
+                await invalidationBarrier.complete()
+            case .backgroundEventsFinished:
+                backgroundCompletionStore.markEventsFinished()?()
+            default:
+                break
+            }
+            return
+        }
         switch event {
         case .invalidated:
             await invalidationBarrier.complete()
         case .backgroundEventsFinished:
             backgroundCompletionStore.markEventsFinished()?()
         case .progress(let identifier, let bytesSent, let totalBytesSent, let expected):
+            guard !retiredSystemIdentifiers.contains(identifier) else { return }
             guard let task = task(forSystemIdentifier: identifier) else {
                 pendingDelegateEvents[identifier, default: []].append(event)
                 return
@@ -440,6 +489,7 @@ public actor UploadManager {
             await task.update(progress: progress)
             await eventHub.publish(.progress(progress), for: task.id)
         case .data(let identifier, let data):
+            guard !retiredSystemIdentifiers.contains(identifier) else { return }
             guard logicalIDsBySystemIdentifier[identifier] != nil else {
                 pendingDelegateEvents[identifier, default: []].append(event)
                 return
@@ -463,6 +513,7 @@ public actor UploadManager {
             let response,
             let underlying
         ):
+            guard !retiredSystemIdentifiers.contains(identifier) else { return }
             if task(forSystemIdentifier: identifier) == nil {
                 guard configuration.sessionMode == .background,
                     let request = currentRequest ?? originalRequest,
@@ -542,7 +593,10 @@ public actor UploadManager {
             )
             let receipt = UploadReceipt(response: coreResponse)
             guard configuration.acceptableStatusCodes.contains(response.statusCode) else {
-                await task.fail(with: .unacceptableStatusCode(response.statusCode), receipt: receipt)
+                guard await task.fail(
+                    with: .unacceptableStatusCode(response.statusCode),
+                    receipt: receipt
+                ) else { return }
                 await eventHub.publishTerminalAndFinish(
                     .failed(.unacceptableStatusCode(response.statusCode)),
                     for: task.id
@@ -551,14 +605,14 @@ public actor UploadManager {
                 return
             }
 
-            await task.complete(with: receipt)
+            guard await task.complete(with: receipt) else { return }
             await eventHub.publishTerminalAndFinish(.completed(receipt), for: task.id)
             removeRuntime(for: task.id)
         }
     }
 
     private func fail(_ task: UploadTask, with error: UploadError) async {
-        await task.fail(with: error)
+        guard await task.fail(with: error) else { return }
         await eventHub.publishTerminalAndFinish(.failed(error), for: task.id)
         removeRuntime(for: task.id)
     }
@@ -574,6 +628,7 @@ public actor UploadManager {
             ?? logicalIDsBySystemIdentifier.first(where: { $0.value == logicalID })?.key
         guard let identifier else { return }
         logicalIDsBySystemIdentifier.removeValue(forKey: identifier)
+        retiredSystemIdentifiers.insert(identifier)
         responseBodies.removeValue(forKey: identifier)
         forcedFailures.removeValue(forKey: identifier)
     }
