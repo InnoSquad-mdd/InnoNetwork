@@ -67,17 +67,29 @@ that cut and are not part of the 6.0 contract.
 
 ### Fixed for 6.1.0
 
+- Origin-scoped admission, quota, redirect, and circuit-breaker keys now
+  canonicalize scheme and host casing, implicit default ports, and IPv6
+  authority formatting before comparing or allocating state.
 - Request admission enforces the origin registry bound on immediate grants and
   lets an origin with free capacity bypass waiters blocked only by another
   origin's per-scope cap.
 - Advanced rate limiting rejects non-finite, zero-refill, and impossible-cost
   configurations without trapping or waiting forever. Reservations are
   rechecked when transport actually dispatches, and fully replenished inactive
-  scopes can be reclaimed without increasing quota.
+  scopes can be reclaimed without increasing quota. Scopes with suspended
+  reserve calls remain retained until every waiter exits.
+- Half-open circuit-breaker probes are attempt-owned. Stale outcomes and local
+  pre-transport failures cannot consume or strand another request's probe.
 - Streaming total deadlines include request authentication/interceptors,
   rate-limit and stream-slot waits, response interceptors, reconnect delays,
-  and backpressured output delivery. A stream slot is acquired before opening
-  the URLSession byte transport.
+  monitor snapshot/change waits, and backpressured output delivery. A stream
+  slot is acquired before opening the URLSession byte transport.
+- Concurrent upload starts reserve tracked-task capacity before actor
+  suspension; new uploads, background restoration, and completion adoption
+  share the same bounded accounting.
+- Span-buffer policy values remain positive after public mutation, preventing
+  zero-sized drain batches, and request terminal events are guaranteed through
+  saturated partition and observer queues so span state cannot be stranded.
 - Resumable uploads stop before server work when already cancelled, preserve
   hash-to-byte identity if the caller replaces the source path, remove private
   snapshots on every terminal path, and do not report a completed remote

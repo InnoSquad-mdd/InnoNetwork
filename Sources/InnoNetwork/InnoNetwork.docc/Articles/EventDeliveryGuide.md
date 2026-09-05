@@ -36,9 +36,9 @@ Passing a custom policy replaces the default for that manager's lifetime.
 Normal request, download, and WebSocket notifications use the configured
 partition and consumer overflow policy. Their one authoritative final outcome
 has a stronger guarantee. The event is admitted to the task partition and to
-every observer, listener, or `AsyncStream` consumer in the publication
-snapshot even when `.dropNewest` queues are full; the same guarantee applies
-under `.dropOldest`. For request observability, those outcomes are
+every observer, listener, or `AsyncStream` consumer in the
+publication snapshot even when `.dropNewest` queues are full; the same
+guarantee applies under `.dropOldest`. For request observability, those outcomes are
 `requestFinished` and `requestFailed`.
 When a bounded partition or consumer queue is full, its oldest queued event is
 displaced to make room for the final outcome. The manager waits for enqueue,
