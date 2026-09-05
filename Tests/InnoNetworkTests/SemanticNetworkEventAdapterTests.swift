@@ -128,6 +128,32 @@ struct SemanticNetworkEventAdapterTests {
         #expect(event?.requestID == id)
         #expect(event?.attributes["http.response.status_code"] == .integer(204))
     }
+
+    @Test("Policy decisions map only bounded redacted attributes")
+    func mapsPolicyDecision() {
+        let id = UUID()
+        let mapped = SemanticNetworkEventAdapter.map(
+            .decision(
+                NetworkDecision(
+                    requestID: id,
+                    attemptIndex: 2,
+                    kind: .retry,
+                    outcome: .denied,
+                    reason: .idempotencyRequired
+                )
+            )
+        )
+
+        #expect(mapped.name == "http.client.request.decision")
+        #expect(mapped.requestID == id)
+        #expect(mapped.attributes["innonetwork.decision.kind"] == .string("retry"))
+        #expect(mapped.attributes["innonetwork.decision.outcome"] == .string("denied"))
+        #expect(
+            mapped.attributes["innonetwork.decision.reason"]
+                == .string("idempotencyRequired")
+        )
+        #expect(mapped.attributes["http.request.resend_count"] == .integer(2))
+    }
 }
 
 private actor SemanticEventRecorder {

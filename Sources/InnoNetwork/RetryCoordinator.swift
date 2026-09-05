@@ -244,7 +244,16 @@ package struct RetryCoordinator {
         totalRetries: Int,
         snapshot: NetworkSnapshot?
     ) async throws -> RetryStepOutcome? {
-        guard let policy = retryPolicy else { return nil }
+        guard let policy = retryPolicy else {
+            await publishRetryDecision(
+                requestID: requestID,
+                retryIndex: retryIndex,
+                outcome: .denied,
+                reason: .policyNotConfigured,
+                observers: eventObservers
+            )
+            return nil
+        }
         let policyDecision = policy.shouldRetry(
             error: error,
             retryIndex: retryIndex,
@@ -267,14 +276,40 @@ package struct RetryCoordinator {
             idempotency: policy.idempotencyPolicy
         )
         if case .noRetry = decision {
+            let reason: NetworkDecisionReason = {
+                if case .noRetry = policyDecision { return .policyDenied }
+                return .idempotencyRequired
+            }()
+            await publishRetryDecision(
+                requestID: requestID,
+                retryIndex: retryIndex,
+                outcome: .denied,
+                reason: reason,
+                observers: eventObservers
+            )
             return nil
         }
         guard totalRetries < policy.maxTotalRetries else {
+            await publishRetryDecision(
+                requestID: requestID,
+                retryIndex: retryIndex,
+                outcome: .denied,
+                reason: .retryBudgetExhausted,
+                observers: eventObservers
+            )
             return nil
         }
 
         let computedDelay = policy.retryDelay(for: retryIndex)
         let delay = Self.delay(for: decision, computedDelay: computedDelay, policy: policy)
+        await publishRetryDecision(
+            requestID: requestID,
+            retryIndex: retryIndex,
+            outcome: delay > 0 ? .delayed : .allowed,
+            reason: .policyAllowed,
+            delay: delay > 0 ? delay : nil,
+            observers: eventObservers
+        )
         await eventHub.publish(
             .retryScheduled(
                 requestID: requestID,
@@ -313,6 +348,30 @@ package struct RetryCoordinator {
             nextRetryIndex: nextRetryIndex,
             nextTotalRetries: totalRetries + 1,
             snapshot: nextSnapshot
+        )
+    }
+
+    private func publishRetryDecision(
+        requestID: UUID,
+        retryIndex: Int,
+        outcome: NetworkDecisionOutcome,
+        reason: NetworkDecisionReason,
+        delay: TimeInterval? = nil,
+        observers: [any NetworkEventObserving]
+    ) async {
+        await eventHub.publish(
+            .decision(
+                NetworkDecision(
+                    requestID: requestID,
+                    attemptIndex: retryIndex,
+                    kind: .retry,
+                    outcome: outcome,
+                    reason: reason,
+                    delay: delay
+                )
+            ),
+            requestID: requestID,
+            observers: observers
         )
     }
 

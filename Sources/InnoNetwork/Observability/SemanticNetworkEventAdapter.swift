@@ -97,6 +97,21 @@ public struct SemanticNetworkEventAdapter: NetworkEventObserving {
                 requestID: originalID,
                 attributes: cacheAttributes(state)
             )
+        case .decision(let decision):
+            var attributes: [String: SemanticAttributeValue] = [
+                "innonetwork.decision.kind": .string(decision.kind.rawValue),
+                "innonetwork.decision.outcome": .string(decision.outcome.rawValue),
+                "innonetwork.decision.reason": .string(decision.reason.rawValue),
+                "http.request.resend_count": .integer(decision.attemptIndex),
+            ]
+            if let delay = decision.delay {
+                attributes["innonetwork.decision.delay"] = .double(delay)
+            }
+            return SemanticNetworkEvent(
+                name: "http.client.request.decision",
+                requestID: decision.requestID,
+                attributes: attributes
+            )
         }
     }
 

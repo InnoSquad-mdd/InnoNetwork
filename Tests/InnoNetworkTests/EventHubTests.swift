@@ -397,5 +397,7 @@ func eventHubRequestID(of event: NetworkEvent) -> UUID {
         return requestID
     case .cacheRevalidation(let originalID, _):
         return originalID
+    case .decision(let decision):
+        return decision.requestID
     }
 }

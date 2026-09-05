@@ -163,6 +163,10 @@ public enum NetworkEvent: Sendable {
         originalID: UUID,
         state: CacheRevalidationState
     )
+    /// A structured, payload-free policy choice made while executing a
+    /// request. Delivery follows the same bounded observer policy as the
+    /// surrounding request lifecycle.
+    case decision(NetworkDecision)
 }
 
 /// Lifecycle stages of a background cache revalidation. Observers receive
@@ -213,6 +217,10 @@ public struct OSLogNetworkEventObserver: NetworkEventObserving {
         case .cacheRevalidation(let originalID, let state):
             Logger.API.debug(
                 "cache_revalidation original_id=\(originalID.uuidString, privacy: .public) state=\(String(describing: state), privacy: .private)"
+            )
+        case .decision(let decision):
+            Logger.API.debug(
+                "network_decision id=\(decision.requestID.uuidString, privacy: .public) kind=\(decision.kind.rawValue, privacy: .public) outcome=\(decision.outcome.rawValue, privacy: .public) reason=\(decision.reason.rawValue, privacy: .public)"
             )
         }
         #endif
