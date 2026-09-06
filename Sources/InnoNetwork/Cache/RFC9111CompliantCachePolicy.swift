@@ -136,9 +136,10 @@ package enum RFC9111ResponseAge {
     ) -> TimeInterval {
         let dateValue = headerValues(named: "Date", in: headers).first
             .flatMap { HTTPDateParser.parse($0, requiresGMTZone: true) }
-        let apparentAge = dateValue.map {
-            clamp(responseTime.timeIntervalSince($0))
-        } ?? 0
+        let apparentAge =
+            dateValue.map {
+                clamp(responseTime.timeIntervalSince($0))
+            } ?? 0
         let responseDelay = clamp(responseTime.timeIntervalSince(requestTime))
         let correctedAgeValue = clamp(ageValue(in: headers) + responseDelay)
         return max(apparentAge, correctedAgeValue)

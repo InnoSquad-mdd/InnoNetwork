@@ -90,12 +90,14 @@ struct RFC9111ComplianceTests {
         }
     }
 
-    @Test("Invalid and overflowing Age values fail closed without overflowing", arguments: [
-        "1, 2",
-        "-1",
-        "not-a-number",
-        "999999999999999999999999999999999999999",
-    ])
+    @Test(
+        "Invalid and overflowing Age values fail closed without overflowing",
+        arguments: [
+            "1, 2",
+            "-1",
+            "not-a-number",
+            "999999999999999999999999999999999999999",
+        ])
     func invalidAgeFailsClosed(age: String) {
         let storedAt = Date(timeIntervalSince1970: 10_000)
         let cached = CachedResponse(

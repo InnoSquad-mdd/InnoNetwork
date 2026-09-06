@@ -565,7 +565,8 @@ package extension ResponseCachePolicy {
             guard let cached else { return .revalidate(nil) }
             guard !cached.requiresRevalidation else { return .revalidate(cached) }
             let age = cached.age(since: now, additionalAge: rfc9111InitialAge ?? 0)
-            let isFresh = rfc9111InitialAge == nil
+            let isFresh =
+                rfc9111InitialAge == nil
                 ? age <= maxAge.timeInterval
                 : age < maxAge.timeInterval
             return isFresh ? .returnCached(cached) : .revalidate(cached)
@@ -573,7 +574,8 @@ package extension ResponseCachePolicy {
             guard let cached else { return .revalidate(nil) }
             guard !cached.requiresRevalidation else { return .revalidate(cached) }
             let age = cached.age(since: now, additionalAge: rfc9111InitialAge ?? 0)
-            let isFresh = rfc9111InitialAge == nil
+            let isFresh =
+                rfc9111InitialAge == nil
                 ? age <= maxAge.timeInterval
                 : age < maxAge.timeInterval
             if isFresh {
