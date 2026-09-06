@@ -89,14 +89,28 @@ package final class StreamingTimeoutWatchdog: Sendable {
 
     package func recordNetworkActivity() {
         let now = clock.monotonicNow()
-        state.withLock { state in
-            guard !state.isFinished else { return }
+        let shouldCancel = state.withLock { state -> Bool in
+            guard !state.isFinished else { return false }
+            if latchExpiredDeadline(in: &state, at: now) {
+                return true
+            }
             state.lastActivity = now
+            return false
         }
+        if shouldCancel { cancelTransport() }
     }
 
     package func recordFirstEvent() {
-        state.withLock { $0.deliveredFirstEvent = true }
+        let now = clock.monotonicNow()
+        let shouldCancel = state.withLock { state -> Bool in
+            guard !state.isFinished else { return false }
+            if latchExpiredDeadline(in: &state, at: now) {
+                return true
+            }
+            state.deliveredFirstEvent = true
+            return false
+        }
+        if shouldCancel { cancelTransport() }
     }
 
     package var timeoutError: NetworkError? {
@@ -148,23 +162,32 @@ package final class StreamingTimeoutWatchdog: Sendable {
 
             let shouldCancel = state.withLock { state -> Bool? in
                 guard !state.isFinished, state.timeout == nil else { return nil }
-                guard
-                    let currentDeadline = nearestDeadline(
-                        acceptedAt: state.acceptedAt,
-                        lastActivity: state.lastActivity,
-                        deliveredFirstEvent: state.deliveredFirstEvent
-                    )
-                else { return nil }
-                guard currentDeadline.instant <= now else { return false }
-                state.timeout = currentDeadline.phase
-                state.isFinished = true
-                return true
+                return latchExpiredDeadline(in: &state, at: now)
             }
             guard let shouldCancel else { return }
             guard shouldCancel else { continue }
             cancelTransport()
             return
         }
+    }
+
+    /// Atomically decides whether the currently active deadline has expired.
+    /// Activity observed at or after expiry cannot revive the watchdog before
+    /// its sleeping task gets scheduled.
+    private func latchExpiredDeadline(in state: inout State, at now: Duration) -> Bool {
+        guard state.timeout == nil,
+            let deadline = nearestDeadline(
+                acceptedAt: state.acceptedAt,
+                lastActivity: state.lastActivity,
+                deliveredFirstEvent: state.deliveredFirstEvent
+            ),
+            deadline.instant <= now
+        else {
+            return false
+        }
+        state.timeout = deadline.phase
+        state.isFinished = true
+        return true
     }
 
     private func nearestDeadline(

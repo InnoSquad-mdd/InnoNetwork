@@ -208,6 +208,48 @@ struct StreamingTimeoutPolicyTests {
         watchdog.finish()
     }
 
+    @Test("A first event cannot revive an already expired deadline")
+    func lateFirstEventLatchesExpiredDeadline() async throws {
+        let clock = TestClock()
+        let cancellationSignal = AsyncStream<Void>.makeStream()
+        let watchdog = StreamingTimeoutWatchdog(
+            policy: StreamingTimeoutPolicy(firstEvent: .seconds(1)),
+            logicalStart: .zero,
+            clock: clock,
+            cancelTransport: { cancellationSignal.continuation.yield() }
+        )
+
+        #expect(await clock.waitForWaiters(count: 1))
+        clock.advanceWithoutResuming(by: .seconds(2))
+        watchdog.recordFirstEvent()
+        var cancellationIterator = cancellationSignal.stream.makeAsyncIterator()
+        _ = await cancellationIterator.next()
+
+        #expect(watchdog.timeoutPhase == .firstEvent)
+        watchdog.finish()
+    }
+
+    @Test("Late byte activity cannot extend an already expired idle deadline")
+    func lateActivityLatchesExpiredIdleDeadline() async throws {
+        let clock = TestClock()
+        let cancellationSignal = AsyncStream<Void>.makeStream()
+        let watchdog = StreamingTimeoutWatchdog(
+            policy: StreamingTimeoutPolicy(idle: .seconds(1)),
+            logicalStart: .zero,
+            clock: clock,
+            cancelTransport: { cancellationSignal.continuation.yield() }
+        )
+
+        #expect(await clock.waitForWaiters(count: 1))
+        clock.advanceWithoutResuming(by: .seconds(2))
+        watchdog.recordNetworkActivity()
+        var cancellationIterator = cancellationSignal.stream.makeAsyncIterator()
+        _ = await cancellationIterator.next()
+
+        #expect(watchdog.timeoutPhase == .idle)
+        watchdog.finish()
+    }
+
     @Test("Total budget is measured from the logical request start")
     func totalBudgetDoesNotResetAtAcceptance() async throws {
         let clock = TestClock()
@@ -638,6 +680,7 @@ private final class WatchdogSnapshotRaceClock: InnoNetworkClock, Sendable {
             snapshotRelease.wait()
             return .seconds(1)
         }
+        if read == 3 { return .milliseconds(500) }
         return read > 2 ? .seconds(1) : .zero
     }
 
