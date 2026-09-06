@@ -312,7 +312,8 @@ extension RequestExecutor {
                 request: request,
                 bodySource: bodySource,
                 configuration: configuration,
-                context: context
+                context: context,
+                clock: runtime.clock
             )
             await runtime.circuitBreakers.recordStatus(
                 request: identityRequest,
@@ -365,7 +366,8 @@ extension RequestExecutor {
         request: URLRequest,
         bodySource: BodySource,
         configuration: NetworkConfiguration,
-        context: NetworkRequestContext
+        context: NetworkRequestContext,
+        clock: any InnoNetworkClock
     ) async throws -> TransportResult {
         let attemptStartedAt = Date()
         do {
@@ -402,7 +404,11 @@ extension RequestExecutor {
             // Streaming collection enforces the same ceiling incrementally;
             // this shared boundary also protects buffered implementations.
             try enforceResponseBodyLimit(data: data, configuration: configuration)
-            return TransportResult(data: data, response: httpResponse)
+            return TransportResult(
+                data: data,
+                response: httpResponse,
+                completedAt: clock.now()
+            )
         } catch let networkError as NetworkError {
             // Already classified by an inner layer (e.g. responseBodyLimitExceeded
             // from `collect(bytes:response:maxBytes:)`). Rethrow as-is so the

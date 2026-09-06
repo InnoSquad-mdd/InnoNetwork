@@ -2,7 +2,7 @@ import Foundation
 import os
 
 package actor EventDeliveryChain<Event: Sendable> {
-    package typealias Handler = @Sendable (Event) async -> Void
+    package typealias Handler = @Sendable (Event, Date) async -> Void
 
     private final class DeliveryCompletion: Sendable {
         private let continuation: OSAllocatedUnfairLock<CheckedContinuation<Void, Never>?>
@@ -158,7 +158,7 @@ package actor EventDeliveryChain<Event: Sendable> {
         while !Task.isCancelled {
             guard let queuedEvent = queue.popFirst() else { break }
             reportQueueState()
-            await handler(queuedEvent.event)
+            await handler(queuedEvent.event, queuedEvent.enqueuedAt)
             reportDeliveryLatency(clock.now().timeIntervalSince(queuedEvent.enqueuedAt))
             queuedEvent.deliveryCompletion?.resume()
         }

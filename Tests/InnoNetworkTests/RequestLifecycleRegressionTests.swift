@@ -12,12 +12,25 @@ private actor LifecycleSpanExporter: NetworkSpanExporting {
     }
 }
 
-private struct LifecycleCompositeObserver: NetworkEventObserving {
+private struct LifecycleCompositeObserver: NetworkEventObserving, TimestampedNetworkEventObserving {
     let spanObserver: NetworkSpanObserver
     let continuation: AsyncStream<NetworkEvent>.Continuation
 
     func handle(_ event: NetworkEvent) async {
         await spanObserver.handle(event)
+        continuation.yield(event)
+    }
+
+    func handle(
+        _ event: NetworkEvent,
+        occurredAt: Date,
+        completesPhysicalTransport: Bool
+    ) async {
+        await spanObserver.handle(
+            event,
+            occurredAt: occurredAt,
+            completesPhysicalTransport: completesPhysicalTransport
+        )
         continuation.yield(event)
     }
 }
@@ -75,6 +88,7 @@ struct RequestLifecycleRegressionTests {
         #expect(session.capturedRequestsInOrder.count == 2)
         #expect(attempts.map(\.attemptIndex) == [0, 1])
         #expect(attempts.map(\.outcome) == [.retried, .succeeded])
+        #expect(attempts.map(\.statusCode) == [401, 200])
         #expect(spans.filter { $0.kind == .request }.count == 1)
         await client.shutdown()
     }
@@ -145,6 +159,69 @@ struct RequestLifecycleRegressionTests {
 
         let logicalSpans = await exporter.spans.filter { $0.kind == .request }
         #expect(logicalSpans.map(\.outcome) == [.failed])
+    }
+
+    @Test(
+        "Physical spans stop at transport completion and retain HTTP outcome",
+        arguments: [false, true]
+    )
+    func physicalSpanExcludesDecodeTime(rejectDecodedValue: Bool) async throws {
+        let clock = TestClock()
+        let exporter = LifecycleSpanExporter()
+        let spanObserver = NetworkSpanObserver(exporter: exporter, now: { clock.now() })
+        let events = AsyncStream<NetworkEvent>.makeStream()
+        let observer = LifecycleCompositeObserver(
+            spanObserver: spanObserver,
+            continuation: events.continuation
+        )
+        let decodeGate = LifecycleDecodeGate()
+        let configuration = NetworkConfiguration(
+            baseURL: URL(string: "https://api.example.com")!,
+            networkMonitor: nil,
+            eventObservers: [observer],
+            decodingInterceptors: [
+                HeldLifecycleDecodingInterceptor(
+                    gate: decodeGate,
+                    rejectsDecodedValue: rejectDecodedValue
+                )
+            ]
+        )
+        let session = MockURLSession()
+        session.setScriptedResponses([
+            .http(statusCode: 200, data: Data("1".utf8))
+        ])
+        let client = DefaultNetworkClient(
+            configuration: configuration,
+            session: session,
+            clock: clock
+        )
+        let request = Task { try await client.request(IntegerResponseRequest()) }
+
+        await decodeGate.waitUntilEntered()
+        let transportEndedAt = clock.now()
+        clock.advance(by: .seconds(10))
+        await decodeGate.release()
+        let result = await request.result
+        if rejectDecodedValue {
+            if case .success = result { Issue.record("Expected decoding interceptor rejection") }
+        } else {
+            #expect(try result.get() == 1)
+        }
+        for await event in events.stream {
+            if case .requestFinished = event { break }
+            if case .requestFailed = event { break }
+        }
+        await spanObserver.flush()
+
+        let spans = await exporter.spans
+        let attempt = try #require(spans.first { $0.kind == .attempt })
+        let logical = try #require(spans.first { $0.kind == .request })
+        #expect(attempt.endedAt == transportEndedAt)
+        #expect(attempt.statusCode == 200)
+        #expect(attempt.outcome == .succeeded)
+        #expect(logical.outcome == (rejectDecodedValue ? .failed : .succeeded))
+        #expect(logical.duration == 10)
+        await client.shutdown()
     }
 
     @Test("A terminal failure displaces nonterminal events in a saturated partition")
@@ -219,5 +296,46 @@ struct RequestLifecycleRegressionTests {
         }
         await runtime.shutdown()
         await eventHub.shutdown()
+    }
+}
+
+private actor LifecycleDecodeGate {
+    private let entered = AsyncStream<Void>.makeStream()
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+            entered.continuation.yield()
+        }
+    }
+
+    func waitUntilEntered() async {
+        var iterator = entered.stream.makeAsyncIterator()
+        _ = await iterator.next()
+    }
+
+    func release() {
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+private struct HeldLifecycleDecodingInterceptor: DecodingInterceptor {
+    let gate: LifecycleDecodeGate
+    let rejectsDecodedValue: Bool
+
+    func didDecode<Value: Sendable>(
+        _ value: Value,
+        response: Response
+    ) async throws -> Value {
+        _ = response
+        await gate.wait()
+        if rejectsDecodedValue {
+            throw NetworkError.configuration(
+                reason: .invalidRequest("Rejected after transport for span regression coverage.")
+            )
+        }
+        return value
     }
 }

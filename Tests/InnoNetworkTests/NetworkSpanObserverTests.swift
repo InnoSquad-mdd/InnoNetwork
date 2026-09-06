@@ -120,6 +120,51 @@ struct NetworkSpanObserverTests {
         #expect(await exporter.spans.count == 1)
         #expect(await exporter.batchSizes == [1])
     }
+
+    @Test("Streaming response headers do not close the physical attempt")
+    func streamingHeadersKeepAttemptOpen() async throws {
+        let exporter = SpanCollector()
+        let observer = NetworkSpanObserver(exporter: exporter, now: Date.init)
+        let requestID = UUID()
+        let startedAt = Date(timeIntervalSince1970: 10)
+        let headersAt = Date(timeIntervalSince1970: 12)
+        let streamEndedAt = Date(timeIntervalSince1970: 20)
+
+        await observer.handle(
+            .requestStart(requestID: requestID, method: "GET", url: "", retryIndex: 0),
+            occurredAt: startedAt,
+            completesPhysicalTransport: false
+        )
+        await observer.handle(
+            .decision(
+                NetworkDecision(
+                    requestID: requestID,
+                    attemptIndex: 0,
+                    kind: .dispatch,
+                    outcome: .allowed,
+                    reason: .policyAllowed,
+                    occurredAt: startedAt
+                )),
+            occurredAt: startedAt,
+            completesPhysicalTransport: false
+        )
+        await observer.handle(
+            .responseReceived(requestID: requestID, statusCode: 200, byteCount: 0),
+            occurredAt: headersAt,
+            completesPhysicalTransport: false
+        )
+        await observer.handle(
+            .requestFinished(requestID: requestID, statusCode: 200, byteCount: 4),
+            occurredAt: streamEndedAt,
+            completesPhysicalTransport: false
+        )
+        await observer.flush()
+
+        let attempt = try #require(await exporter.spans.first { $0.kind == .attempt })
+        #expect(attempt.startedAt == startedAt)
+        #expect(attempt.endedAt == streamEndedAt)
+        #expect(attempt.statusCode == 200)
+    }
 }
 
 private final class LockIsolatedDates: @unchecked Sendable {

@@ -262,7 +262,9 @@ extension RequestExecutor {
                         byteCount: result.data.count
                     ),
                     requestID: requestID,
-                    observers: configuration.eventObservers
+                    observers: configuration.eventObservers,
+                    occurredAt: result.completedAt,
+                    completesPhysicalTransport: true
                 )
             }
             return Response(

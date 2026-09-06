@@ -441,6 +441,7 @@ package struct StreamingExecutor: Sendable {
                         nil
                     )
                 }
+                let responseReceivedAt = executionRuntime.clock.now()
                 if let rateReservation = streamPermit.rateReservation {
                     await executionRuntime.rateLimit?.observe(
                         response: httpResponse,
@@ -455,7 +456,8 @@ package struct StreamingExecutor: Sendable {
                         byteCount: 0
                     ),
                     requestID: requestID,
-                    observers: configuration.eventObservers
+                    observers: configuration.eventObservers,
+                    occurredAt: responseReceivedAt
                 )
 
                 var networkResponse = Response(

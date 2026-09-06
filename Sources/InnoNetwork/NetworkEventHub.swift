@@ -1,16 +1,24 @@
 import Foundation
 
 package actor NetworkEventHub {
+    private struct EventOccurrence: Sendable {
+        let event: NetworkEvent
+        let occurredAt: Date
+        let completesPhysicalTransport: Bool
+    }
+
     private struct PendingEvent: Sendable {
         let event: NetworkEvent
         let observers: [any NetworkEventObserving]
         let enqueuedAt: Date
+        let occurredAt: Date
+        let completesPhysicalTransport: Bool
         let guaranteesAdmission: Bool
     }
 
     private struct PartitionState {
         var queue = FIFOBuffer<PendingEvent>()
-        var observerChains: [Int: EventDeliveryChain<NetworkEvent>] = [:]
+        var observerChains: [Int: EventDeliveryChain<EventOccurrence>] = [:]
         var isDraining = false
         var isClosed = false
         var isRetiring = false
@@ -79,8 +87,21 @@ package actor NetworkEventHub {
     /// dropped. Request IDs are one-use lifecycle identifiers and must not be
     /// reused after finish; the hub discards closed partition tombstones once
     /// observer-queue handoff completes.
-    package func publish(_ event: NetworkEvent, requestID: UUID, observers: [any NetworkEventObserving]) {
-        enqueue(event, requestID: requestID, observers: observers, guaranteesAdmission: false)
+    package func publish(
+        _ event: NetworkEvent,
+        requestID: UUID,
+        observers: [any NetworkEventObserving],
+        occurredAt: Date? = nil,
+        completesPhysicalTransport: Bool = false
+    ) {
+        enqueue(
+            event,
+            requestID: requestID,
+            observers: observers,
+            guaranteesAdmission: false,
+            occurredAt: occurredAt,
+            completesPhysicalTransport: completesPhysicalTransport
+        )
     }
 
     /// Guarantees admission of the authoritative terminal request outcome and
@@ -91,19 +112,36 @@ package actor NetworkEventHub {
         observers: [any NetworkEventObserving]
     ) {
         guard event.isTerminalRequestOutcome else {
-            enqueue(event, requestID: requestID, observers: observers, guaranteesAdmission: false)
+            enqueue(
+                event,
+                requestID: requestID,
+                observers: observers,
+                guaranteesAdmission: false,
+                occurredAt: nil,
+                completesPhysicalTransport: false
+            )
             return
         }
-        enqueue(event, requestID: requestID, observers: observers, guaranteesAdmission: true)
+        enqueue(
+            event,
+            requestID: requestID,
+            observers: observers,
+            guaranteesAdmission: true,
+            occurredAt: nil,
+            completesPhysicalTransport: false
+        )
     }
 
     private func enqueue(
         _ event: NetworkEvent,
         requestID: UUID,
         observers: [any NetworkEventObserving],
-        guaranteesAdmission: Bool
+        guaranteesAdmission: Bool,
+        occurredAt: Date?,
+        completesPhysicalTransport: Bool
     ) {
         guard !observers.isEmpty else { return }
+        let enqueuedAt = clock.now()
         var partition = partitions[requestID] ?? PartitionState()
         guard !partition.isClosed else { return }
         if partition.queue.count >= policy.maxBufferedEventsPerPartition {
@@ -125,7 +163,9 @@ package actor NetworkEventHub {
             PendingEvent(
                 event: event,
                 observers: observers,
-                enqueuedAt: clock.now(),
+                enqueuedAt: enqueuedAt,
+                occurredAt: occurredAt ?? enqueuedAt,
+                completesPhysicalTransport: completesPhysicalTransport,
                 guaranteesAdmission: guaranteesAdmission
             )
         )
@@ -170,14 +210,19 @@ package actor NetworkEventHub {
         while let pending = popNextEvent(requestID: requestID) {
             for (index, observer) in pending.observers.enumerated() {
                 let chain = observerChain(for: requestID, index: index, observer: observer)
+                let occurrence = EventOccurrence(
+                    event: pending.event,
+                    occurredAt: pending.occurredAt,
+                    completesPhysicalTransport: pending.completesPhysicalTransport
+                )
                 if pending.guaranteesAdmission {
                     await chain.enqueueGuaranteed(
-                        pending.event,
+                        occurrence,
                         enqueuedAt: pending.enqueuedAt
                     )
                 } else {
                     await chain.enqueue(
-                        pending.event,
+                        occurrence,
                         enqueuedAt: pending.enqueuedAt
                     )
                 }
@@ -208,7 +253,7 @@ package actor NetworkEventHub {
         for requestID: UUID,
         index: Int,
         observer: any NetworkEventObserving
-    ) -> EventDeliveryChain<NetworkEvent> {
+    ) -> EventDeliveryChain<EventOccurrence> {
         var partition = partitions[requestID] ?? PartitionState()
         if let existing = partition.observerChains[index] {
             partitions[requestID] = partition
@@ -217,14 +262,22 @@ package actor NetworkEventHub {
 
         let partitionID = requestID.uuidString
         let consumerID = "observer-\(index)"
-        let chain = EventDeliveryChain<NetworkEvent>(
+        let chain = EventDeliveryChain<EventOccurrence>(
             partitionID: partitionID,
             consumerID: consumerID,
             policy: policy,
             metricsReporter: metricsReporter,
             clock: clock
-        ) { event in
-            await observer.handle(event)
+        ) { occurrence, _ in
+            if let timestamped = observer as? any TimestampedNetworkEventObserving {
+                await timestamped.handle(
+                    occurrence.event,
+                    occurredAt: occurrence.occurredAt,
+                    completesPhysicalTransport: occurrence.completesPhysicalTransport
+                )
+            } else {
+                await observer.handle(occurrence.event)
+            }
         }
         partition.observerChains[index] = chain
         partitions[requestID] = partition

@@ -84,7 +84,7 @@ package actor TaskEventHub<Event: Sendable> {
             policy: policy,
             metricsReporter: metricsReporter,
             clock: clock,
-            handler: listener
+            handler: { event, _ in await listener(event) }
         )
         partitions[taskID] = partition
         return listenerID

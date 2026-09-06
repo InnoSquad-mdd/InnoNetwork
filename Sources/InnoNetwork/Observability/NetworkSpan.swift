@@ -30,7 +30,15 @@ public protocol NetworkSpanExporting: Sendable {
 /// Converts source lifecycle events into separate logical-request and physical-attempt spans.
 /// Export is drained asynchronously through a bounded queue; request execution never awaits
 /// the exporter. When saturated, the oldest completed span is discarded.
-public actor NetworkSpanObserver: NetworkEventObserving {
+package protocol TimestampedNetworkEventObserving: NetworkEventObserving {
+    func handle(
+        _ event: NetworkEvent,
+        occurredAt: Date,
+        completesPhysicalTransport: Bool
+    ) async
+}
+
+public actor NetworkSpanObserver: NetworkEventObserving, TimestampedNetworkEventObserving {
     public struct Policy: Sendable, Equatable {
         public var maximumBufferedSpans: Int {
             didSet { maximumBufferedSpans = max(1, maximumBufferedSpans) }
@@ -45,10 +53,17 @@ public actor NetworkSpanObserver: NetworkEventObserving {
         }
     }
 
+    private struct AttemptState {
+        let id: UUID
+        let startedAt: Date
+        var endedAt: Date?
+        var statusCode: Int?
+    }
+
     private struct RequestState {
         let spanID: UUID
         let startedAt: Date
-        var attempts: [Int: (id: UUID, startedAt: Date)] = [:]
+        var attempts: [Int: AttemptState] = [:]
         var nextAttemptIndex = 0
     }
 
@@ -86,7 +101,14 @@ public actor NetworkSpanObserver: NetworkEventObserving {
     }
 
     public func handle(_ event: NetworkEvent) async {
-        let timestamp = now()
+        await handle(event, occurredAt: now(), completesPhysicalTransport: false)
+    }
+
+    package func handle(
+        _ event: NetworkEvent,
+        occurredAt timestamp: Date,
+        completesPhysicalTransport: Bool
+    ) async {
         switch event {
         case .requestStart(let requestID, _, _, _):
             if requests[requestID] == nil {
@@ -104,10 +126,19 @@ public actor NetworkSpanObserver: NetworkEventObserving {
             guard var request = requests[decision.requestID] else { return }
             let attemptIndex = request.nextAttemptIndex
             request.nextAttemptIndex += 1
-            request.attempts[attemptIndex] = (
-                UUID(), decision.occurredAt ?? timestamp
+            request.attempts[attemptIndex] = AttemptState(
+                id: UUID(),
+                startedAt: decision.occurredAt ?? timestamp
             )
             requests[decision.requestID] = request
+
+        case .responseReceived(let requestID, let statusCode, _)
+        where completesPhysicalTransport:
+            markOpenAttemptsCompleted(
+                requestID: requestID,
+                statusCode: statusCode,
+                at: timestamp
+            )
 
         case .retryScheduled(let requestID, _, _, _):
             finishOpenAttempts(requestID: requestID, outcome: .retried, at: timestamp)
@@ -150,6 +181,7 @@ public actor NetworkSpanObserver: NetworkEventObserving {
     ) {
         guard let state = requests.removeValue(forKey: requestID) else { return }
         for (index, attempt) in state.attempts {
+            let attemptCompleted = attempt.endedAt != nil
             enqueue(
                 NetworkSpan(
                     id: attempt.id,
@@ -157,11 +189,11 @@ public actor NetworkSpanObserver: NetworkEventObserving {
                     requestID: requestID,
                     attemptIndex: index,
                     kind: .attempt,
-                    outcome: outcome,
+                    outcome: attemptCompleted ? .succeeded : outcome,
                     startedAt: attempt.startedAt,
-                    endedAt: endedAt,
-                    statusCode: statusCode,
-                    errorCode: errorCode
+                    endedAt: attempt.endedAt ?? endedAt,
+                    statusCode: attempt.statusCode ?? statusCode,
+                    errorCode: attemptCompleted ? nil : errorCode
                 ))
         }
         enqueue(
@@ -197,10 +229,23 @@ public actor NetworkSpanObserver: NetworkEventObserving {
                 kind: .attempt,
                 outcome: outcome,
                 startedAt: attempt.startedAt,
-                endedAt: endedAt,
-                statusCode: nil,
+                endedAt: attempt.endedAt ?? endedAt,
+                statusCode: attempt.statusCode,
                 errorCode: nil
             ))
+    }
+
+    private func markOpenAttemptsCompleted(
+        requestID: UUID,
+        statusCode: Int,
+        at endedAt: Date
+    ) {
+        guard var request = requests[requestID] else { return }
+        for index in request.attempts.keys where request.attempts[index]?.endedAt == nil {
+            request.attempts[index]?.endedAt = endedAt
+            request.attempts[index]?.statusCode = statusCode
+        }
+        requests[requestID] = request
     }
 
     private func finishOpenAttempts(
