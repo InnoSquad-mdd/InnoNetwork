@@ -455,6 +455,54 @@ struct StreamingTimeoutPolicyTests {
         await runtime.shutdown()
     }
 
+    @Test("A response completed after its absolute first-response deadline is discarded")
+    func lateFirstResponseCannotWinDelayedTimer() async throws {
+        let clock = TestClock()
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [ImmediateStreamingTimeoutURLProtocol.self]
+        let urlSession = URLSession(configuration: sessionConfiguration)
+        defer { urlSession.invalidateAndCancel() }
+        let session = LateFirstResponseSession(session: urlSession, clock: clock)
+        let configuration = NetworkConfiguration(
+            baseURL: URL(string: "https://stream-timeout.example.com")!,
+            networkMonitor: nil
+        )
+        let runtime = RequestExecutionRuntime(
+            configuration: configuration,
+            inFlight: InFlightRegistry(),
+            clock: clock
+        )
+        let eventHub = NetworkEventHub()
+        let (sequence, sink) = StreamingOutputSequence<String>.make(buffering: .backpressured)
+        let execution = Task {
+            await StreamingExecutor(session: session, eventHub: eventHub).run(
+                request: AbsoluteFirstResponseDeadlineStream(),
+                requestID: UUID(),
+                configuration: configuration,
+                executionRuntime: runtime,
+                sink: sink
+            )
+        }
+
+        var iterator = sequence.makeAsyncIterator()
+        do {
+            _ = try await iterator.next()
+            Issue.record("Expected the response that completed at two seconds to time out")
+        } catch {
+            guard case .timeout(.requestTimeout, _) = error else {
+                Issue.record("Expected the first-response timeout, got \(error)")
+                await execution.value
+                return
+            }
+        }
+        await execution.value
+
+        #expect(clock.monotonicNow() == .seconds(2))
+        #expect(clock.waiterCount == 0)
+        await eventHub.shutdown()
+        await runtime.shutdown()
+    }
+
     private func streamingTimeoutConfiguration(
         monitor: any NetworkMonitoring
     ) -> NetworkConfiguration {
@@ -590,6 +638,53 @@ private struct WatchdogResumeStream: StreamingAPIDefinition {
     )
 
     func decode(line: String) throws -> String? { line.isEmpty ? nil : line }
+}
+
+private struct AbsoluteFirstResponseDeadlineStream: StreamingAPIDefinition {
+    typealias Output = String
+
+    let method = HTTPMethod.get
+    let path = "events"
+    let sessionAuthentication = SessionAuthentication.anonymous
+    let timeoutPolicy = StreamingTimeoutPolicy(firstResponse: .seconds(1))
+
+    func decode(line: String) throws -> String? { line }
+}
+
+private struct LateFirstResponseSession: URLSessionProtocol {
+    let session: URLSession
+    let clock: TestClock
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        try await session.data(for: request)
+    }
+
+    func bytes(for request: URLRequest, context: NetworkRequestContext) async throws -> (
+        URLSession.AsyncBytes, URLResponse
+    ) {
+        let result = try await session.bytes(for: request, context: context)
+        clock.advanceWithoutResuming(by: .seconds(2))
+        return result
+    }
+}
+
+private final class ImmediateStreamingTimeoutURLProtocol: URLProtocol {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "text/event-stream"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data("late\n".utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }
 
 private final class SilentThenSuccessfulStreamURLProtocol: URLProtocol {

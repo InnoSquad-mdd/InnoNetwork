@@ -975,16 +975,18 @@ package struct StreamingExecutor: Sendable {
         onDiscarded: @escaping @Sendable (Value) async -> Void = { _ in },
         operation: @escaping @Sendable () async throws -> Value
     ) async throws -> Value {
-        var budgets: [(Duration, StreamingTimeoutPhase)] = []
-        if let phaseBudget { budgets.append((phaseBudget, phase)) }
-        if let totalBudget {
-            let remaining = logicalStart + totalBudget - clock.monotonicNow()
-            budgets.append((max(.zero, remaining), .total))
+        let startedAt = clock.monotonicNow()
+        var deadlines: [(instant: Duration, phase: StreamingTimeoutPhase)] = []
+        if let phaseBudget {
+            deadlines.append((startedAt + phaseBudget, phase))
         }
-        guard let selected = budgets.min(by: { $0.0 < $1.0 }) else {
+        if let totalBudget {
+            deadlines.append((logicalStart + totalBudget, .total))
+        }
+        guard let selected = deadlines.min(by: { $0.instant < $1.instant }) else {
             return try await operation()
         }
-        guard selected.0 > .zero else { throw selected.1.error }
+        guard selected.instant > startedAt else { throw selected.phase.error }
 
         // A structured task group cannot return until every child finishes,
         // even after cancelling the losing child. Interceptors and callback
@@ -996,20 +998,31 @@ package struct StreamingExecutor: Sendable {
         let operationTask = Task {
             do {
                 let value = try await operation()
-                if !(await gate.resolve(.success(value))) {
+                if clock.monotonicNow() >= selected.instant {
+                    _ = await gate.resolve(.failure(selected.phase.error))
+                    await onDiscarded(value)
+                } else if !(await gate.resolve(.success(value))) {
                     await onDiscarded(value)
                 }
             } catch {
-                _ = await gate.resolve(.failure(error))
+                let resolvedError =
+                    clock.monotonicNow() >= selected.instant
+                    ? selected.phase.error
+                    : error
+                _ = await gate.resolve(.failure(resolvedError))
             }
         }
         let timeoutTask = Task {
-            do {
-                try await clock.sleep(for: selected.0)
-            } catch {
-                return
+            while true {
+                let remaining = selected.instant - clock.monotonicNow()
+                guard remaining > .zero else { break }
+                do {
+                    try await clock.sleep(for: remaining)
+                } catch {
+                    return
+                }
             }
-            _ = await gate.resolve(.failure(selected.1.error))
+            _ = await gate.resolve(.failure(selected.phase.error))
         }
         let result = await withTaskCancellationHandler {
             await gate.wait()
