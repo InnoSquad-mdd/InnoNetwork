@@ -595,6 +595,46 @@ struct StreamingTimeoutPolicyTests {
         await runtime.shutdown()
     }
 
+    @Test("An explicit first-response deadline remains terminal when retry is enabled")
+    func firstResponseDeadlineDoesNotEnterHandshakeRetry() async throws {
+        let clock = TestClock()
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [ImmediateStreamingTimeoutURLProtocol.self]
+        let urlSession = URLSession(configuration: sessionConfiguration)
+        defer { urlSession.invalidateAndCancel() }
+        let session = LateFirstResponseSession(session: urlSession, clock: clock)
+        let configuration = NetworkConfiguration(
+            baseURL: URL(string: "https://stream-timeout.example.com")!,
+            retryPolicy: ExponentialBackoffRetryPolicy(
+                maxRetries: 1,
+                retryDelay: 0,
+                maxDelay: 0,
+                jitterRatio: 0
+            ),
+            networkMonitor: nil
+        )
+        let client = DefaultNetworkClient(
+            configuration: configuration,
+            session: session,
+            clock: clock
+        )
+
+        var iterator = client.stream(AbsoluteFirstResponseDeadlineStream()).makeAsyncIterator()
+        do {
+            _ = try await iterator.next()
+            Issue.record("Expected the first-response deadline to remain terminal")
+        } catch {
+            guard case .timeout(.requestTimeout, _) = error else {
+                Issue.record("Expected the first-response timeout, got \(error)")
+                await client.shutdown()
+                return
+            }
+        }
+
+        #expect(session.bytesCallCount == 1)
+        await client.shutdown()
+    }
+
     @Test("Control-only EOF cannot complete after the absolute total deadline")
     func controlOnlyEOFCannotBypassTotalDeadline() async throws {
         let clock = TestClock()
@@ -836,9 +876,17 @@ private struct LateControlOnlyEOFStream: StreamingAPIDefinition {
     }
 }
 
-private struct LateFirstResponseSession: URLSessionProtocol {
+private final class LateFirstResponseSession: URLSessionProtocol, Sendable {
     let session: URLSession
     let clock: TestClock
+    private let callCount = OSAllocatedUnfairLock(initialState: 0)
+
+    var bytesCallCount: Int { callCount.withLock { $0 } }
+
+    init(session: URLSession, clock: TestClock) {
+        self.session = session
+        self.clock = clock
+    }
 
     func data(for request: URLRequest) async throws -> (Data, URLResponse) {
         try await session.data(for: request)
@@ -847,6 +895,7 @@ private struct LateFirstResponseSession: URLSessionProtocol {
     func bytes(for request: URLRequest, context: NetworkRequestContext) async throws -> (
         URLSession.AsyncBytes, URLResponse
     ) {
+        callCount.withLock { $0 += 1 }
         let result = try await session.bytes(for: request, context: context)
         clock.advanceWithoutResuming(by: .seconds(2))
         return result

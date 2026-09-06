@@ -443,7 +443,7 @@ package struct StreamingExecutor: Sendable {
                     throw StreamingAttemptFailure(
                         error: error,
                         startedAt: attemptStartedAt,
-                        phase: .handshake,
+                        phase: Self.isExplicitStreamingDeadline(error) ? .terminalDeadline : .handshake,
                         request: retryRequest
                     )
                 }
@@ -1244,6 +1244,12 @@ package struct StreamingExecutor: Sendable {
             resourceTimeoutInterval: nil
         )
     }
+
+    private static func isExplicitStreamingDeadline(_ error: Error) -> Bool {
+        guard case .timeout(_, let underlying) = error as? NetworkError else { return false }
+        return underlying?.domain == NetworkError.errorDomain
+            && underlying?.code == NetworkErrorCode.streamingPhaseTimeout.rawValue
+    }
 }
 
 private struct BoundedStreamLine {
@@ -1266,6 +1272,7 @@ private struct StreamingAttemptFailure: Error {
     enum Phase {
         case handshake
         case body
+        case terminalDeadline
     }
 
     let error: Error
