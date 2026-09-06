@@ -745,6 +745,18 @@ package struct StreamingExecutor: Sendable {
                     onActivity: { watchdog.recordNetworkActivity() }
                 )
             } catch is CancellationError {
+                if let timeoutPhase = watchdog.revalidateDeadline() {
+                    switch timeoutPhase {
+                    case .firstEvent, .idle:
+                        return .transportFailure(
+                            timeoutPhase.error,
+                            attemptStartedAt,
+                            networkResponse
+                        )
+                    case .firstResponse, .total:
+                        throw timeoutPhase.error
+                    }
+                }
                 throw NetworkError.cancelled
             } catch let error as StreamingLineTooLargeError {
                 throw Self.streamFrameTooLargeError(
@@ -767,6 +779,19 @@ package struct StreamingExecutor: Sendable {
                     }
                 }
                 return .transportFailure(error, attemptStartedAt, networkResponse)
+            }
+
+            if let timeoutPhase = watchdog.revalidateDeadline() {
+                switch timeoutPhase {
+                case .firstEvent, .idle:
+                    return .transportFailure(
+                        timeoutPhase.error,
+                        attemptStartedAt,
+                        networkResponse
+                    )
+                case .firstResponse, .total:
+                    throw timeoutPhase.error
+                }
             }
 
             guard let frame else {

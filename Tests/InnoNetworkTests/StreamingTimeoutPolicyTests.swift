@@ -595,6 +595,41 @@ struct StreamingTimeoutPolicyTests {
         await runtime.shutdown()
     }
 
+    @Test("Control-only EOF cannot complete after the absolute total deadline")
+    func controlOnlyEOFCannotBypassTotalDeadline() async throws {
+        let clock = TestClock()
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [ImmediateStreamingTimeoutURLProtocol.self]
+        let session = URLSession(configuration: sessionConfiguration)
+        defer { session.invalidateAndCancel() }
+        let configuration = NetworkConfiguration(
+            baseURL: URL(string: "https://stream-timeout.example.com")!,
+            networkMonitor: nil
+        )
+        let client = DefaultNetworkClient(
+            configuration: configuration,
+            session: session,
+            clock: clock
+        )
+
+        var iterator = client.stream(
+            LateControlOnlyEOFStream(clock: clock)
+        ).makeAsyncIterator()
+        do {
+            _ = try await iterator.next()
+            Issue.record("Expected control-only EOF after the total deadline to time out")
+        } catch {
+            guard case .timeout(.resourceTimeout, _) = error else {
+                Issue.record("Expected the total timeout, got \(error)")
+                await client.shutdown()
+                return
+            }
+        }
+
+        #expect(clock.monotonicNow() == .seconds(2))
+        await client.shutdown()
+    }
+
     private func streamingTimeoutConfiguration(
         monitor: any NetworkMonitoring
     ) -> NetworkConfiguration {
@@ -784,6 +819,21 @@ private struct AbsoluteFirstResponseDeadlineStream: StreamingAPIDefinition {
     let timeoutPolicy = StreamingTimeoutPolicy(firstResponse: .seconds(1))
 
     func decode(line: String) throws -> String? { line }
+}
+
+private struct LateControlOnlyEOFStream: StreamingAPIDefinition {
+    typealias Output = String
+
+    let method = HTTPMethod.get
+    let path = "events"
+    let sessionAuthentication = SessionAuthentication.anonymous
+    let timeoutPolicy = StreamingTimeoutPolicy(total: .seconds(1))
+    let clock: TestClock
+
+    func decode(line: String) throws -> String? {
+        clock.advanceWithoutResuming(by: .seconds(2))
+        return nil
+    }
 }
 
 private struct LateFirstResponseSession: URLSessionProtocol {

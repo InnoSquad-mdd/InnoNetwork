@@ -121,6 +121,20 @@ package final class StreamingTimeoutWatchdog: Sendable {
         state.withLock { $0.timeout }
     }
 
+    /// Rechecks the active deadline at a synchronous completion boundary.
+    /// This closes the window where an operation completes after expiry before
+    /// the watchdog's sleeping task is scheduled to latch the timeout.
+    package func revalidateDeadline() -> StreamingTimeoutPhase? {
+        let now = clock.monotonicNow()
+        let result = state.withLock { state -> (StreamingTimeoutPhase?, Bool) in
+            guard !state.isFinished else { return (state.timeout, false) }
+            let didLatch = latchExpiredDeadline(in: &state, at: now)
+            return (state.timeout, didLatch)
+        }
+        if result.1 { cancelTransport() }
+        return result.0
+    }
+
     package func finish() {
         let task = state.withLock { state -> Task<Void, Never>? in
             state.isFinished = true
