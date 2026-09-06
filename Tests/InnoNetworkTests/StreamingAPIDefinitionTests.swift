@@ -1376,6 +1376,44 @@ struct StreamingAPIDefinitionTests {
         #expect(SequencedStreamingURLProtocol.capturedRequests(for: streamURL).count == 2)
     }
 
+    @Test("EventSource does not reconnect after a non-ASCII cursor")
+    func eventSourceUnsafeCursorStopsEOFReconnect() async throws {
+        try await assertInvalidCursorStopsEOFReconnect("invalid-☃")
+    }
+
+    @Test("EventSource does not reconnect after an oversized cursor")
+    func eventSourceOversizedCursorStopsEOFReconnect() async throws {
+        try await assertInvalidCursorStopsEOFReconnect(String(repeating: "x", count: 4_097))
+    }
+
+    private func assertInvalidCursorStopsEOFReconnect(_ invalidCursor: String) async throws {
+        let baseURL = uniqueStreamingBaseURL()
+        let definition = ResumableStream(
+            resumePolicy: .serverSentEvents(maxAttempts: 1, retryDelay: 0)
+        )
+        let streamURL = baseURL.appendingPathComponent(definition.path)
+        SequencedStreamingURLProtocol.enqueue(
+            url: streamURL,
+            steps: [
+                .success(
+                    statusCode: 200,
+                    data: Data("\(invalidCursor)|alpha\n2|later\n".utf8)
+                ),
+                .success(statusCode: 200, data: Data("3|replayed\n".utf8)),
+            ]
+        )
+        let client = DefaultNetworkClient(
+            configuration: NetworkConfiguration(baseURL: baseURL, timeout: 5),
+            session: makeSequencedStreamingURLSession()
+        )
+
+        var values: [ResumableEvent] = []
+        for try await value in client.stream(definition) { values.append(value) }
+
+        #expect(values.map(\.payload) == ["alpha", "later"])
+        #expect(SequencedStreamingURLProtocol.capturedRequests(for: streamURL).count == 1)
+    }
+
     @Test("StreamingResumePolicy clamps negative parameters")
     func resumePolicyClampsNegatives() {
         let policy = StreamingResumePolicy.lastEventID(maxAttempts: -3, retryDelay: -1)

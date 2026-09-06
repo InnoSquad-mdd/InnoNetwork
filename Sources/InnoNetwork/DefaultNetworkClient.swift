@@ -179,15 +179,6 @@ package struct StreamingResumeState: Sendable {
         case valid
         case explicitReset
         case invalid
-
-        var permitsResume: Bool {
-            switch self {
-            case .valid, .explicitReset:
-                return true
-            case .unobserved, .invalid:
-                return false
-            }
-        }
     }
 
     package private(set) var lastSeenEventID: String?
@@ -222,9 +213,27 @@ package struct StreamingResumeState: Sendable {
     }
 
     package func canResume(maxAttempts: Int, completedResumeAttempts: Int) -> Bool {
-        maxAttempts > 0
-            && completedResumeAttempts < maxAttempts
-            && attemptCursorObservation.permitsResume
+        canReconnect(
+            maxAttempts: maxAttempts,
+            completedResumeAttempts: completedResumeAttempts,
+            permitsCursorlessReconnect: false
+        )
+    }
+
+    package func canReconnect(
+        maxAttempts: Int,
+        completedResumeAttempts: Int,
+        permitsCursorlessReconnect: Bool
+    ) -> Bool {
+        guard maxAttempts > 0, completedResumeAttempts < maxAttempts else { return false }
+        switch attemptCursorObservation {
+        case .valid, .explicitReset:
+            return true
+        case .unobserved:
+            return permitsCursorlessReconnect
+        case .invalid:
+            return false
+        }
     }
 }
 

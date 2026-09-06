@@ -148,12 +148,11 @@ package struct StreamingExecutor: Sendable {
                     // - attempt budget remains
                     // - this attempt observed a safe cursor (empty cursor
                     //   explicitly resets Last-Event-ID)
-                    let hasBudget = resumeAttempts < resumeBudget
-                    let canResume =
-                        resumeState.canResume(
-                            maxAttempts: resumeBudget,
-                            completedResumeAttempts: resumeAttempts
-                        ) || (resumePolicy.permitsCursorlessReconnect && hasBudget)
+                    let canResume = resumeState.canReconnect(
+                        maxAttempts: resumeBudget,
+                        completedResumeAttempts: resumeAttempts,
+                        permitsCursorlessReconnect: resumePolicy.permitsCursorlessReconnect
+                    )
                     if canResume && Self.isResumableTransportError(streamError) {
                         resumeAttempts += 1
                         let reconnectDelay = resumeState.serverRetryDelay ?? resumePolicy.retryDelay
@@ -176,7 +175,11 @@ package struct StreamingExecutor: Sendable {
 
                 case .completed(let networkResponse, let streamedByteCount):
                     if resumePolicy.reconnectsAfterEOF,
-                        resumeAttempts < resumeBudget
+                        resumeState.canReconnect(
+                            maxAttempts: resumeBudget,
+                            completedResumeAttempts: resumeAttempts,
+                            permitsCursorlessReconnect: resumePolicy.permitsCursorlessReconnect
+                        )
                     {
                         resumeAttempts += 1
                         let reconnectDelay = resumeState.serverRetryDelay ?? resumePolicy.retryDelay

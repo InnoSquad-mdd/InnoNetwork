@@ -77,6 +77,13 @@ struct StreamingResumePolicyCompatibilityTests {
         state.observe(eventID: "")
         #expect(state.lastSeenEventID == nil)
         #expect(!state.canResume(maxAttempts: 2, completedResumeAttempts: 0))
+        #expect(
+            !state.canReconnect(
+                maxAttempts: 2,
+                completedResumeAttempts: 0,
+                permitsCursorlessReconnect: true
+            )
+        )
         state.beginAttempt()
         state.observe(eventID: "3")
         #expect(state.canResume(maxAttempts: 2, completedResumeAttempts: 0))
