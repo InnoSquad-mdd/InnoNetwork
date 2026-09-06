@@ -141,9 +141,9 @@ public struct OperationNetworkClient<Base: NetworkClient>: Sendable {
                 return result
             }
 
-            let result: Result<Request.APIResponse, NetworkFailure>
+            let deadlineTask: Task<Void, Never>?
             if let deadlineInstant {
-                let deadlineTask = Task {
+                deadlineTask = Task {
                     do {
                         let remaining = max(.zero, deadlineInstant - deadlineClock.monotonicNow())
                         try await deadlineClock.sleep(for: remaining)
@@ -162,22 +162,18 @@ public struct OperationNetworkClient<Base: NetworkClient>: Sendable {
                         requestTask.cancel()
                     }
                 }
-                result = await withTaskCancellationHandler {
-                    await gate.wait()
-                } onCancel: {
-                    requestTask.cancel()
-                    deadlineTask.cancel()
-                    _ = gate.resolve(.failure(cancellationFailure))
-                }
-                deadlineTask.cancel()
-                requestTask.cancel()
             } else {
-                result = await withTaskCancellationHandler {
-                    await requestTask.value
-                } onCancel: {
-                    requestTask.cancel()
-                }
+                deadlineTask = nil
             }
+            let result = await withTaskCancellationHandler {
+                await gate.wait()
+            } onCancel: {
+                requestTask.cancel()
+                deadlineTask?.cancel()
+                _ = gate.resolve(.failure(cancellationFailure))
+            }
+            deadlineTask?.cancel()
+            requestTask.cancel()
 
             switch result {
             case .success(let value):

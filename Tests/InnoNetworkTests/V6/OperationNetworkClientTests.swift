@@ -341,6 +341,60 @@ struct OperationNetworkClientTests {
         #expect(clock.waiterCount == 0)
     }
 
+    @Test("Operation cancellation does not await a cancellation-noncooperative base")
+    func cancellationReturnsBeforeNoncooperativeBase() async throws {
+        let base = CancellationHeldNetworkClient()
+        let operation = OperationNetworkClient(client: base).start(PreviewEndpoint())
+        await base.waitUntilStarted()
+
+        let clock = TestClock()
+        let completionGate = FirstBoolGate()
+        let valueTask = Task {
+            let failure = await failure(from: operation)
+            _ = await completionGate.resolve(true)
+            return failure
+        }
+        let timeoutTask = Task {
+            try? await clock.sleep(for: .seconds(1))
+            _ = await completionGate.resolve(false)
+        }
+        #expect(await clock.waitForWaiters(count: 1))
+
+        operation.cancel()
+        await base.waitUntilCancelled()
+        clock.advance(by: .seconds(1))
+
+        #expect(await completionGate.wait())
+        await base.release()
+        let result = await valueTask.value
+        timeoutTask.cancel()
+        #expect(result.kind == .cancelled)
+        #expect(clock.waiterCount == 0)
+    }
+
+    @Test("Cancelling a value awaiter cancels its operation before the deadline")
+    func valueAwaiterCancellationPropagates() async throws {
+        let base = CancellationHeldNetworkClient()
+        let clock = TestClock()
+        let operation = OperationNetworkClient(client: base, deadlineClock: clock).start(
+            PreviewEndpoint(),
+            deadline: NetworkOperationDeadline(after: .seconds(60))
+        )
+        let valueTask = Task { await failure(from: operation) }
+
+        await base.waitUntilStarted()
+        #expect(await clock.waitForWaiters(count: 1))
+        valueTask.cancel()
+        await Task.yield()
+        clock.advance(by: .seconds(60))
+        let result = await valueTask.value
+
+        #expect(result.kind == .cancelled)
+        #expect(result.deadlineStage == nil)
+        await base.release()
+        #expect(clock.waiterCount == 0)
+    }
+
     @Test("Coalesced callers keep independent operation deadlines", .timeLimit(.minutes(1)))
     func coalescedCallersKeepIndependentDeadlines() async throws {
         let clock = TestClock()
@@ -395,6 +449,32 @@ private func failure<Value: Sendable>(
         )
     } catch {
         return error
+    }
+}
+
+private actor FirstBoolGate {
+    private var value: Bool?
+    private var waiters: [CheckedContinuation<Bool, Never>] = []
+
+    @discardableResult
+    func resolve(_ value: Bool) -> Bool {
+        guard self.value == nil else { return false }
+        self.value = value
+        let pending = waiters
+        waiters.removeAll(keepingCapacity: false)
+        for waiter in pending { waiter.resume(returning: value) }
+        return true
+    }
+
+    func wait() async -> Bool {
+        if let value { return value }
+        return await withCheckedContinuation { continuation in
+            if let value {
+                continuation.resume(returning: value)
+            } else {
+                waiters.append(continuation)
+            }
+        }
     }
 }
 
@@ -506,6 +586,56 @@ private actor DeadlineHeldNetworkClient: NetworkClient {
         await withCheckedContinuation { continuation in
             startWaiters.append(continuation)
         }
+    }
+
+    func release() {
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+private actor CancellationHeldNetworkClient: NetworkClient {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    let cancellation = AsyncStream<Void>.makeStream()
+    private var requestStarted = false
+
+    func request<Request: APIDefinition>(
+        _: Request,
+        tag _: CancellationTag?
+    ) async throws(NetworkError) -> Request.APIResponse {
+        requestStarted = true
+        let pendingStarts = startWaiters
+        startWaiters.removeAll(keepingCapacity: false)
+        for waiter in pendingStarts { waiter.resume() }
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                self.continuation = continuation
+            }
+        } onCancel: {
+            cancellation.continuation.yield()
+        }
+        guard !Task.isCancelled else { throw .cancelled }
+        do {
+            return try JSONDecoder().decode(
+                Request.APIResponse.self,
+                from: JSONEncoder().encode(PreviewResponse(id: "late"))
+            )
+        } catch {
+            throw .configuration(reason: .invalidRequest("Unable to create the cancellation test response."))
+        }
+    }
+
+    func waitUntilStarted() async {
+        guard !requestStarted else { return }
+        await withCheckedContinuation { continuation in
+            startWaiters.append(continuation)
+        }
+    }
+
+    func waitUntilCancelled() async {
+        var iterator = cancellation.stream.makeAsyncIterator()
+        _ = await iterator.next()
     }
 
     func release() {

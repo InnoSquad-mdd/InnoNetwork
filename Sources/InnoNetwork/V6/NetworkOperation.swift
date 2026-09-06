@@ -12,6 +12,8 @@ public enum NetworkOperationEvent: Sendable, Equatable {
 /// The event stream is registered before work starts and retains the bounded
 /// start/terminal lifecycle for a late first consumer. Await ``value()`` for
 /// the typed response or call ``cancel()`` without retaining the client.
+/// Cancelling a task that is currently awaiting ``value()`` also cancels this
+/// operation so structured callers do not leave detached network work behind.
 public struct NetworkOperation<Value: Sendable>: Sendable {
     public let id: UUID
     public let events: AsyncStream<NetworkOperationEvent>
@@ -29,7 +31,12 @@ public struct NetworkOperation<Value: Sendable>: Sendable {
     }
 
     public func value() async throws(NetworkFailure) -> Value {
-        switch await task.value {
+        let result = await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        switch result {
         case .success(let value):
             return value
         case .failure(let failure):
