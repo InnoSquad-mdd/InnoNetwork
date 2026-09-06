@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Testing
 
 @testable import InnoNetwork
@@ -175,6 +176,43 @@ struct InMemoryResponseCacheLRUTests {
 
     private func makeResponse(byteSize: Int) -> CachedResponse {
         CachedResponse(data: Data(repeating: 0xAA, count: byteSize))
+    }
+
+    private func makeTrackedResponse(
+        deallocations: OSAllocatedUnfairLock<Int>
+    ) -> CachedResponse {
+        let byteCount = 128
+        let pointer = UnsafeMutableRawPointer.allocate(
+            byteCount: byteCount,
+            alignment: MemoryLayout<UInt8>.alignment
+        )
+        pointer.initializeMemory(as: UInt8.self, repeating: 0xAA, count: byteCount)
+        let data = Data(
+            bytesNoCopy: pointer,
+            count: byteCount,
+            deallocator: .custom { pointer, _ in
+                deallocations.withLock { $0 += 1 }
+                pointer.deallocate()
+            }
+        )
+        return CachedResponse(data: data)
+    }
+
+    @Test("Cache destruction releases every stored payload", arguments: [1, 2, 8])
+    func cacheDestructionReleasesPayloads(entryCount: Int) async {
+        let deallocations = OSAllocatedUnfairLock(initialState: 0)
+
+        do {
+            let cache = InMemoryResponseCache(maxBytes: 10_000)
+            for index in 0..<entryCount {
+                await cache.set(
+                    makeKey("https://example.com/lifetime/\(index)"),
+                    makeTrackedResponse(deallocations: deallocations)
+                )
+            }
+        }
+
+        #expect(deallocations.withLock { $0 } == entryCount)
     }
 
     @Test("Eviction removes the least-recently-used entry")

@@ -346,7 +346,7 @@ public actor InMemoryResponseCache: ResponseCache {
         let key: ResponseCacheKey
         var value: CachedResponse
         var cost: Int
-        var prev: Node?
+        weak var prev: Node?
         var next: Node?
 
         init(key: ResponseCacheKey, value: CachedResponse, cost: Int) {
