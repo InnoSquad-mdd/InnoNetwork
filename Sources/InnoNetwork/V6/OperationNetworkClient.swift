@@ -99,31 +99,32 @@ public struct OperationNetworkClient<Base: NetworkClient>: Sendable {
 
             let gate = NetworkOperationResultGate<Request.APIResponse>()
             let requestTask = Task<Result<Request.APIResponse, NetworkFailure>, Never> {
-                let result: Result<Request.APIResponse, NetworkFailure> = await NetworkOperationDeadlineContext.$tracker.withValue(tracker) {
-                    do {
-                        let value = try await base.request(request, tag: tag)
-                        return .success(value)
-                    } catch let error as NetworkError {
-                        return .failure(
-                            NetworkFailure(
-                                migratingV5: error,
-                                requestMethod: requestMethod,
-                                sessionAuthentication: sessionAuthentication,
-                                replaySafety: replaySafety
+                let result: Result<Request.APIResponse, NetworkFailure> = await NetworkOperationDeadlineContext.$tracker
+                    .withValue(tracker) {
+                        do {
+                            let value = try await base.request(request, tag: tag)
+                            return .success(value)
+                        } catch let error as NetworkError {
+                            return .failure(
+                                NetworkFailure(
+                                    migratingV5: error,
+                                    requestMethod: requestMethod,
+                                    sessionAuthentication: sessionAuthentication,
+                                    replaySafety: replaySafety
+                                )
                             )
-                        )
-                    } catch {
-                        let mapped = NetworkError.mapTransportError(error)
-                        return .failure(
-                            NetworkFailure(
-                                migratingV5: mapped,
-                                requestMethod: requestMethod,
-                                sessionAuthentication: sessionAuthentication,
-                                replaySafety: replaySafety
+                        } catch {
+                            let mapped = NetworkError.mapTransportError(error)
+                            return .failure(
+                                NetworkFailure(
+                                    migratingV5: mapped,
+                                    requestMethod: requestMethod,
+                                    sessionAuthentication: sessionAuthentication,
+                                    replaySafety: replaySafety
+                                )
                             )
-                        )
+                        }
                     }
-                }
                 if let deadlineInstant, deadlineClock.monotonicNow() >= deadlineInstant {
                     _ = gate.resolve(
                         .failure(
