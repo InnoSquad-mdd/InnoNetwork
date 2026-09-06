@@ -245,7 +245,6 @@ extension RequestExecutor {
     ) async throws -> Response {
         let eventHub = self.eventHub
         let baseNext = RequestExecutionNext {
-            NetworkOperationDeadlineContext.mark(.transport)
             let result = try await performTransportResult(
                 request: request,
                 identityRequest: identityRequest,

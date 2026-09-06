@@ -103,6 +103,11 @@ extension RequestExecutor {
                     refreshLane: refreshLane
                 )
             {
+                // A follower waits for an already-running physical request and
+                // therefore remains in the transport stage. The owner resets
+                // the stage to policy admission inside the closure before it
+                // acquires its local rate/admission permits.
+                NetworkOperationDeadlineContext.mark(.transport)
                 return try await runtime.requestCoalescer.run(key: key) {
                     try await self.transportAndRecordCircuit(
                         request: request,
@@ -151,6 +156,7 @@ extension RequestExecutor {
         policy: CircuitBreakerPolicy?,
         circuitProbe: CircuitBreakerProbe?
     ) async throws -> TransportResult {
+        NetworkOperationDeadlineContext.mark(.policyAdmission)
         let rateReservation: RateLimitReservation?
         do {
             rateReservation = try await runtime.rateLimit?.reserve(for: request)
@@ -301,6 +307,7 @@ extension RequestExecutor {
                 requestID: context.requestID,
                 observers: context.eventObservers
             )
+            NetworkOperationDeadlineContext.mark(.transport)
             let result = try await transport(
                 request: request,
                 bodySource: bodySource,

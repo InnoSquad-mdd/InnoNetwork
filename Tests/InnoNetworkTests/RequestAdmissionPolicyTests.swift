@@ -6,6 +6,55 @@ import Testing
 
 @Suite("Request Admission Policy Tests", .serialized)
 struct RequestAdmissionPolicyTests {
+    @Test("A built-in admission wait reports policy admission before transport")
+    func admissionWaitReportsDeadlineStage() async throws {
+        let clock = TestClock()
+        let configuration = NetworkConfiguration(
+            baseURL: URL(string: "https://api.example.test")!,
+            networkMonitor: nil,
+            requestAdmissionPolicy: RequestAdmissionPolicy(
+                maximumConcurrentRequests: 1,
+                maximumPendingRequests: 1,
+                maximumQueueWait: .seconds(30)
+            )
+        )
+        let runtime = RequestExecutionRuntime(
+            configuration: configuration,
+            inFlight: InFlightRegistry(),
+            clock: clock
+        )
+        let blocker = try #require(
+            try await runtime.requestAdmission?.acquire(
+                for: URLRequest(url: configuration.baseURL)
+            )
+        )
+        let tracker = NetworkOperationDeadlineTracker()
+        let hub = NetworkEventHub()
+        let executor = RequestExecutor(session: MockURLSession(), eventHub: hub)
+        let task = Task {
+            try await NetworkOperationDeadlineContext.$tracker.withValue(tracker) {
+                try await executor.execute(
+                    APISingleRequestExecutable(base: AdmissionEndpoint()),
+                    configuration: configuration,
+                    requestBuilder: RequestBuilder(),
+                    runtime: runtime,
+                    retryIndex: 0,
+                    requestID: UUID()
+                )
+            }
+        }
+
+        #expect(await clock.waitForWaiters(count: 1))
+        #expect(await runtime.requestAdmission?.snapshot.pending == 1)
+        #expect(tracker.currentStage == .policyAdmission)
+
+        task.cancel()
+        _ = await task.result
+        await runtime.requestAdmission?.release(scope: blocker.scope)
+        await hub.shutdown()
+        await runtime.shutdown()
+    }
+
     @Test("Queue capacity rejects excess work without leaking permits")
     func boundedQueue() async throws {
         let coordinator = RequestAdmissionCoordinator(
@@ -170,4 +219,14 @@ struct RequestAdmissionPolicyTests {
         }
         Issue.record("Admission waiter did not enqueue")
     }
+}
+
+private struct AdmissionEndpoint: APIDefinition {
+    typealias Parameter = EmptyParameter
+    typealias APIResponse = Int
+
+    let method = HTTPMethod.get
+    let path = "/admission"
+    let sessionAuthentication = SessionAuthentication.anonymous
+    let parameters: EmptyParameter? = nil
 }
