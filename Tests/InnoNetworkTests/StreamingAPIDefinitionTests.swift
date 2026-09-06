@@ -526,14 +526,32 @@ private final class StreamingURLProtocol: URLProtocol {
 
 
 private actor StreamingEventStore {
+    private struct Waiter {
+        let minimumCount: Int
+        let continuation: CheckedContinuation<[NetworkEvent], Never>
+    }
+
     private var events: [NetworkEvent] = []
+    private var waiters: [Waiter] = []
 
     func append(_ event: NetworkEvent) {
         events.append(event)
+        let ready = waiters.filter { events.count >= $0.minimumCount }
+        waiters.removeAll { events.count >= $0.minimumCount }
+        for waiter in ready {
+            waiter.continuation.resume(returning: events)
+        }
     }
 
     func snapshot() -> [NetworkEvent] {
         events
+    }
+
+    func waitForCount(_ minimumCount: Int) async -> [NetworkEvent] {
+        if events.count >= minimumCount { return events }
+        return await withCheckedContinuation { continuation in
+            waiters.append(Waiter(minimumCount: minimumCount, continuation: continuation))
+        }
     }
 }
 
@@ -574,23 +592,6 @@ private func makeStreamingURLSession() -> URLSession {
 
 private func uniqueStreamingBaseURL() -> URL {
     URL(string: "https://stream-\(UUID().uuidString).example.com/v1")!
-}
-
-
-private func waitForStreamingEvents(
-    store: StreamingEventStore,
-    minimumCount: Int,
-    timeout: TimeInterval = 1.0
-) async -> [NetworkEvent] {
-    let deadline = Date().addingTimeInterval(timeout)
-    while Date() < deadline {
-        let events = await store.snapshot()
-        if events.count >= minimumCount {
-            return events
-        }
-        try? await Task.sleep(for: .milliseconds(10))
-    }
-    return await store.snapshot()
 }
 
 
@@ -688,7 +689,7 @@ struct StreamingAPIDefinitionTests {
         }
 
         #expect(values == ["one", "two"])
-        let events = await waitForStreamingEvents(store: store, minimumCount: 5)
+        let events = await store.waitForCount(5)
         #expect(events.map(streamingEventName) == ["start", "adapted", "dispatch", "response", "finished"])
         let finishedByteCounts = events.compactMap { event -> Int? in
             if case .requestFinished(_, _, let byteCount) = event { return byteCount }
@@ -719,20 +720,14 @@ struct StreamingAPIDefinitionTests {
         // Wait for the terminal event, not merely response acceptance. Under
         // scheduler pressure the consumer can otherwise drain the first
         // buffered value while the producer is still replacing later values.
-        _ = await waitForStreamingEvents(store: store, minimumCount: 5)
+        _ = await store.waitForCount(5)
 
         var values: [String] = []
         for try await value in stream {
             values.append(value)
         }
 
-        // AsyncThrowingStream may already have selected one delivery for an
-        // iterator while retaining one newest buffered delivery. The bounded
-        // contract is therefore at most one in-flight value plus the newest
-        // buffered value, not a scheduler-dependent exact drop count.
-        #expect(values.count <= 2)
-        #expect(values.last == "three")
-        #expect(!values.contains("two"))
+        #expect(values == ["three"])
     }
 
     @Test(
@@ -1117,7 +1112,7 @@ struct StreamingAPIDefinitionTests {
         let captured = SequencedStreamingURLProtocol.capturedRequests(for: streamURL)
         #expect(values == ["recovered"])
         #expect(captured.count == 2)
-        let events = await waitForStreamingEvents(store: store, minimumCount: 10)
+        let events = await store.waitForCount(10)
         let retryDelays = events.compactMap { event -> TimeInterval? in
             if case .retryScheduled(_, _, let delay, _) = event { return delay }
             return nil
@@ -1181,7 +1176,7 @@ struct StreamingAPIDefinitionTests {
         let captured = SequencedStreamingURLProtocol.capturedRequests(for: streamURL)
         #expect(values == ["recovered"])
         #expect(captured.count == 2)
-        let events = await waitForStreamingEvents(store: store, minimumCount: 9)
+        let events = await store.waitForCount(9)
         #expect(
             events.map(streamingEventName) == [
                 "start",
