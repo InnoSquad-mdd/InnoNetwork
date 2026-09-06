@@ -229,6 +229,9 @@ public struct CachedResponse: Sendable, Equatable {
     public let statusCode: Int
     public let headers: [String: String]
     public let storedAt: Date
+    /// Corrected response age at ``storedAt``. Kept package-scoped because it
+    /// is transport/cache bookkeeping rather than application metadata.
+    package let rfc9111InitialAge: TimeInterval
     /// Whether a cached entry must be revalidated before reuse even while it
     /// is still inside the caller-provided freshness window.
     public let requiresRevalidation: Bool
@@ -253,6 +256,29 @@ public struct CachedResponse: Sendable, Equatable {
         self.statusCode = statusCode
         self.headers = headers
         self.storedAt = storedAt
+        self.rfc9111InitialAge = RFC9111ResponseAge.initialAge(
+            headers: headers,
+            requestTime: storedAt,
+            responseTime: storedAt
+        )
+        self.requiresRevalidation = requiresRevalidation
+        self.varyHeaders = varyHeaders
+    }
+
+    package init(
+        data: Data,
+        statusCode: Int = 200,
+        headers: [String: String] = [:],
+        storedAt: Date,
+        rfc9111InitialAge: TimeInterval,
+        requiresRevalidation: Bool = false,
+        varyHeaders: [String: String?]? = nil
+    ) {
+        self.data = data
+        self.statusCode = statusCode
+        self.headers = headers
+        self.storedAt = storedAt
+        self.rfc9111InitialAge = RFC9111ResponseAge.clamp(rfc9111InitialAge)
         self.requiresRevalidation = requiresRevalidation
         self.varyHeaders = varyHeaders
     }
@@ -289,9 +315,11 @@ public struct CachedResponse: Sendable, Equatable {
             varyHeaders?.reduce(0) { partial, entry in
                 partial + entry.key.utf8.count + (entry.value?.utf8.count ?? 0)
             } ?? 0
-        // Date stride covers `storedAt`; constant overhead covers the boxed
-        // optional `varyHeaders` and the `requiresRevalidation` flag.
-        return data.count + headersCost + varyCost + MemoryLayout<Date>.stride + 16
+        // Fixed-width strides cover `storedAt` and the RFC initial-age
+        // snapshot; constant overhead covers the boxed optional
+        // `varyHeaders` and the `requiresRevalidation` flag.
+        return data.count + headersCost + varyCost
+            + MemoryLayout<Date>.stride + MemoryLayout<TimeInterval>.stride + 16
     }
 }
 
@@ -520,6 +548,14 @@ package extension ResponseCachePolicy {
     }
 
     func prepare(cached: CachedResponse?, now: Date = Date()) -> CachePreparation {
+        prepare(cached: cached, now: now, rfc9111InitialAge: nil)
+    }
+
+    func prepare(
+        cached: CachedResponse?,
+        now: Date,
+        rfc9111InitialAge: TimeInterval?
+    ) -> CachePreparation {
         switch self {
         case .disabled:
             return .bypass
@@ -528,12 +564,19 @@ package extension ResponseCachePolicy {
         case .cacheFirst(let maxAge):
             guard let cached else { return .revalidate(nil) }
             guard !cached.requiresRevalidation else { return .revalidate(cached) }
-            return cached.age(since: now) <= maxAge.timeInterval ? .returnCached(cached) : .revalidate(cached)
+            let age = cached.age(since: now, additionalAge: rfc9111InitialAge ?? 0)
+            let isFresh = rfc9111InitialAge == nil
+                ? age <= maxAge.timeInterval
+                : age < maxAge.timeInterval
+            return isFresh ? .returnCached(cached) : .revalidate(cached)
         case .staleWhileRevalidate(let maxAge, let staleWindow):
             guard let cached else { return .revalidate(nil) }
             guard !cached.requiresRevalidation else { return .revalidate(cached) }
-            let age = cached.age(since: now)
-            if age <= maxAge.timeInterval {
+            let age = cached.age(since: now, additionalAge: rfc9111InitialAge ?? 0)
+            let isFresh = rfc9111InitialAge == nil
+                ? age <= maxAge.timeInterval
+                : age < maxAge.timeInterval
+            if isFresh {
                 return .returnCached(cached)
             }
             if age <= maxAge.timeInterval + staleWindow.timeInterval {
@@ -541,9 +584,18 @@ package extension ResponseCachePolicy {
             }
             return .revalidate(cached)
         case .rfc9111Compliant(let inner):
-            return prepareWithRFC9111(inner: inner, cached: cached, now: now)
+            return prepareWithRFC9111(
+                inner: inner,
+                cached: cached,
+                now: now,
+                initialAge: cached?.rfc9111InitialAge ?? rfc9111InitialAge
+            )
         case .staleIfError(let inner), .requestOnlyIfCached(let inner):
-            return inner.prepare(cached: cached, now: now)
+            return inner.prepare(
+                cached: cached,
+                now: now,
+                rfc9111InitialAge: rfc9111InitialAge
+            )
         }
     }
 
@@ -588,8 +640,23 @@ package extension ResponseCachePolicy {
         else {
             return nil
         }
-        let staleness = max(0, cached.age(since: now) - freshnessLifetime)
+        let additionalAge = containsRFC9111Adapter ? cached.rfc9111InitialAge : 0
+        let staleness = max(
+            0,
+            cached.age(since: now, additionalAge: additionalAge) - freshnessLifetime
+        )
         return staleness <= staleWindow ? cached : nil
+    }
+
+    private var containsRFC9111Adapter: Bool {
+        switch self {
+        case .rfc9111Compliant:
+            return true
+        case .staleIfError(let inner), .requestOnlyIfCached(let inner):
+            return inner.containsRFC9111Adapter
+        case .disabled, .networkOnly, .cacheFirst, .staleWhileRevalidate:
+            return false
+        }
     }
 
     private func effectiveFreshnessLifetime(for cached: CachedResponse) -> TimeInterval? {
@@ -619,8 +686,10 @@ package extension ResponseCachePolicy {
 
 
 private extension CachedResponse {
-    func age(since now: Date) -> TimeInterval {
-        max(0, now.timeIntervalSince(storedAt))
+    func age(since now: Date, additionalAge: TimeInterval = 0) -> TimeInterval {
+        RFC9111ResponseAge.clamp(
+            max(0, now.timeIntervalSince(storedAt)) + max(0, additionalAge)
+        )
     }
 }
 
