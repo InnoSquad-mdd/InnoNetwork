@@ -36,6 +36,22 @@ package protocol TimestampedNetworkEventObserving: NetworkEventObserving {
         occurredAt: Date,
         completesPhysicalTransport: Bool
     ) async
+
+    func physicalTransportCompleted(
+        requestID: UUID,
+        statusCode: Int,
+        occurredAt: Date
+    ) async
+}
+
+package extension TimestampedNetworkEventObserving {
+    func physicalTransportCompleted(
+        requestID: UUID,
+        statusCode: Int,
+        occurredAt: Date
+    ) async {
+        _ = (requestID, statusCode, occurredAt)
+    }
 }
 
 public actor NetworkSpanObserver: NetworkEventObserving, TimestampedNetworkEventObserving {
@@ -132,13 +148,16 @@ public actor NetworkSpanObserver: NetworkEventObserving, TimestampedNetworkEvent
             )
             requests[decision.requestID] = request
 
-        case .responseReceived(let requestID, let statusCode, _)
-        where completesPhysicalTransport:
-            markOpenAttemptsCompleted(
-                requestID: requestID,
-                statusCode: statusCode,
-                at: timestamp
-            )
+        case .responseReceived(let requestID, let statusCode, _):
+            if completesPhysicalTransport {
+                markOpenAttemptsCompleted(
+                    requestID: requestID,
+                    statusCode: statusCode,
+                    at: timestamp
+                )
+            } else {
+                markOpenAttemptStatus(requestID: requestID, statusCode: statusCode)
+            }
 
         case .retryScheduled(let requestID, _, _, _):
             finishOpenAttempts(requestID: requestID, outcome: .retried, at: timestamp)
@@ -161,9 +180,22 @@ public actor NetworkSpanObserver: NetworkEventObserving, TimestampedNetworkEvent
                 at: timestamp
             )
 
-        case .requestAdapted, .responseReceived, .cacheRevalidation, .decision:
+        case .requestAdapted, .cacheRevalidation, .decision:
             break
         }
+    }
+
+    package func physicalTransportCompleted(
+        requestID: UUID,
+        statusCode: Int,
+        occurredAt: Date
+    ) async {
+        markOpenAttemptsCompleted(
+            requestID: requestID,
+            statusCode: statusCode,
+            at: occurredAt
+        )
+        finishOpenAttempts(requestID: requestID, outcome: .retried, at: occurredAt)
     }
 
     package func flush() async {
@@ -243,6 +275,14 @@ public actor NetworkSpanObserver: NetworkEventObserving, TimestampedNetworkEvent
         guard var request = requests[requestID] else { return }
         for index in request.attempts.keys where request.attempts[index]?.endedAt == nil {
             request.attempts[index]?.endedAt = endedAt
+            request.attempts[index]?.statusCode = statusCode
+        }
+        requests[requestID] = request
+    }
+
+    private func markOpenAttemptStatus(requestID: UUID, statusCode: Int) {
+        guard var request = requests[requestID] else { return }
+        for index in request.attempts.keys where request.attempts[index]?.endedAt == nil {
             request.attempts[index]?.statusCode = statusCode
         }
         requests[requestID] = request

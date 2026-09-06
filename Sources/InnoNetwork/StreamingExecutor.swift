@@ -142,7 +142,11 @@ package struct StreamingExecutor: Sendable {
                 )
 
                 switch attemptResult {
-                case .transportFailure(let streamError, let attemptStartedAt):
+                case .transportFailure(
+                    let streamError,
+                    let attemptStartedAt,
+                    let networkResponse
+                ):
                     // Mid-stream transport disconnect. Resume only when:
                     // - resume policy is active
                     // - attempt budget remains
@@ -154,6 +158,12 @@ package struct StreamingExecutor: Sendable {
                         permitsCursorlessReconnect: resumePolicy.permitsCursorlessReconnect
                     )
                     if canResume && Self.isResumableTransportError(streamError) {
+                        await eventHub.publishPhysicalTransportCompletion(
+                            requestID: requestID,
+                            statusCode: networkResponse.statusCode,
+                            observers: configuration.eventObservers,
+                            occurredAt: executionRuntime.clock.now()
+                        )
                         resumeAttempts += 1
                         let reconnectDelay = resumeState.serverRetryDelay ?? resumePolicy.retryDelay
                         try await withStreamingTimeout(
@@ -174,13 +184,20 @@ package struct StreamingExecutor: Sendable {
                     throw StreamingAttemptFailure(error: streamError, startedAt: attemptStartedAt)
 
                 case .completed(let networkResponse, let streamedByteCount):
-                    if resumePolicy.reconnectsAfterEOF,
-                        resumeState.canReconnect(
+                    let reconnectsAfterEOF =
+                        resumePolicy.reconnectsAfterEOF
+                        && resumeState.canReconnect(
                             maxAttempts: resumeBudget,
                             completedResumeAttempts: resumeAttempts,
                             permitsCursorlessReconnect: resumePolicy.permitsCursorlessReconnect
                         )
-                    {
+                    if reconnectsAfterEOF {
+                        await eventHub.publishPhysicalTransportCompletion(
+                            requestID: requestID,
+                            statusCode: networkResponse.statusCode,
+                            observers: configuration.eventObservers,
+                            occurredAt: executionRuntime.clock.now()
+                        )
                         resumeAttempts += 1
                         let reconnectDelay = resumeState.serverRetryDelay ?? resumePolicy.retryDelay
                         try await withStreamingTimeout(
@@ -740,12 +757,16 @@ package struct StreamingExecutor: Sendable {
                 if let timeoutPhase = watchdog.timeoutPhase {
                     switch timeoutPhase {
                     case .firstEvent, .idle:
-                        return .transportFailure(timeoutPhase.error, attemptStartedAt)
+                        return .transportFailure(
+                            timeoutPhase.error,
+                            attemptStartedAt,
+                            networkResponse
+                        )
                     case .firstResponse, .total:
                         throw timeoutPhase.error
                     }
                 }
-                return .transportFailure(error, attemptStartedAt)
+                return .transportFailure(error, attemptStartedAt, networkResponse)
             }
 
             guard let frame else {
@@ -1213,7 +1234,7 @@ private struct StreamingHandshakeRetryState {
 
 private enum StreamingAttemptResult {
     case completed(Response, Int)
-    case transportFailure(Error, Date?)
+    case transportFailure(Error, Date?, Response)
 }
 
 private struct StreamingAttemptFailure: Error {

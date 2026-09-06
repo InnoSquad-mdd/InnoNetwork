@@ -5,6 +5,7 @@ package actor NetworkEventHub {
         let event: NetworkEvent
         let occurredAt: Date
         let completesPhysicalTransport: Bool
+        let isInternalPhysicalTransportCompletion: Bool
     }
 
     private struct PendingEvent: Sendable {
@@ -13,6 +14,7 @@ package actor NetworkEventHub {
         let enqueuedAt: Date
         let occurredAt: Date
         let completesPhysicalTransport: Bool
+        let isInternalPhysicalTransportCompletion: Bool
         let guaranteesAdmission: Bool
     }
 
@@ -100,7 +102,32 @@ package actor NetworkEventHub {
             observers: observers,
             guaranteesAdmission: false,
             occurredAt: occurredAt,
-            completesPhysicalTransport: completesPhysicalTransport
+            completesPhysicalTransport: completesPhysicalTransport,
+            isInternalPhysicalTransportCompletion: false
+        )
+    }
+
+    /// Closes an already accepted streaming body attempt without emitting a
+    /// second public `responseReceived` event. Timestamped internal observers
+    /// use this boundary to exclude reconnect delay from physical spans.
+    package func publishPhysicalTransportCompletion(
+        requestID: UUID,
+        statusCode: Int,
+        observers: [any NetworkEventObserving],
+        occurredAt: Date
+    ) {
+        enqueue(
+            .responseReceived(
+                requestID: requestID,
+                statusCode: statusCode,
+                byteCount: 0
+            ),
+            requestID: requestID,
+            observers: observers,
+            guaranteesAdmission: false,
+            occurredAt: occurredAt,
+            completesPhysicalTransport: true,
+            isInternalPhysicalTransportCompletion: true
         )
     }
 
@@ -118,7 +145,8 @@ package actor NetworkEventHub {
                 observers: observers,
                 guaranteesAdmission: false,
                 occurredAt: nil,
-                completesPhysicalTransport: false
+                completesPhysicalTransport: false,
+                isInternalPhysicalTransportCompletion: false
             )
             return
         }
@@ -128,7 +156,8 @@ package actor NetworkEventHub {
             observers: observers,
             guaranteesAdmission: true,
             occurredAt: nil,
-            completesPhysicalTransport: false
+            completesPhysicalTransport: false,
+            isInternalPhysicalTransportCompletion: false
         )
     }
 
@@ -138,7 +167,8 @@ package actor NetworkEventHub {
         observers: [any NetworkEventObserving],
         guaranteesAdmission: Bool,
         occurredAt: Date?,
-        completesPhysicalTransport: Bool
+        completesPhysicalTransport: Bool,
+        isInternalPhysicalTransportCompletion: Bool
     ) {
         guard !observers.isEmpty else { return }
         let enqueuedAt = clock.now()
@@ -166,6 +196,7 @@ package actor NetworkEventHub {
                 enqueuedAt: enqueuedAt,
                 occurredAt: occurredAt ?? enqueuedAt,
                 completesPhysicalTransport: completesPhysicalTransport,
+                isInternalPhysicalTransportCompletion: isInternalPhysicalTransportCompletion,
                 guaranteesAdmission: guaranteesAdmission
             )
         )
@@ -213,7 +244,9 @@ package actor NetworkEventHub {
                 let occurrence = EventOccurrence(
                     event: pending.event,
                     occurredAt: pending.occurredAt,
-                    completesPhysicalTransport: pending.completesPhysicalTransport
+                    completesPhysicalTransport: pending.completesPhysicalTransport,
+                    isInternalPhysicalTransportCompletion:
+                        pending.isInternalPhysicalTransportCompletion
                 )
                 if pending.guaranteesAdmission {
                     await chain.enqueueGuaranteed(
@@ -270,6 +303,16 @@ package actor NetworkEventHub {
             clock: clock
         ) { occurrence, _ in
             if let timestamped = observer as? any TimestampedNetworkEventObserving {
+                if occurrence.isInternalPhysicalTransportCompletion,
+                    case .responseReceived(let requestID, let statusCode, _) = occurrence.event
+                {
+                    await timestamped.physicalTransportCompleted(
+                        requestID: requestID,
+                        statusCode: statusCode,
+                        occurredAt: occurrence.occurredAt
+                    )
+                    return
+                }
                 await timestamped.handle(
                     occurrence.event,
                     occurredAt: occurrence.occurredAt,

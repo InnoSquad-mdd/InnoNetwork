@@ -165,6 +165,82 @@ struct NetworkSpanObserverTests {
         #expect(attempt.endedAt == streamEndedAt)
         #expect(attempt.statusCode == 200)
     }
+
+    @Test("Streaming reconnect delay is excluded from the completed physical attempt")
+    func streamingReconnectClosesAttemptBeforeDelay() async throws {
+        let exporter = SpanCollector()
+        let observer = NetworkSpanObserver(exporter: exporter, now: Date.init)
+        let requestID = UUID()
+        let firstStartedAt = Date(timeIntervalSince1970: 10)
+        let firstHeadersAt = Date(timeIntervalSince1970: 11)
+        let firstBodyEndedAt = Date(timeIntervalSince1970: 12)
+        let secondStartedAt = Date(timeIntervalSince1970: 22)
+        let secondEndedAt = Date(timeIntervalSince1970: 23)
+
+        await observer.handle(
+            .requestStart(requestID: requestID, method: "GET", url: "", retryIndex: 0),
+            occurredAt: firstStartedAt,
+            completesPhysicalTransport: false
+        )
+        await observer.handle(
+            .decision(
+                NetworkDecision(
+                    requestID: requestID,
+                    attemptIndex: 0,
+                    kind: .dispatch,
+                    outcome: .allowed,
+                    reason: .policyAllowed,
+                    occurredAt: firstStartedAt
+                )),
+            occurredAt: firstStartedAt,
+            completesPhysicalTransport: false
+        )
+        await observer.handle(
+            .responseReceived(requestID: requestID, statusCode: 200, byteCount: 0),
+            occurredAt: firstHeadersAt,
+            completesPhysicalTransport: false
+        )
+        await observer.physicalTransportCompleted(
+            requestID: requestID,
+            statusCode: 200,
+            occurredAt: firstBodyEndedAt
+        )
+        await observer.handle(
+            .decision(
+                NetworkDecision(
+                    requestID: requestID,
+                    attemptIndex: 1,
+                    kind: .dispatch,
+                    outcome: .allowed,
+                    reason: .policyAllowed,
+                    occurredAt: secondStartedAt
+                )),
+            occurredAt: secondStartedAt,
+            completesPhysicalTransport: false
+        )
+        await observer.handle(
+            .responseReceived(requestID: requestID, statusCode: 200, byteCount: 0),
+            occurredAt: secondStartedAt,
+            completesPhysicalTransport: false
+        )
+        await observer.handle(
+            .requestFinished(requestID: requestID, statusCode: 200, byteCount: 4),
+            occurredAt: secondEndedAt,
+            completesPhysicalTransport: false
+        )
+        await observer.flush()
+
+        let attempts = await exporter.spans.filter { $0.kind == .attempt }.sorted {
+            ($0.attemptIndex ?? -1) < ($1.attemptIndex ?? -1)
+        }
+        #expect(attempts.map(\.outcome) == [.retried, .succeeded])
+        #expect(attempts.map(\.statusCode) == [200, 200])
+        #expect(attempts.first?.startedAt == firstStartedAt)
+        #expect(attempts.first?.endedAt == firstBodyEndedAt)
+        #expect(attempts.first?.duration == 2)
+        #expect(attempts.last?.startedAt == secondStartedAt)
+        #expect(attempts.last?.endedAt == secondEndedAt)
+    }
 }
 
 private final class LockIsolatedDates: @unchecked Sendable {
