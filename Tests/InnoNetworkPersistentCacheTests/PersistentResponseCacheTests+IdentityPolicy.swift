@@ -15,6 +15,72 @@ import Security
 #endif
 
 extension PersistentResponseCacheTests {
+    @Test("RFC initial age persists across cache reopen")
+    func rfcInitialAgePersistsAcrossReopen() async throws {
+        let directory = makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let configuration = PersistentResponseCacheConfiguration(directoryURL: directory)
+        let key = ResponseCacheKey(method: "GET", url: "https://example.com/aged")
+        let storedAt = Date(timeIntervalSince1970: 10_000)
+        let writer = try PersistentResponseCache(configuration: configuration)
+        await writer.set(
+            key,
+            CachedResponse(
+                data: Data("aged".utf8),
+                headers: ["Cache-Control": "max-age=60"],
+                storedAt: storedAt,
+                rfc9111InitialAge: 45
+            )
+        )
+
+        let reopened = try PersistentResponseCache(configuration: configuration)
+        let cached = try #require(await reopened.get(key))
+
+        #expect(cached.rfc9111InitialAge == 45)
+        switch ResponseCachePolicy.rfc9111Compliant(
+            wrapping: .cacheFirst(maxAge: .seconds(60))
+        ).prepare(cached: cached, now: storedAt.addingTimeInterval(15)) {
+        case .revalidate:
+            break
+        default:
+            Issue.record("persistent reopen must not reset the response's current age")
+        }
+    }
+
+    @Test("Persistent cache opens entries written before RFC age metadata existed")
+    func legacyEntryWithoutRFCInitialAgeStillOpens() async throws {
+        let directory = makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let configuration = PersistentResponseCacheConfiguration(directoryURL: directory)
+        let key = ResponseCacheKey(method: "GET", url: "https://example.com/legacy-aged")
+        let storedAt = Date(timeIntervalSince1970: 10_000)
+        let writer = try PersistentResponseCache(configuration: configuration)
+        await writer.set(
+            key,
+            CachedResponse(
+                data: Data("legacy".utf8),
+                headers: ["Cache-Control": "max-age=60", "Age": "20"],
+                storedAt: storedAt
+            )
+        )
+
+        var index = try indexObject(in: directory)
+        var entries = try #require(index["entries"] as? [String: Any])
+        let entryID = try #require(entries.keys.first)
+        var entry = try #require(entries[entryID] as? [String: Any])
+        entry.removeValue(forKey: "rfc9111InitialAge")
+        entries[entryID] = entry
+        index["entries"] = entries
+        let indexURL = directory.appendingPathComponent("index.json", isDirectory: false)
+        let data = try JSONSerialization.data(withJSONObject: index, options: [.sortedKeys])
+        try data.write(to: indexURL, options: .atomic)
+
+        let reopened = try PersistentResponseCache(configuration: configuration)
+        let cached = try #require(await reopened.get(key))
+        #expect(cached.data == Data("legacy".utf8))
+        #expect(cached.rfc9111InitialAge == 20)
+    }
+
     @Test("stale-if-error metadata remains enforceable after persistent-cache reopen")
     func staleIfErrorMetadataSurvivesReopen() async throws {
         let directory = makeDirectory()

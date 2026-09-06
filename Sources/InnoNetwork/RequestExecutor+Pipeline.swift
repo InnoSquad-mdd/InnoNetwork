@@ -110,9 +110,9 @@ extension RequestExecutor {
             // signatures. Signed requests conservatively bypass cache sharing
             // because their principal does not exist in the unsigned key.
             NetworkOperationDeadlineContext.mark(.transport)
-            let networkResponse: Response
+            let timedNetworkResponse: TimedNetworkResponse
             do {
-                networkResponse = try await performSignedTransport(
+                timedNetworkResponse = try await performSignedTransport(
                     request: request,
                     bodySource: bodySource,
                     requestSigners: requestSigners,
@@ -134,6 +134,7 @@ extension RequestExecutor {
                 }
                 throw error
             }
+            let networkResponse = timedNetworkResponse.response
 
             if let substitution = try await convertNotModifiedIfNeeded(
                 networkResponse,
@@ -158,7 +159,9 @@ extension RequestExecutor {
                         cached: substitution.cached,
                         cacheKey: cacheKey,
                         configuration: configuration,
-                        runtime: runtime
+                        revalidationHeaders: responseHeaderSnapshot(networkResponse.response),
+                        requestStartedAt: timedNetworkResponse.requestStartedAt,
+                        responseReceivedAt: timedNetworkResponse.responseReceivedAt
                     )
                     return substitution.preservedResponse
                 } else {
@@ -167,7 +170,10 @@ extension RequestExecutor {
                         substitution.mergedResponse,
                         cacheKey: cacheKey,
                         request: request,
-                        configuration: configuration
+                        configuration: configuration,
+                        ageHeaders: responseHeaderSnapshot(networkResponse.response),
+                        requestStartedAt: timedNetworkResponse.requestStartedAt,
+                        responseReceivedAt: timedNetworkResponse.responseReceivedAt
                     )
                     return substitution.mergedResponse
                 }
@@ -215,7 +221,14 @@ extension RequestExecutor {
             // streaming or buffered transport path.
             try enforceResponseBodyLimit(networkResponse, configuration: configuration)
             await storeCacheIfNeeded(
-                networkResponse, cacheKey: cacheKey, request: request, configuration: configuration)
+                networkResponse,
+                cacheKey: cacheKey,
+                request: request,
+                configuration: configuration,
+                ageHeaders: nil,
+                requestStartedAt: timedNetworkResponse.requestStartedAt,
+                responseReceivedAt: timedNetworkResponse.responseReceivedAt
+            )
             return networkResponse
         }
     }
@@ -337,7 +350,7 @@ extension RequestExecutor {
         runtime: RequestExecutionRuntime,
         requestID: UUID,
         allowsRequestCoalescing: Bool
-    ) async throws -> Response {
+    ) async throws -> TimedNetworkResponse {
         let preparedBody = try prepareSigningBodySource(bodySource, signers: requestSigners)
         defer {
             if let snapshotURL = preparedBody.snapshotURL {
@@ -354,7 +367,8 @@ extension RequestExecutor {
         )
         let transportContext =
             requestSigners.isEmpty ? context : context.restrictingSignedRequestSharing()
-        return try await performTransport(
+        let requestStartedAt = runtime.clock.now()
+        let response = try await performTransport(
             request: signedRequest,
             identityRequest: request,
             bodySource: preparedBody.bodySource,
@@ -363,6 +377,11 @@ extension RequestExecutor {
             runtime: runtime,
             requestID: requestID,
             allowsRequestCoalescing: allowsRequestCoalescing
+        )
+        return TimedNetworkResponse(
+            response: response,
+            requestStartedAt: requestStartedAt,
+            responseReceivedAt: runtime.clock.now()
         )
     }
 

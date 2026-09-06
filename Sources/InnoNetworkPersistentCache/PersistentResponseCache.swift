@@ -86,6 +86,7 @@ public actor PersistentResponseCache: ResponseCache {
         let statusCode: Int
         let headers: [String: String]
         let storedAt: Date
+        let rfc9111InitialAge: TimeInterval?
         let requiresRevalidation: Bool
         let varyHeaders: [String: String?]?
         let bodyFileName: String
@@ -364,6 +365,12 @@ public actor PersistentResponseCache: ResponseCache {
             statusCode: entry.statusCode,
             headers: entry.headers,
             storedAt: entry.storedAt,
+            rfc9111InitialAge: entry.rfc9111InitialAge
+                ?? RFC9111ResponseAge.initialAge(
+                    headers: entry.headers,
+                    requestTime: entry.storedAt,
+                    responseTime: entry.storedAt
+                ),
             requiresRevalidation: entry.requiresRevalidation,
             varyHeaders: entry.varyHeaders
         )
@@ -449,6 +456,7 @@ public actor PersistentResponseCache: ResponseCache {
             statusCode: value.statusCode,
             headers: value.headers,
             storedAt: value.storedAt,
+            rfc9111InitialAge: value.rfc9111InitialAge,
             requiresRevalidation: value.requiresRevalidation,
             varyHeaders: value.varyHeaders,
             bodyFileName: bodyFileName,

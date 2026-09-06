@@ -18,6 +18,14 @@ struct ConditionalRevalidationContext {
     let cached: CachedResponse
 }
 
+/// Response plus the request/response timestamps needed by RFC 9111 current
+/// age calculation. This remains internal to the execution pipeline.
+struct TimedNetworkResponse {
+    let response: Response
+    let requestStartedAt: Date
+    let responseReceivedAt: Date
+}
+
 private struct PreparedExecutionRequest {
     var request: URLRequest
     let refreshGeneration: UInt64?

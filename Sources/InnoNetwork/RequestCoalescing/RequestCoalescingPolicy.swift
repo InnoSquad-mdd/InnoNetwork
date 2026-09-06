@@ -92,6 +92,7 @@ package struct RequestDedupKey: Hashable, Sendable {
 package struct TransportResult: Sendable {
     let data: Data
     let response: HTTPURLResponse
+    let startedAt: Date
     let completedAt: Date
 }
 

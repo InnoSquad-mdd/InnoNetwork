@@ -369,6 +369,7 @@ extension RequestExecutor {
         context: NetworkRequestContext,
         clock: any InnoNetworkClock
     ) async throws -> TransportResult {
+        let requestStartedAt = clock.now()
         let attemptStartedAt = Date()
         do {
             let (data, response): (Data, URLResponse)
@@ -407,6 +408,7 @@ extension RequestExecutor {
             return TransportResult(
                 data: data,
                 response: httpResponse,
+                startedAt: requestStartedAt,
                 completedAt: clock.now()
             )
         } catch let networkError as NetworkError {

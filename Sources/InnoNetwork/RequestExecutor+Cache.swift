@@ -174,7 +174,9 @@ extension RequestExecutor {
                                 cached: substitution.cached,
                                 cacheKey: cacheKey,
                                 configuration: configuration,
-                                runtime: runtime
+                                revalidationHeaders: responseHeaderSnapshot(result.response),
+                                requestStartedAt: result.startedAt,
+                                responseReceivedAt: result.completedAt
                             )
                         } else {
                             try enforceResponseBodyLimit(
@@ -185,7 +187,10 @@ extension RequestExecutor {
                                 substitution.mergedResponse,
                                 cacheKey: cacheKey,
                                 request: revalidationRequest,
-                                configuration: configuration
+                                configuration: configuration,
+                                ageHeaders: responseHeaderSnapshot(result.response),
+                                requestStartedAt: result.startedAt,
+                                responseReceivedAt: result.completedAt
                             )
                         }
                         terminalState = .notModified
@@ -193,7 +198,14 @@ extension RequestExecutor {
                         try Task.checkCancellation()
                         try enforceResponseBodyLimit(response, configuration: configuration)
                         await storeCacheIfNeeded(
-                            response, cacheKey: cacheKey, request: revalidationRequest, configuration: configuration)
+                            response,
+                            cacheKey: cacheKey,
+                            request: revalidationRequest,
+                            configuration: configuration,
+                            ageHeaders: nil,
+                            requestStartedAt: result.startedAt,
+                            responseReceivedAt: result.completedAt
+                        )
                         terminalState = .completed(statusCode: result.response.statusCode)
                     }
                     await eventHub.publish(
@@ -455,14 +467,16 @@ extension RequestExecutor {
     /// Used on the 304 substitution path when the not-modified response
     /// advertises a different `Vary` dimension than the stored entry was
     /// keyed on. The stored representation, headers, and Vary snapshot are
-    /// preserved verbatim; only the freshness timestamp moves forward so
-    /// the entry honours the successful conditional revalidation without
-    /// being silently rekeyed.
+    /// preserved verbatim; the freshness timestamp and corrected initial age
+    /// are replaced from the validation response so the entry honours the
+    /// successful conditional revalidation without being silently rekeyed.
     func refreshCachedFreshness(
         cached: CachedResponse,
         cacheKey: ResponseCacheKey?,
         configuration: NetworkConfiguration,
-        runtime: RequestExecutionRuntime
+        revalidationHeaders: [String: String],
+        requestStartedAt: Date,
+        responseReceivedAt: Date
     ) async {
         guard let cacheKey,
             let cache = configuration.responseCache,
@@ -476,7 +490,12 @@ extension RequestExecutor {
                 data: cached.data,
                 statusCode: cached.statusCode,
                 headers: cached.headers,
-                storedAt: runtime.clock.now(),
+                storedAt: responseReceivedAt,
+                rfc9111InitialAge: RFC9111ResponseAge.initialAge(
+                    headers: revalidationHeaders,
+                    requestTime: requestStartedAt,
+                    responseTime: responseReceivedAt
+                ),
                 requiresRevalidation: cached.requiresRevalidation,
                 varyHeaders: cached.varyHeaders
             )
@@ -543,7 +562,10 @@ extension RequestExecutor {
         _ response: Response,
         cacheKey: ResponseCacheKey?,
         request: URLRequest,
-        configuration: NetworkConfiguration
+        configuration: NetworkConfiguration,
+        ageHeaders: [String: String]?,
+        requestStartedAt: Date,
+        responseReceivedAt: Date
     ) async {
         guard let cacheKey,
             request.httpMethod == HTTPMethod.get.rawValue,
@@ -552,11 +574,7 @@ extension RequestExecutor {
         else {
             return
         }
-        let headerSnapshot =
-            response.response?.allHeaderFields.reduce(into: [String: String]()) { result, pair in
-                guard let key = pair.key as? String, let value = pair.value as? String else { return }
-                result[key] = value
-            } ?? [:]
+        let headerSnapshot = responseHeaderSnapshot(response.response)
         guard Self.cacheableStatusCodes.contains(response.statusCode) else {
             return
         }
@@ -590,10 +608,23 @@ extension RequestExecutor {
                 data: response.data,
                 statusCode: response.statusCode,
                 headers: headerSnapshot,
+                storedAt: responseReceivedAt,
+                rfc9111InitialAge: RFC9111ResponseAge.initialAge(
+                    headers: ageHeaders ?? headerSnapshot,
+                    requestTime: requestStartedAt,
+                    responseTime: responseReceivedAt
+                ),
                 requiresRevalidation: cacheControl.contains("no-cache"),
                 varyHeaders: varyHeaders
             )
         )
+    }
+
+    func responseHeaderSnapshot(_ response: HTTPURLResponse?) -> [String: String] {
+        response?.allHeaderFields.reduce(into: [String: String]()) { result, pair in
+            guard let key = pair.key as? String, let value = pair.value as? String else { return }
+            result[key] = value
+        } ?? [:]
     }
 
     /// Status codes that are cacheable by default per RFC 9110 §15. `307`

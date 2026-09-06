@@ -6,6 +6,133 @@ import os
 @testable import InnoNetwork
 
 extension ResiliencePolicyTests {
+    @Test("Cache storage preserves transport delay in RFC response age")
+    func cacheStoragePreservesTransportDelay() async throws {
+        let clock = TestClock(epoch: Date(timeIntervalSince1970: 10_000))
+        let cache = InMemoryResponseCache()
+        let queued = try resilienceQueuedResponse(
+            statusCode: 200,
+            body: ResilienceUser(id: 1, name: "timed"),
+            headers: ["Cache-Control": "max-age=60", "Age": "3"]
+        )
+        let session = ClockAdvancingResilienceURLSession(
+            queued: queued,
+            clock: clock,
+            delay: .seconds(5)
+        )
+        let client = DefaultNetworkClient(
+            configuration: resilienceMakeLocalizedCacheConfiguration(
+                responseCachePolicy: .rfc9111Compliant(
+                    wrapping: .cacheFirst(maxAge: .seconds(60))
+                ),
+                responseCache: cache
+            ),
+            session: session,
+            clock: clock
+        )
+
+        _ = try await client.request(ResilienceGetRequest())
+
+        let stored = try #require(await cache.get(resilienceUserCacheKey()))
+        #expect(stored.storedAt == Date(timeIntervalSince1970: 10_005))
+        #expect(stored.rfc9111InitialAge == 8)
+    }
+
+    @Test("304 with a revised Vary dimension resets RFC age from the validation response")
+    func revisedVaryNotModifiedResetsRFCResponseAge() async throws {
+        let clock = TestClock(epoch: Date(timeIntervalSince1970: 20_000))
+        let cache = InMemoryResponseCache()
+        let key = resilienceUserCacheKey()
+        await cache.set(
+            key,
+            CachedResponse(
+                data: try JSONEncoder().encode(ResilienceUser(id: 1, name: "cached")),
+                headers: [
+                    "ETag": "v1",
+                    "Vary": "Accept-Language",
+                    "Cache-Control": "max-age=60",
+                    "Age": "120",
+                ],
+                storedAt: Date(timeIntervalSince1970: 10_000)
+            )
+        )
+        let session = ClockAdvancingResilienceURLSession(
+            queued: try resilienceQueuedResponse(
+                statusCode: 304,
+                headers: [
+                    "Vary": "Accept",
+                    "Cache-Control": "max-age=60",
+                    "Age": "10",
+                ]
+            ),
+            clock: clock,
+            delay: .seconds(5)
+        )
+        let client = DefaultNetworkClient(
+            configuration: resilienceMakeLocalizedCacheConfiguration(
+                responseCachePolicy: .rfc9111Compliant(
+                    wrapping: .cacheFirst(maxAge: .seconds(60))
+                ),
+                responseCache: cache
+            ),
+            session: session,
+            clock: clock
+        )
+
+        let value = try await client.request(ResilienceGetRequest())
+
+        #expect(value == ResilienceUser(id: 1, name: "cached"))
+        let refreshed = try #require(await cache.get(key))
+        #expect(refreshed.headers["Vary"] == "Accept-Language")
+        #expect(refreshed.storedAt == Date(timeIntervalSince1970: 20_005))
+        #expect(refreshed.rfc9111InitialAge == 15)
+    }
+
+    @Test("304 merged metadata resets RFC age from the validation response")
+    func mergedNotModifiedResetsRFCResponseAge() async throws {
+        let clock = TestClock(epoch: Date(timeIntervalSince1970: 30_000))
+        let cache = InMemoryResponseCache()
+        let key = resilienceUserCacheKey()
+        await cache.set(
+            key,
+            CachedResponse(
+                data: try JSONEncoder().encode(ResilienceUser(id: 1, name: "cached")),
+                headers: [
+                    "ETag": "v1",
+                    "Cache-Control": "max-age=60",
+                    "Age": "120",
+                ],
+                storedAt: Date(timeIntervalSince1970: 20_000)
+            )
+        )
+        let session = ClockAdvancingResilienceURLSession(
+            queued: try resilienceQueuedResponse(
+                statusCode: 304,
+                headers: ["Cache-Control": "max-age=60", "Age": "10"]
+            ),
+            clock: clock,
+            delay: .seconds(5)
+        )
+        let client = DefaultNetworkClient(
+            configuration: resilienceMakeLocalizedCacheConfiguration(
+                responseCachePolicy: .rfc9111Compliant(
+                    wrapping: .cacheFirst(maxAge: .seconds(60))
+                ),
+                responseCache: cache
+            ),
+            session: session,
+            clock: clock
+        )
+
+        let value = try await client.request(ResilienceGetRequest())
+
+        #expect(value == ResilienceUser(id: 1, name: "cached"))
+        let refreshed = try #require(await cache.get(key))
+        #expect(refreshed.headers["Age"] == "10")
+        #expect(refreshed.storedAt == Date(timeIntervalSince1970: 30_005))
+        #expect(refreshed.rfc9111InitialAge == 15)
+    }
+
     @Test("Response cache stores 204 responses without a body")
     func responseCacheStoresNoContentResponses() async throws {
         let cache = InMemoryResponseCache()
@@ -463,4 +590,26 @@ extension ResiliencePolicyTests {
         #expect(await session.requestCount == 1)
     }
 
+}
+
+private final class ClockAdvancingResilienceURLSession: URLSessionProtocol, Sendable {
+    private let queued: ResilienceQueuedHTTPResponse
+    private let clock: TestClock
+    private let delay: Duration
+
+    init(
+        queued: ResilienceQueuedHTTPResponse,
+        clock: TestClock,
+        delay: Duration
+    ) {
+        self.queued = queued
+        self.clock = clock
+        self.delay = delay
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        _ = request
+        clock.advanceWithoutResuming(by: delay)
+        return (queued.data, queued.response)
+    }
 }
