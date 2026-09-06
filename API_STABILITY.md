@@ -255,6 +255,13 @@ Their supporting public values are `AdvancedRateLimitAlgorithm`,
 `FileResumableUploadCheckpointStore`, `ResumableUploadError`,
 `ResumableUploadResult`, and `UploadResourcePolicy`.
 
+For the provisional streaming contract, an invalid cursor is a fail-closed
+attempt state: it suppresses both cursor-bearing and cursorless reconnects
+after a transport failure or clean EOF. A cursor that has not yet been
+observed remains distinct and may use the explicit EventSource cursorless
+reconnect policy. Streaming timeout budgets are monotonic absolute boundaries;
+an operation result completed at or after expiry is not delivered as success.
+
 - `default` aliases — may add new defaults; never removed within 6.x.
 - Benchmark runner CLI flags and JSON keys — may evolve to reflect new
   metrics; baseline contents are operational policy.

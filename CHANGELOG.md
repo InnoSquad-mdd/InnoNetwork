@@ -67,6 +67,24 @@ that cut and are not part of the 6.0 contract.
 
 ### Fixed for 6.1.0
 
+- Buffered request, authentication, signing, response, and pre-decode callback
+  chains stop before invoking another callback after caller cancellation is
+  observed. Session-level and endpoint-level ordering remains unchanged.
+- Streaming phase and total budgets compare operation completion against one
+  absolute monotonic deadline, so a delayed timer cannot allow a response that
+  arrived after expiry. Late successful transport values are discarded through
+  their resource cleanup path.
+- First-event and idle watchdogs revalidate current activity under the timeout
+  latch, preventing an event or byte recorded after an earlier snapshot from
+  being cancelled as stale.
+- Invalid streaming cursors now override cursorless reconnect permission for
+  both transient transport failures and clean EOF. Unobserved cursors retain
+  the existing EventSource reconnect behavior, while invalid values fail closed
+  for the remainder of their attempt.
+- Streaming attempt spans retain the HTTP status observed at headers and close
+  at body completion before reconnect waiting. Reconnect delay remains part of
+  the logical request span without emitting a duplicate public
+  `responseReceived` event.
 - Half-open circuit-breaker probes bypass request coalescing so every granted
   probe performs its own physical transport instead of joining an older
   in-flight request.
