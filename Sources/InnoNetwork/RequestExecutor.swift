@@ -190,10 +190,14 @@ package struct RequestExecutor {
             // NetworkConfiguration apply to every endpoint; per-APIDefinition
             // interceptors layer on top.
             for interceptor in configuration.requestInterceptors {
+                try Task.checkCancellation()
                 request = try await interceptor.adapt(request)
+                try Task.checkCancellation()
             }
             for interceptor in executable.requestInterceptors {
+                try Task.checkCancellation()
                 request = try await interceptor.adapt(request)
+                try Task.checkCancellation()
             }
             let refreshCoordinator: RefreshTokenCoordinator?
             let refreshGeneration: UInt64?
@@ -205,7 +209,9 @@ package struct RequestExecutor {
                 NetworkOperationDeadlineContext.mark(.authentication)
                 refreshCoordinator = runtime.refreshCoordinator
                 if let refreshCoordinator {
+                    try Task.checkCancellation()
                     let application = try await refreshCoordinator.applyCurrentTokenWithGeneration(to: request)
+                    try Task.checkCancellation()
                     request = application.request
                     refreshGeneration = application.generation
                 } else {
@@ -222,7 +228,9 @@ package struct RequestExecutor {
                     )
                 }
                 refreshCoordinator = requiredCoordinator
+                try Task.checkCancellation()
                 let application = try await requiredCoordinator.applyRequiredTokenWithGeneration(to: request)
+                try Task.checkCancellation()
                 request = application.request
                 refreshGeneration = application.generation
             }
@@ -312,10 +320,14 @@ package struct RequestExecutor {
         // interceptor sees the same response a session-only setup would
         // produce because per-endpoint adapters have already finished.
         for interceptor in executable.responseInterceptors {
+            try Task.checkCancellation()
             networkResponse = try await interceptor.adapt(networkResponse, request: prepared.request)
+            try Task.checkCancellation()
         }
         for interceptor in configuration.responseInterceptors {
+            try Task.checkCancellation()
             networkResponse = try await interceptor.adapt(networkResponse, request: prepared.request)
+            try Task.checkCancellation()
         }
         // After response interceptors settle, give cancellation a chance
         // to short-circuit before we spend cycles on body-limit checks,
@@ -346,10 +358,12 @@ package struct RequestExecutor {
         // that mutate the response observe the same payload the decoder will see.
         var decodableData = networkResponse.data
         for interceptor in configuration.decodingInterceptors {
+            try Task.checkCancellation()
             decodableData = try await interceptor.willDecode(
                 data: decodableData,
                 response: networkResponse
             )
+            try Task.checkCancellation()
         }
         try enforceResponseBodyLimit(data: decodableData, configuration: configuration)
 
@@ -358,6 +372,7 @@ package struct RequestExecutor {
         try Task.checkCancellation()
         var decoded = try executable.decode(data: decodableData, response: networkResponse)
         for interceptor in configuration.decodingInterceptors {
+            try Task.checkCancellation()
             decoded = try await interceptor.didDecode(decoded, response: networkResponse)
             // An async post-decoder may observe cancellation without throwing
             // (for example, a callback bridge that finishes normally). Do not

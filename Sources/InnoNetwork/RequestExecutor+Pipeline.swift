@@ -318,7 +318,9 @@ extension RequestExecutor {
         let body = try bodySource.signingBody(for: request)
         var signedRequest = request
         for signer in signers {
+            try Task.checkCancellation()
             let headers = try await signer.signatureHeaders(for: signedRequest, body: body)
+            try Task.checkCancellation()
             for header in headers {
                 signedRequest.setValue(header.value, forHTTPHeaderField: header.name)
             }
