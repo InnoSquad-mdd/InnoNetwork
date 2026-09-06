@@ -129,6 +129,56 @@ struct StreamingTimeoutPolicyTests {
         watchdog.finish()
     }
 
+    @Test("A first event recorded after the watchdog snapshot prevents a stale timeout")
+    func firstEventRevalidatesBeforeTimeoutLatch() async throws {
+        let events = AsyncStream<WatchdogSnapshotRaceEvent>.makeStream()
+        let clock = WatchdogSnapshotRaceClock(events: events.continuation)
+        let watchdog = StreamingTimeoutWatchdog(
+            policy: StreamingTimeoutPolicy(
+                firstEvent: .seconds(1),
+                total: .seconds(2)
+            ),
+            logicalStart: .zero,
+            clock: clock,
+            cancelTransport: { events.continuation.yield(.cancelled) }
+        )
+
+        var snapshotIterator = clock.snapshotTaken.stream.makeAsyncIterator()
+        _ = await snapshotIterator.next()
+        watchdog.recordFirstEvent()
+        clock.releaseSnapshot()
+
+        var eventIterator = events.stream.makeAsyncIterator()
+        #expect(await eventIterator.next() == .sleepingUntilCurrentDeadline)
+        #expect(watchdog.timeoutPhase == nil)
+        watchdog.finish()
+    }
+
+    @Test("Byte activity recorded after the watchdog snapshot prevents a stale idle timeout")
+    func activityRevalidatesBeforeTimeoutLatch() async throws {
+        let events = AsyncStream<WatchdogSnapshotRaceEvent>.makeStream()
+        let clock = WatchdogSnapshotRaceClock(events: events.continuation)
+        let watchdog = StreamingTimeoutWatchdog(
+            policy: StreamingTimeoutPolicy(
+                idle: .seconds(1),
+                total: .seconds(3)
+            ),
+            logicalStart: .zero,
+            clock: clock,
+            cancelTransport: { events.continuation.yield(.cancelled) }
+        )
+
+        var snapshotIterator = clock.snapshotTaken.stream.makeAsyncIterator()
+        _ = await snapshotIterator.next()
+        watchdog.recordNetworkActivity()
+        clock.releaseSnapshot()
+
+        var eventIterator = events.stream.makeAsyncIterator()
+        #expect(await eventIterator.next() == .sleepingUntilCurrentDeadline)
+        #expect(watchdog.timeoutPhase == nil)
+        watchdog.finish()
+    }
+
     @Test("Byte activity extends the idle deadline without creating a task per byte")
     func activityExtendsIdleDeadline() async throws {
         let clock = TestClock()
@@ -557,6 +607,48 @@ private actor HeldStreamingInterceptorGate {
     func release() {
         continuation?.resume()
         continuation = nil
+    }
+}
+
+private enum WatchdogSnapshotRaceEvent: Sendable, Equatable {
+    case sleepingUntilCurrentDeadline
+    case cancelled
+}
+
+private final class WatchdogSnapshotRaceClock: InnoNetworkClock, Sendable {
+    let snapshotTaken = AsyncStream<Void>.makeStream()
+
+    private let reads = OSAllocatedUnfairLock(initialState: 0)
+    private let snapshotRelease = DispatchSemaphore(value: 0)
+    private let events: AsyncStream<WatchdogSnapshotRaceEvent>.Continuation
+
+    init(events: AsyncStream<WatchdogSnapshotRaceEvent>.Continuation) {
+        self.events = events
+    }
+
+    func now() -> Date { Date(timeIntervalSince1970: monotonicNow().timeInterval) }
+
+    func monotonicNow() -> Duration {
+        let read = reads.withLock { reads in
+            reads += 1
+            return reads
+        }
+        if read == 2 {
+            snapshotTaken.continuation.yield()
+            snapshotRelease.wait()
+            return .seconds(1)
+        }
+        return read > 2 ? .seconds(1) : .zero
+    }
+
+    func sleep(for duration: Duration) async throws {
+        _ = duration
+        events.yield(.sleepingUntilCurrentDeadline)
+        try await Task.sleep(for: .seconds(60))
+    }
+
+    func releaseSnapshot() {
+        snapshotRelease.signal()
     }
 }
 

@@ -146,13 +146,23 @@ package final class StreamingTimeoutWatchdog: Sendable {
                 continue
             }
 
-            let shouldCancel = state.withLock { state -> Bool in
-                guard !state.isFinished, state.timeout == nil else { return false }
-                state.timeout = deadline.phase
+            let shouldCancel = state.withLock { state -> Bool? in
+                guard !state.isFinished, state.timeout == nil else { return nil }
+                guard
+                    let currentDeadline = nearestDeadline(
+                        acceptedAt: state.acceptedAt,
+                        lastActivity: state.lastActivity,
+                        deliveredFirstEvent: state.deliveredFirstEvent
+                    )
+                else { return nil }
+                guard currentDeadline.instant <= now else { return false }
+                state.timeout = currentDeadline.phase
                 state.isFinished = true
                 return true
             }
-            if shouldCancel { cancelTransport() }
+            guard let shouldCancel else { return }
+            guard shouldCancel else { continue }
+            cancelTransport()
             return
         }
     }
