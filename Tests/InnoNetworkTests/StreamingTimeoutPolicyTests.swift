@@ -214,11 +214,15 @@ struct StreamingTimeoutPolicyTests {
     func totalTimeoutDoesNotWaitForInterceptorCompletion() async throws {
         let clock = TestClock()
         let gate = HeldStreamingInterceptorGate()
+        let laterInterceptor = CountingStreamingRequestInterceptor()
         let session = MockURLSession()
         let configuration = NetworkConfiguration(
             baseURL: URL(string: "https://example.com")!,
             networkMonitor: nil,
-            requestInterceptors: [HeldStreamingRequestInterceptor(gate: gate)]
+            requestInterceptors: [
+                HeldStreamingRequestInterceptor(gate: gate),
+                laterInterceptor,
+            ]
         )
         let runtime = RequestExecutionRuntime(
             configuration: configuration,
@@ -251,6 +255,105 @@ struct StreamingTimeoutPolicyTests {
         #expect(session.capturedRequestsInOrder.isEmpty)
 
         await gate.release()
+        await gate.waitUntilReturned()
+        #expect(laterInterceptor.callCount == 0)
+        #expect(session.capturedRequestsInOrder.isEmpty)
+        await eventHub.shutdown()
+        await runtime.shutdown()
+    }
+
+    @Test("A timed-out signer chain stops before its next signer")
+    func totalTimeoutStopsSignerChain() async throws {
+        let clock = TestClock()
+        let gate = HeldStreamingInterceptorGate()
+        let laterSigner = CountingStreamingRequestSigner()
+        let session = MockURLSession()
+        let configuration = NetworkConfiguration(
+            baseURL: URL(string: "https://example.com")!,
+            networkMonitor: nil,
+            requestSigners: [
+                HeldStreamingRequestSigner(gate: gate),
+                laterSigner,
+            ]
+        )
+        let runtime = RequestExecutionRuntime(
+            configuration: configuration,
+            inFlight: InFlightRegistry(),
+            clock: clock
+        )
+        let eventHub = NetworkEventHub()
+        let (sequence, sink) = StreamingOutputSequence<String>.make(buffering: .backpressured)
+        let execution = Task {
+            await StreamingExecutor(session: session, eventHub: eventHub).run(
+                request: TotalDeadlineStream(),
+                requestID: UUID(),
+                configuration: configuration,
+                executionRuntime: runtime,
+                sink: sink
+            )
+        }
+
+        await gate.waitUntilEntered()
+        #expect(await clock.waitForWaiters(count: 1))
+        clock.advance(by: .seconds(1))
+        var iterator = sequence.makeAsyncIterator()
+        await #expect(throws: NetworkError.self) { _ = try await iterator.next() }
+        await execution.value
+        await gate.release()
+        await gate.waitUntilReturned()
+
+        #expect(laterSigner.callCount == 0)
+        #expect(session.capturedRequestsInOrder.isEmpty)
+        await eventHub.shutdown()
+        await runtime.shutdown()
+    }
+
+    @Test("A timed-out token provider stops before request signing")
+    func totalTimeoutStopsAfterTokenProvider() async throws {
+        let clock = TestClock()
+        let gate = HeldStreamingInterceptorGate()
+        let signer = CountingStreamingRequestSigner()
+        let session = MockURLSession()
+        let configuration = NetworkConfiguration(
+            baseURL: URL(string: "https://example.com")!,
+            networkMonitor: nil,
+            requestSigners: [signer],
+            refreshTokenPolicy: RefreshTokenPolicy(
+                currentToken: {
+                    await gate.wait()
+                    return "late-token"
+                },
+                refreshToken: { "refreshed-token" }
+            )
+        )
+        let runtime = RequestExecutionRuntime(
+            configuration: configuration,
+            inFlight: InFlightRegistry(),
+            clock: clock
+        )
+        let eventHub = NetworkEventHub()
+        let (sequence, sink) = StreamingOutputSequence<String>.make(buffering: .backpressured)
+        let execution = Task {
+            await StreamingExecutor(session: session, eventHub: eventHub).run(
+                request: OptionalAuthTotalDeadlineStream(),
+                requestID: UUID(),
+                configuration: configuration,
+                executionRuntime: runtime,
+                sink: sink
+            )
+        }
+
+        await gate.waitUntilEntered()
+        #expect(await clock.waitForWaiters(count: 1))
+        clock.advance(by: .seconds(1))
+        var iterator = sequence.makeAsyncIterator()
+        await #expect(throws: NetworkError.self) { _ = try await iterator.next() }
+        await execution.value
+        await gate.release()
+        await gate.waitUntilReturned()
+
+        #expect(signer.callCount == 0)
+        #expect(session.capturedRequestsInOrder.isEmpty)
         await eventHub.shutdown()
         await runtime.shutdown()
     }
@@ -276,6 +379,7 @@ struct StreamingTimeoutPolicyTests {
 private actor HeldStreamingInterceptorGate {
     let entered = AsyncStream<Void>.makeStream()
     let cancelled = AsyncStream<Void>.makeStream()
+    let returned = AsyncStream<Void>.makeStream()
     private var continuation: CheckedContinuation<Void, Never>?
 
     func wait() async {
@@ -287,6 +391,7 @@ private actor HeldStreamingInterceptorGate {
         } onCancel: {
             cancelled.continuation.yield()
         }
+        returned.continuation.yield()
     }
 
     func waitUntilEntered() async {
@@ -299,9 +404,47 @@ private actor HeldStreamingInterceptorGate {
         _ = await iterator.next()
     }
 
+    func waitUntilReturned() async {
+        var iterator = returned.stream.makeAsyncIterator()
+        _ = await iterator.next()
+    }
+
     func release() {
         continuation?.resume()
         continuation = nil
+    }
+}
+
+private final class CountingStreamingRequestInterceptor: RequestInterceptor, Sendable {
+    private let count = OSAllocatedUnfairLock(initialState: 0)
+
+    var callCount: Int { count.withLock { $0 } }
+
+    func adapt(_ request: URLRequest) async throws -> URLRequest {
+        count.withLock { $0 += 1 }
+        return request
+    }
+}
+
+private struct HeldStreamingRequestSigner: RequestSigner {
+    let gate: HeldStreamingInterceptorGate
+
+    func signatureHeaders(for request: URLRequest, body: RequestBody) async throws -> HTTPHeaders {
+        _ = (request, body)
+        await gate.wait()
+        return HTTPHeaders()
+    }
+}
+
+private final class CountingStreamingRequestSigner: RequestSigner, Sendable {
+    private let count = OSAllocatedUnfairLock(initialState: 0)
+
+    var callCount: Int { count.withLock { $0 } }
+
+    func signatureHeaders(for request: URLRequest, body: RequestBody) async throws -> HTTPHeaders {
+        _ = (request, body)
+        count.withLock { $0 += 1 }
+        return HTTPHeaders()
     }
 }
 
@@ -320,6 +463,17 @@ private struct TotalDeadlineStream: StreamingAPIDefinition {
     let method = HTTPMethod.get
     let path = "events"
     let sessionAuthentication = SessionAuthentication.anonymous
+    let timeoutPolicy = StreamingTimeoutPolicy(total: .seconds(1))
+
+    func decode(line: String) throws -> String? { line }
+}
+
+private struct OptionalAuthTotalDeadlineStream: StreamingAPIDefinition {
+    typealias Output = String
+
+    let method = HTTPMethod.get
+    let path = "events"
+    let sessionAuthentication = SessionAuthentication.optional
     let timeoutPolicy = StreamingTimeoutPolicy(total: .seconds(1))
 
     func decode(line: String) throws -> String? { line }

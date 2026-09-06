@@ -1105,17 +1105,23 @@ package struct StreamingExecutor: Sendable {
     ) async throws -> URLRequest {
         var current = urlRequest
         for interceptor in sessionInterceptors {
+            try Task.checkCancellation()
             current = try await interceptor.adapt(current)
+            try Task.checkCancellation()
         }
         for interceptor in endpointInterceptors {
+            try Task.checkCancellation()
             current = try await interceptor.adapt(current)
+            try Task.checkCancellation()
         }
+        try Task.checkCancellation()
         switch sessionAuthentication {
         case .anonymous:
             break
         case .optional:
             if let refreshCoordinator {
                 current = try await refreshCoordinator.applyCurrentToken(to: current)
+                try Task.checkCancellation()
             }
         case .required:
             guard let refreshCoordinator else {
@@ -1126,6 +1132,7 @@ package struct StreamingExecutor: Sendable {
                 )
             }
             current = try await refreshCoordinator.applyRequiredTokenWithGeneration(to: current).request
+            try Task.checkCancellation()
         }
         guard !sessionSigners.isEmpty || !endpointSigners.isEmpty else {
             return current
@@ -1133,13 +1140,18 @@ package struct StreamingExecutor: Sendable {
         current = current.preparingForSignedTransport()
         let body = try BodySource.inline.signingBody(for: current)
         for signer in sessionSigners {
+            try Task.checkCancellation()
             let headers = try await signer.signatureHeaders(for: current, body: body)
+            try Task.checkCancellation()
             Self.apply(headers: headers, to: &current)
         }
         for signer in endpointSigners {
+            try Task.checkCancellation()
             let headers = try await signer.signatureHeaders(for: current, body: body)
+            try Task.checkCancellation()
             Self.apply(headers: headers, to: &current)
         }
+        try Task.checkCancellation()
         return current
     }
 
