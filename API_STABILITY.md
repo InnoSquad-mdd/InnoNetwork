@@ -261,6 +261,10 @@ after a transport failure or clean EOF. A cursor that has not yet been
 observed remains distinct and may use the explicit EventSource cursorless
 reconnect policy. Streaming timeout budgets are monotonic absolute boundaries;
 an operation result completed at or after expiry is not delivered as success.
+Late activity cannot move an already expired first-event or idle deadline, and
+EOF or metadata-only frames cannot bypass the total deadline. Explicit
+first-response and total deadline expirations remain terminal even when the
+general handshake retry policy would retry an ordinary transport timeout.
 
 - `default` aliases — may add new defaults; never removed within 6.x.
 - Benchmark runner CLI flags and JSON keys — may evolve to reflect new

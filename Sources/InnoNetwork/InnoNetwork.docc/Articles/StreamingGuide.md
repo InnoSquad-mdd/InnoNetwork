@@ -62,7 +62,10 @@ comments count as connection liveness without being emitted as application data.
 When resume is enabled, first-event and idle-byte expirations are transient
 disconnects and may reconnect; first-response and total deadline expirations
 remain terminal. Every reconnect still consumes the configured attempt budget
-and the total deadline never resets.
+and the total deadline never resets. Activity or a decoded event observed at or
+after its deadline cannot revive an expired watchdog, even when the timer task
+has not yet resumed. EOF and metadata-only frames also recheck the absolute
+total deadline before the stream can complete successfully.
 The total budget starts before request authentication and adaptation and also
 covers rate-limit waits, the dedicated stream-admission queue, response
 interceptors, reconnect delay, and backpressured delivery. Stream admission is

@@ -72,18 +72,20 @@ that cut and are not part of the 6.0 contract.
   observed. Session-level and endpoint-level ordering remains unchanged.
 - Streaming phase and total budgets compare operation completion against one
   absolute monotonic deadline, so a delayed timer cannot allow a response that
-  arrived after expiry. Late successful transport values are discarded through
-  their resource cleanup path.
-- First-event and idle watchdogs revalidate current activity under the timeout
-  latch, preventing an event or byte recorded after an earlier snapshot from
-  being cancelled as stale.
+  arrived after expiry. Metadata-only frames and EOF also recheck the total
+  deadline, and late successful transport values are discarded through their
+  resource cleanup path.
+- First-event and idle watchdogs update activity under the same timeout latch.
+  Timely activity defeats stale timer snapshots, while activity observed at or
+  after expiry cannot revive or extend an expired deadline.
 - Invalid streaming cursors now override cursorless reconnect permission for
   both transient transport failures and clean EOF. Unobserved cursors retain
   the existing EventSource reconnect behavior, while invalid values fail closed
   for the remainder of their attempt.
 - Streaming attempt spans retain the HTTP status observed at headers and close
   at body completion before reconnect waiting. Reconnect delay remains part of
-  the logical request span without emitting a duplicate public
+  the logical request span, while the internal physical-completion signal is
+  filtered from ordinary observers so it cannot emit a duplicate public
   `responseReceived` event.
 - Half-open circuit-breaker probes bypass request coalescing so every granted
   probe performs its own physical transport instead of joining an older
@@ -102,8 +104,8 @@ that cut and are not part of the 6.0 contract.
   stop their callback chains as soon as cancellation is observed.
 - First-event and idle-byte watchdog expirations participate in configured
   transient stream resume, while first-response and total deadlines remain
-  terminal. Reconnect attempts stay within the existing attempt and total-time
-  bounds.
+  terminal even when the general retry policy is enabled. Reconnect attempts
+  stay within the existing attempt and total-time bounds.
 - Physical attempt spans use their own monotonically increasing index, so
   authentication refresh replays and other repeated dispatches inside one
   retry decision are exported as distinct child attempts. Buffered attempts
