@@ -302,8 +302,8 @@ package actor NetworkEventHub {
             metricsReporter: metricsReporter,
             clock: clock
         ) { occurrence, _ in
-            if let timestamped = observer as? any TimestampedNetworkEventObserving {
-                if occurrence.isInternalPhysicalTransportCompletion,
+            if occurrence.isInternalPhysicalTransportCompletion {
+                if let timestamped = observer as? any TimestampedNetworkEventObserving,
                     case .responseReceived(let requestID, let statusCode, _) = occurrence.event
                 {
                     await timestamped.physicalTransportCompleted(
@@ -311,8 +311,10 @@ package actor NetworkEventHub {
                         statusCode: statusCode,
                         occurredAt: occurrence.occurredAt
                     )
-                    return
                 }
+                return
+            }
+            if let timestamped = observer as? any TimestampedNetworkEventObserving {
                 await timestamped.handle(
                     occurrence.event,
                     occurredAt: occurrence.occurredAt,

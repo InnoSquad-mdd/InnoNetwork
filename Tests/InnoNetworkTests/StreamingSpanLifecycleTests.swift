@@ -64,6 +64,27 @@ private actor StreamingSpanObserverHarness: TimestampedNetworkEventObserving {
     }
 }
 
+private actor PublicStreamingEventObserver: NetworkEventObserving {
+    private let terminal = AsyncStream<Void>.makeStream()
+    private(set) var responseCount = 0
+
+    func handle(_ event: NetworkEvent) async {
+        switch event {
+        case .responseReceived:
+            responseCount += 1
+        case .requestFinished, .requestFailed:
+            terminal.continuation.yield()
+        default:
+            break
+        }
+    }
+
+    func waitForTerminal() async {
+        var iterator = terminal.stream.makeAsyncIterator()
+        _ = await iterator.next()
+    }
+}
+
 private final class CompletingStreamingSpanURLProtocol: URLProtocol {
     private static let calls = OSAllocatedUnfairLock(initialState: 0)
 
@@ -115,10 +136,11 @@ struct StreamingSpanLifecycleTests {
         let exporter = StreamingSpanExporter()
         let spanObserver = NetworkSpanObserver(exporter: exporter, now: { clock.now() })
         let observer = StreamingSpanObserverHarness(spanObserver: spanObserver)
+        let publicObserver = PublicStreamingEventObserver()
         let configuration = NetworkConfiguration(
             baseURL: URL(string: "https://stream-span.example.com")!,
             networkMonitor: nil,
-            eventObservers: [observer]
+            eventObservers: [publicObserver, observer]
         )
         let sessionConfiguration = URLSessionConfiguration.ephemeral
         sessionConfiguration.protocolClasses = [CompletingStreamingSpanURLProtocol.self]
@@ -151,6 +173,7 @@ struct StreamingSpanLifecycleTests {
         #expect(try await collection.value == ["event", "event"])
         await execution.value
         await observer.waitForTerminal()
+        await publicObserver.waitForTerminal()
         await spanObserver.flush()
 
         let spans = await exporter.spans
@@ -160,6 +183,7 @@ struct StreamingSpanLifecycleTests {
         let logical = try #require(spans.first { $0.kind == .request })
         #expect(CompletingStreamingSpanURLProtocol.callCount == 2)
         #expect(await observer.publicResponseCount == 2)
+        #expect(await publicObserver.responseCount == 2)
         #expect(attempts.map(\.outcome) == [.retried, .succeeded])
         #expect(attempts.map(\.statusCode) == [200, 200])
         #expect(attempts.map(\.duration) == [0, 0])
