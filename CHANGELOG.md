@@ -72,12 +72,27 @@ that cut and are not part of the 6.0 contract.
   in-flight request.
 - Buffered requests recheck cancellation after every decoding interceptor,
   including caller, cancellation-tag, and operation-handle cancellation.
+- Operation deadlines capture one absolute monotonic instant before the
+  operation task is dispatched. A zero budget prevents the wrapped request
+  from starting, and a success that arrives after the instant cannot escape
+  as a successful operation. Deadline stages now advance at the actual policy
+  admission and physical transport boundaries.
 - Streaming total deadlines return promptly even when application response
   interceptors do not cooperate with cancellation. Late transport, quota, and
-  stream-admission results are cancelled, refunded, or released.
+  stream-admission results are cancelled, refunded, or released. Session and
+  endpoint request interceptors, token application, and request signers also
+  stop their callback chains as soon as cancellation is observed.
+- First-event and idle-byte watchdog expirations participate in configured
+  transient stream resume, while first-response and total deadlines remain
+  terminal. Reconnect attempts stay within the existing attempt and total-time
+  bounds.
 - Physical attempt spans use their own monotonically increasing index, so
   authentication refresh replays and other repeated dispatches inside one
-  retry decision are exported as distinct child attempts.
+  retry decision are exported as distinct child attempts. Buffered attempts
+  end when response collection completes, before decoding and policy
+  post-processing; they retain their HTTP status and successful transport
+  outcome even when later decoding fails. Streaming attempts remain open past
+  response headers until the stream itself terminates.
 - Managed-upload retries compare the supplied HTTP method with the original
   case-sensitive token exactly and reject case-only substitutions before
   starting a replacement task.

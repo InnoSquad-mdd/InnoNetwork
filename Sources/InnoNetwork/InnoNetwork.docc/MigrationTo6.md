@@ -79,11 +79,15 @@ do {
 
 This budget includes policy admission, authentication, retry delay, transport,
 and response decoding. It is distinct from URLSession request and resource
-timeouts. Deadline expiry cancels built-in client work; a custom
-``NetworkClient`` used through ``OperationNetworkClient`` must cooperate with
-Swift task cancellation. The operation-first surface is buffered, so this API
-does not claim to bound the lifetime of a separately returned streaming
-sequence.
+timeouts. The deadline is one absolute monotonic instant captured before the
+operation task is dispatched: a zero duration does not start the wrapped
+request, and a late result cannot turn an expired operation into success.
+`deadlineStage` reflects the active execution boundary, including policy
+admission before physical transport. Deadline expiry cancels built-in client
+work; a custom ``NetworkClient`` used through ``OperationNetworkClient`` must
+cooperate with Swift task cancellation. The operation-first surface is
+buffered, so this API does not claim to bound the lifetime of a separately
+returned streaming sequence.
 
 The automatic `IdempotencyKeyPolicy` uses the logical request identifier. A
 new `NetworkOperation` receives a new identifier, so that policy alone does

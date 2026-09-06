@@ -347,7 +347,10 @@ Their supporting public values are `AdvancedRateLimitAlgorithm`,
   dispatch order within one logical request, independent of retry-policy
   indexing. Authentication refresh replays and repeated custom-policy
   dispatches therefore create distinct attempt spans; cache hits and
-  coalesced followers create none.
+  coalesced followers create none. Buffered physical attempts end at response
+  collection rather than after decoding or policy feedback, retain their HTTP
+  status independently from the logical request outcome, and streaming
+  attempts do not end at response headers.
 - `RateLimitExecutionPolicy` — experimental cancellation-aware fixed-window
   admission around each transport attempt. Copies share one limiter; retry
   attempts consume capacity independently. Its scheduling algorithm may be
@@ -422,7 +425,9 @@ Their supporting public values are `AdvancedRateLimitAlgorithm`,
   streams disable automatic redirects, including same-origin redirects, so
   applications must resolve their final endpoint explicitly. Empty cursors
   clear a seeded request header. Server-side replay and deduplication remain
-  application contracts, not an exactly-once library guarantee.
+  application contracts, not an exactly-once library guarantee. First-event
+  and idle-byte watchdog expirations are recoverable under this policy;
+  first-response and total deadlines are terminal.
 - `ServerSentEventDecoder` — empty `data` lines dispatch, multiline data keeps
   significant newlines, metadata-only blocks do not dispatch, and IDs persist
   within one response. BOM handling is response-scoped, not event-scoped.
@@ -434,6 +439,8 @@ Their supporting public values are `AdvancedRateLimitAlgorithm`,
   callers do not need a cast to exhaustively switch over the failure. Total
   deadlines do not await cancellation-noncooperative application callbacks;
   executor-owned late transports and admission reservations are reclaimed.
+  Request interception, token application, and signing chains stop between
+  callbacks once cancellation is observed.
 - `TraceContextInterceptor` and `W3CTraceContext` — W3C header propagation
   remains additive; future minors may add richer correlation helpers without
   changing `NetworkEvent` case shape.

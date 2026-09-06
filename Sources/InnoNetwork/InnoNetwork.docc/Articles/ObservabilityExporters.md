@@ -47,9 +47,13 @@ Span records intentionally omit URLs, headers, and bodies. A logical request
 span owns child attempt spans; retry scheduling closes the prior attempt as
 `retried`. A child begins only when the physical transport dispatches. Cache
 hits, coalesced followers, and failures during preparation, quota, or admission
-therefore keep their logical span without a synthetic attempt. Export runs
-asynchronously through a bounded buffer and drops the oldest completed span
-under sustained exporter backpressure.
+therefore keep their logical span without a synthetic attempt. For buffered
+requests, the child ends when the response body has been collected, before
+decoding interceptors and policy feedback run. Its HTTP status and transport
+outcome remain attached even if the logical request later fails decoding. A
+streaming child stays open after response headers and ends with the stream.
+Export runs asynchronously through a bounded buffer and drops the oldest
+completed span under sustained exporter backpressure.
 
 Putting that glue inside InnoNetwork would either pull every supported
 vendor into the package graph (build-time cost, transitive license
