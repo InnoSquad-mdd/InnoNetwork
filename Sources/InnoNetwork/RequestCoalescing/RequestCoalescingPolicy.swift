@@ -104,6 +104,7 @@ package actor RequestCoalescer {
     }
 
     private var entries: [RequestDedupKey: Entry] = [:]
+    private var waiterCountWaiters: [(target: Int, continuation: CheckedContinuation<Void, Never>)] = []
     private struct CancelledWaiterRecord: Sendable {
         let recordedAt: Date
     }
@@ -146,6 +147,15 @@ package actor RequestCoalescer {
         let waiterCount = cancelledWaiters.values.reduce(0) { $0 + $1.count }
         let markCount = cancelMarks.withLock { $0.count }
         return waiterCount + markCount
+    }
+
+    /// Deterministic package test seam for integration tests that must prove
+    /// every caller joined the production coalescer before advancing a clock.
+    package func waitForActiveWaiterCount(atLeast target: Int) async {
+        guard activeWaiterCount < target else { return }
+        await withCheckedContinuation { continuation in
+            waiterCountWaiters.append((max(0, target), continuation))
+        }
     }
 
     package func recordCancelledWaiterForDiagnostics(
@@ -211,11 +221,13 @@ package actor RequestCoalescer {
         if var entry = entries[key] {
             entry.waiters[waiterID] = continuation
             entries[key] = entry
+            resumeSatisfiedWaiterCountWaiters()
             return
         }
 
         let entryID = UUID()
         entries[key] = Entry(id: entryID, task: nil, waiters: [waiterID: continuation])
+        resumeSatisfiedWaiterCountWaiters()
         let task = Task(priority: Task.currentPriority) { @Sendable in
             do {
                 let result = try await operation()
@@ -287,6 +299,23 @@ package actor RequestCoalescer {
 
     private func consumeCancelMark(for waiterID: UUID) -> Bool {
         cancelMarks.withLock { $0.remove(waiterID) != nil }
+    }
+
+    private var activeWaiterCount: Int {
+        entries.values.reduce(0) { $0 + $1.waiters.count }
+    }
+
+    private func resumeSatisfiedWaiterCountWaiters() {
+        let count = activeWaiterCount
+        var remaining: [(target: Int, continuation: CheckedContinuation<Void, Never>)] = []
+        for waiter in waiterCountWaiters {
+            if count >= waiter.target {
+                waiter.continuation.resume()
+            } else {
+                remaining.append(waiter)
+            }
+        }
+        waiterCountWaiters = remaining
     }
 
     private func removeCancelledWaiter(key: RequestDedupKey, waiterID: UUID) -> Bool {

@@ -341,35 +341,44 @@ struct OperationNetworkClientTests {
         #expect(clock.waiterCount == 0)
     }
 
-    @Test("Coalesced callers keep independent operation deadlines")
+    @Test("Coalesced callers keep independent operation deadlines", .timeLimit(.minutes(1)))
     func coalescedCallersKeepIndependentDeadlines() async throws {
         let clock = TestClock()
-        let sharedResponse = DeadlineSharedResponse()
-        let base = DeadlineSharedNetworkClient(response: sharedResponse)
-        let client = OperationNetworkClient(client: base, deadlineClock: clock)
-        let short = client.start(
-            PreviewEndpoint(),
-            deadline: NetworkOperationDeadline(after: .seconds(1))
+        let session = DeadlineBlockingURLSession()
+        let base = DefaultNetworkClient(
+            configuration: makeTestNetworkConfiguration(
+                baseURL: "https://api.example.test",
+                requestCoalescingPolicy: .getOnly
+            ),
+            session: session,
+            clock: clock
         )
+        let client = OperationNetworkClient(client: base, deadlineClock: clock)
         let long = client.start(
             PreviewEndpoint(),
             deadline: NetworkOperationDeadline(after: .seconds(10))
         )
+        await session.waitUntilStarted()
+        let short = client.start(
+            PreviewEndpoint(),
+            deadline: NetworkOperationDeadline(after: .seconds(1))
+        )
 
-        await sharedResponse.waitForWaiters(count: 2)
+        await base.waitForCoalescedCallerCount(atLeast: 2)
         #expect(await clock.waitForWaiters(count: 2))
         clock.advance(by: .seconds(1))
         let shortFailure = await failure(from: short)
 
         #expect(shortFailure.deadlineStage == .transport)
-        #expect(await sharedResponse.physicalRequestCount == 1)
+        #expect(await session.requestCount == 1)
 
-        await sharedResponse.succeed(with: PreviewResponse(id: "shared"))
+        try await session.succeed(with: PreviewResponse(id: "shared"))
         let longValue = try await long.value()
 
         #expect(longValue == PreviewResponse(id: "shared"))
-        #expect(await sharedResponse.physicalRequestCount == 1)
+        #expect(await session.requestCount == 1)
         #expect(clock.waiterCount == 0)
+        await base.shutdown()
     }
 }
 
@@ -427,81 +436,42 @@ private actor DeadlineFailingURLSession: URLSessionProtocol {
     }
 }
 
-private struct DeadlineSharedNetworkClient: NetworkClient {
-    let response: DeadlineSharedResponse
+private actor DeadlineBlockingURLSession: URLSessionProtocol {
+    private var continuations: [CheckedContinuation<(Data, URLResponse), Error>] = []
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private(set) var requestCount = 0
 
-    func request<Request: APIDefinition>(
-        _: Request,
-        tag _: CancellationTag?
-    ) async throws(NetworkError) -> Request.APIResponse {
-        NetworkOperationDeadlineContext.mark(.transport)
-        do {
-            let value = try await response.value()
-            guard let typedValue = value as? Request.APIResponse else {
-                throw NetworkError.configuration(
-                    reason: .invalidRequest("Unexpected shared response type.")
-                )
-            }
-            return typedValue
-        } catch is CancellationError {
-            throw .cancelled
-        } catch let error as NetworkError {
-            throw error
-        } catch {
-            throw NetworkError.mapTransportError(error)
-        }
-    }
-}
-
-private actor DeadlineSharedResponse {
-    private var waiters: [UUID: CheckedContinuation<PreviewResponse, Error>] = [:]
-    private var countWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
-    private(set) var physicalRequestCount = 0
-
-    func value() async throws -> PreviewResponse {
-        let id = UUID()
-        return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
-                if waiters.isEmpty {
-                    physicalRequestCount += 1
-                }
-                waiters[id] = continuation
-                resumeSatisfiedCountWaiters()
-            }
-        } onCancel: {
-            Task { await self.cancelWaiter(id: id) }
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        _ = request
+        requestCount += 1
+        let pendingStarts = startWaiters
+        startWaiters.removeAll(keepingCapacity: false)
+        for waiter in pendingStarts { waiter.resume() }
+        return try await withCheckedThrowingContinuation { continuation in
+            continuations.append(continuation)
         }
     }
 
-    func waitForWaiters(count: Int) async {
-        guard waiters.count < count else { return }
+    func waitUntilStarted() async {
+        guard requestCount == 0 else { return }
         await withCheckedContinuation { continuation in
-            countWaiters.append((count, continuation))
+            startWaiters.append(continuation)
         }
     }
 
-    func succeed(with response: PreviewResponse) {
-        let pending = waiters.values
-        waiters.removeAll(keepingCapacity: false)
+    func succeed(with response: PreviewResponse) throws {
+        let data = try JSONEncoder().encode(response)
+        let urlResponse = HTTPURLResponse(
+            url: URL(string: "https://api.example.test/preview")!,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: nil
+        )!
+        let pending = continuations
+        continuations.removeAll(keepingCapacity: false)
         for continuation in pending {
-            continuation.resume(returning: response)
+            continuation.resume(returning: (data, urlResponse))
         }
-    }
-
-    private func cancelWaiter(id: UUID) {
-        waiters.removeValue(forKey: id)?.resume(throwing: CancellationError())
-    }
-
-    private func resumeSatisfiedCountWaiters() {
-        var remaining: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
-        for waiter in countWaiters {
-            if waiters.count >= waiter.count {
-                waiter.continuation.resume()
-            } else {
-                remaining.append(waiter)
-            }
-        }
-        countWaiters = remaining
     }
 }
 

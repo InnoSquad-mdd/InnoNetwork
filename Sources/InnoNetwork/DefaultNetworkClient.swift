@@ -379,6 +379,13 @@ public final class DefaultNetworkClient: NetworkClient, UploadNetworkClient, Sen
         )
     }
 
+    /// Waits until the production request coalescer contains the requested
+    /// number of active callers. Package integration tests use this boundary
+    /// to control deadline races without scheduler-dependent sleeps.
+    package func waitForCoalescedCallerCount(atLeast count: Int) async {
+        await executionRuntime.requestCoalescer.waitForActiveWaiterCount(atLeast: count)
+    }
+
     /// Begins a long-lived streaming request and returns decoded line payloads
     /// through a lossless, backpressured sequence.
     ///
