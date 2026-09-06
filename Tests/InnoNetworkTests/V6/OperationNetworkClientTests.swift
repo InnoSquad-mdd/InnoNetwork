@@ -341,35 +341,25 @@ struct OperationNetworkClientTests {
         #expect(clock.waiterCount == 0)
     }
 
-    @Test("Operation cancellation does not await a cancellation-noncooperative base")
+    @Test(
+        "Operation cancellation does not await a cancellation-noncooperative base",
+        .timeLimit(.minutes(1))
+    )
     func cancellationReturnsBeforeNoncooperativeBase() async throws {
         let base = CancellationHeldNetworkClient()
         let operation = OperationNetworkClient(client: base).start(PreviewEndpoint())
         await base.waitUntilStarted()
 
-        let clock = TestClock()
-        let completionGate = FirstBoolGate()
         let valueTask = Task {
-            let failure = await failure(from: operation)
-            _ = await completionGate.resolve(true)
-            return failure
+            await failure(from: operation)
         }
-        let timeoutTask = Task {
-            try? await clock.sleep(for: .seconds(1))
-            _ = await completionGate.resolve(false)
-        }
-        #expect(await clock.waitForWaiters(count: 1))
 
         operation.cancel()
         await base.waitUntilCancelled()
-        clock.advance(by: .seconds(1))
-
-        #expect(await completionGate.wait())
-        await base.release()
         let result = await valueTask.value
-        timeoutTask.cancel()
+
         #expect(result.kind == .cancelled)
-        #expect(clock.waiterCount == 0)
+        await base.release()
     }
 
     @Test("Cancelling a value awaiter cancels its operation before the deadline")
@@ -449,32 +439,6 @@ private func failure<Value: Sendable>(
         )
     } catch {
         return error
-    }
-}
-
-private actor FirstBoolGate {
-    private var value: Bool?
-    private var waiters: [CheckedContinuation<Bool, Never>] = []
-
-    @discardableResult
-    func resolve(_ value: Bool) -> Bool {
-        guard self.value == nil else { return false }
-        self.value = value
-        let pending = waiters
-        waiters.removeAll(keepingCapacity: false)
-        for waiter in pending { waiter.resume(returning: value) }
-        return true
-    }
-
-    func wait() async -> Bool {
-        if let value { return value }
-        return await withCheckedContinuation { continuation in
-            if let value {
-                continuation.resume(returning: value)
-            } else {
-                waiters.append(continuation)
-            }
-        }
     }
 }
 
