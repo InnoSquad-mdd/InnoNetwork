@@ -101,16 +101,26 @@ package final class StreamingTimeoutWatchdog: Sendable {
     }
 
     package func recordFirstEvent() {
+        _ = admitDecodedFrame(deliversEvent: true)
+    }
+
+    /// Atomically admits a decoded frame at the delivery boundary. A decoder
+    /// may perform synchronous work after the last transport byte arrives, so
+    /// checking only before decoding can emit an already-expired output or
+    /// commit its resume controls. The caller must apply controls and yield the
+    /// output only when this method returns `nil`.
+    package func admitDecodedFrame(deliversEvent: Bool) -> StreamingTimeoutPhase? {
         let now = clock.monotonicNow()
-        let shouldCancel = state.withLock { state -> Bool in
-            guard !state.isFinished else { return false }
-            if latchExpiredDeadline(in: &state, at: now) {
-                return true
+        let result = state.withLock { state -> (StreamingTimeoutPhase?, Bool) in
+            guard !state.isFinished else { return (state.timeout, false) }
+            let didLatch = latchExpiredDeadline(in: &state, at: now)
+            if !didLatch, deliversEvent {
+                state.deliveredFirstEvent = true
             }
-            state.deliveredFirstEvent = true
-            return false
+            return (state.timeout, didLatch)
         }
-        if shouldCancel { cancelTransport() }
+        if result.1 { cancelTransport() }
+        return result.0
     }
 
     package var timeoutError: NetworkError? {

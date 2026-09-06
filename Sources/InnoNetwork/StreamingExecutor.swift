@@ -815,6 +815,20 @@ package struct StreamingExecutor: Sendable {
                     )
                 )
             }
+            if let timeoutPhase = watchdog.admitDecodedFrame(
+                deliversEvent: decoded.output != nil
+            ) {
+                switch timeoutPhase {
+                case .firstEvent, .idle:
+                    return .transportFailure(
+                        timeoutPhase.error,
+                        attemptStartedAt,
+                        networkResponse
+                    )
+                case .firstResponse, .total:
+                    throw timeoutPhase.error
+                }
+            }
             switch decoded.control.cursor {
             case .unchanged:
                 break
@@ -830,7 +844,6 @@ package struct StreamingExecutor: Sendable {
             resumeState.observe(retryDelay: decoded.control.retryDelay)
 
             if let output = decoded.output {
-                watchdog.recordFirstEvent()
                 try await withStreamingTimeout(
                     phase: .total,
                     phaseBudget: nil,

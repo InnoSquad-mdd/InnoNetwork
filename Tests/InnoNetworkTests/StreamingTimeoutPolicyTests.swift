@@ -670,6 +670,82 @@ struct StreamingTimeoutPolicyTests {
         await client.shutdown()
     }
 
+    @Test(
+        "A decoded output that crosses its delivery deadline is never emitted",
+        arguments: [
+            StreamingTimeoutPolicy(firstEvent: .seconds(1)),
+            StreamingTimeoutPolicy(idle: .seconds(1)),
+        ]
+    )
+    func decodedOutputAfterDeadlineIsRejected(policy: StreamingTimeoutPolicy) async throws {
+        let clock = TestClock()
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [ImmediateStreamingTimeoutURLProtocol.self]
+        let session = URLSession(configuration: sessionConfiguration)
+        defer { session.invalidateAndCancel() }
+        let configuration = NetworkConfiguration(
+            baseURL: URL(string: "https://stream-timeout.example.com")!,
+            networkMonitor: nil
+        )
+        let client = DefaultNetworkClient(
+            configuration: configuration,
+            session: session,
+            clock: clock
+        )
+
+        var values: [String] = []
+        do {
+            for try await value in client.stream(
+                DeadlineCrossingDecodedStream(clock: clock, timeoutPolicy: policy)
+            ) {
+                values.append(value)
+            }
+            Issue.record("Expected the decoded output to miss its delivery deadline")
+        } catch {
+            guard case .timeout(.resourceTimeout, _) = error else {
+                Issue.record("Expected a resource timeout, got \(error)")
+                await client.shutdown()
+                return
+            }
+        }
+
+        #expect(values.isEmpty)
+        #expect(clock.monotonicNow() == .seconds(2))
+        await client.shutdown()
+    }
+
+    @Test("A rejected decoded frame cannot seed the next reconnect cursor")
+    func rejectedFrameCursorIsNotReused() async throws {
+        DeadlineCrossingResumeURLProtocol.reset()
+        let clock = TestClock()
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [DeadlineCrossingResumeURLProtocol.self]
+        let session = URLSession(configuration: sessionConfiguration)
+        defer { session.invalidateAndCancel() }
+        let configuration = NetworkConfiguration(
+            baseURL: URL(string: "https://stream-timeout.example.com")!,
+            networkMonitor: nil
+        )
+        let client = DefaultNetworkClient(
+            configuration: configuration,
+            session: session,
+            clock: clock
+        )
+
+        var values: [String] = []
+        for try await value in client.stream(
+            DeadlineCrossingResumeStream(clock: clock)
+        ) {
+            values.append(value)
+        }
+
+        let requests = DeadlineCrossingResumeURLProtocol.capturedRequests
+        #expect(values == ["accepted"])
+        #expect(requests.count == 2)
+        #expect(requests.last?.value(forHTTPHeaderField: "Last-Event-ID") == nil)
+        await client.shutdown()
+    }
+
     private func streamingTimeoutConfiguration(
         monitor: any NetworkMonitoring
     ) -> NetworkConfiguration {
@@ -876,6 +952,54 @@ private struct LateControlOnlyEOFStream: StreamingAPIDefinition {
     }
 }
 
+private struct DeadlineCrossingDecodedStream: StreamingAPIDefinition {
+    typealias Output = String
+
+    let method = HTTPMethod.get
+    let path = "events"
+    let sessionAuthentication = SessionAuthentication.anonymous
+    let clock: TestClock
+    let timeoutPolicy: StreamingTimeoutPolicy
+
+    func decode(line: String) throws -> String? {
+        clock.advanceWithoutResuming(by: .seconds(2))
+        return line
+    }
+}
+
+private struct DeadlineCrossingResumeStream: StreamingAPIDefinition {
+    typealias Output = String
+
+    let method = HTTPMethod.get
+    let path = "events"
+    let sessionAuthentication = SessionAuthentication.anonymous
+    let timeoutPolicy = StreamingTimeoutPolicy(firstEvent: .seconds(1))
+    let resumePolicy = StreamingResumePolicy.serverSentEvents(
+        maxAttempts: 1,
+        retryDelay: 0,
+        reconnectOnEOF: false
+    )
+    let clock: TestClock
+
+    func makeFrameDecoder() -> @Sendable (String) throws -> StreamingDecodedFrame<String> {
+        { line in
+            if line == "late" {
+                clock.advanceWithoutResuming(by: .seconds(2))
+                return StreamingDecodedFrame(
+                    output: line,
+                    control: StreamingFrameControl(cursor: .set("expired-cursor"))
+                )
+            }
+            return StreamingDecodedFrame(
+                output: line,
+                control: StreamingFrameControl(cursor: .set("accepted-cursor"))
+            )
+        }
+    }
+
+    func decode(line: String) throws -> String? { line }
+}
+
 private final class LateFirstResponseSession: URLSessionProtocol, Sendable {
     let session: URLSession
     let clock: TestClock
@@ -915,6 +1039,44 @@ private final class ImmediateStreamingTimeoutURLProtocol: URLProtocol {
         )!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: Data("late\n".utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
+private final class DeadlineCrossingResumeURLProtocol: URLProtocol {
+    private struct State {
+        var requests: [URLRequest] = []
+    }
+
+    private static let state = OSAllocatedUnfairLock(initialState: State())
+
+    static var capturedRequests: [URLRequest] {
+        state.withLock { $0.requests }
+    }
+
+    static func reset() {
+        state.withLock { $0.requests.removeAll(keepingCapacity: false) }
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let capturedRequest = request
+        let attempt = Self.state.withLock { state in
+            state.requests.append(capturedRequest)
+            return state.requests.count
+        }
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "text/event-stream"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data((attempt == 1 ? "late\n" : "accepted\n").utf8))
         client?.urlProtocolDidFinishLoading(self)
     }
 
