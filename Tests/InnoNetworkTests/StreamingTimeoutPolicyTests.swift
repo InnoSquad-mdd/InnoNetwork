@@ -7,6 +7,103 @@ import os
 
 @Suite("Streaming Timeout Policy Tests", .serialized, .timeLimit(.minutes(1)))
 struct StreamingTimeoutPolicyTests {
+    @Test(
+        "Recoverable watchdog timeouts use the configured resume policy",
+        arguments: [
+            StreamingTimeoutPolicy(firstEvent: .seconds(1)),
+            StreamingTimeoutPolicy(idle: .seconds(1)),
+        ]
+    )
+    func watchdogTimeoutReconnects(policy: StreamingTimeoutPolicy) async throws {
+        SilentThenSuccessfulStreamURLProtocol.reset()
+        let clock = TestClock()
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [SilentThenSuccessfulStreamURLProtocol.self]
+        let session = URLSession(configuration: sessionConfiguration)
+        defer { session.invalidateAndCancel() }
+        let responseSignal = StreamingResponseSignal()
+        let configuration = NetworkConfiguration(
+            baseURL: URL(string: "https://stream-timeout.example.com")!,
+            networkMonitor: nil,
+            eventObservers: [responseSignal]
+        )
+        let runtime = RequestExecutionRuntime(
+            configuration: configuration,
+            inFlight: InFlightRegistry(),
+            clock: clock
+        )
+        let eventHub = NetworkEventHub()
+        let (sequence, sink) = StreamingOutputSequence<String>.make(buffering: .backpressured)
+        let execution = Task {
+            await StreamingExecutor(session: session, eventHub: eventHub).run(
+                request: WatchdogResumeStream(timeoutPolicy: policy),
+                requestID: UUID(),
+                configuration: configuration,
+                executionRuntime: runtime,
+                sink: sink
+            )
+        }
+
+        await responseSignal.waitUntilReceived()
+        #expect(await clock.waitForWaiters(count: 1))
+        clock.advance(by: .seconds(1))
+        var values: [String] = []
+        for try await value in sequence { values.append(value) }
+        await execution.value
+
+        #expect(values == ["resumed"])
+        #expect(SilentThenSuccessfulStreamURLProtocol.callCount == 2)
+        #expect(clock.waiterCount == 0)
+        await eventHub.shutdown()
+        await runtime.shutdown()
+    }
+
+    @Test("A total watchdog timeout never reconnects")
+    func totalWatchdogTimeoutDoesNotReconnect() async throws {
+        SilentThenSuccessfulStreamURLProtocol.reset()
+        let clock = TestClock()
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [SilentThenSuccessfulStreamURLProtocol.self]
+        let session = URLSession(configuration: sessionConfiguration)
+        defer { session.invalidateAndCancel() }
+        let responseSignal = StreamingResponseSignal()
+        let configuration = NetworkConfiguration(
+            baseURL: URL(string: "https://stream-timeout.example.com")!,
+            networkMonitor: nil,
+            eventObservers: [responseSignal]
+        )
+        let runtime = RequestExecutionRuntime(
+            configuration: configuration,
+            inFlight: InFlightRegistry(),
+            clock: clock
+        )
+        let eventHub = NetworkEventHub()
+        let (sequence, sink) = StreamingOutputSequence<String>.make(buffering: .backpressured)
+        let execution = Task {
+            await StreamingExecutor(session: session, eventHub: eventHub).run(
+                request: WatchdogResumeStream(
+                    timeoutPolicy: StreamingTimeoutPolicy(total: .seconds(1))
+                ),
+                requestID: UUID(),
+                configuration: configuration,
+                executionRuntime: runtime,
+                sink: sink
+            )
+        }
+
+        await responseSignal.waitUntilReceived()
+        #expect(await clock.waitForWaiters(count: 1))
+        clock.advance(by: .seconds(1))
+        var iterator = sequence.makeAsyncIterator()
+        await #expect(throws: NetworkError.self) { _ = try await iterator.next() }
+        await execution.value
+
+        #expect(SilentThenSuccessfulStreamURLProtocol.callCount == 1)
+        #expect(clock.waiterCount == 0)
+        await eventHub.shutdown()
+        await runtime.shutdown()
+    }
+
     @Test("First-event budget cancels an accepted response exactly once")
     func firstEventTimeout() async throws {
         let clock = TestClock()
@@ -477,6 +574,75 @@ private struct OptionalAuthTotalDeadlineStream: StreamingAPIDefinition {
     let timeoutPolicy = StreamingTimeoutPolicy(total: .seconds(1))
 
     func decode(line: String) throws -> String? { line }
+}
+
+private struct WatchdogResumeStream: StreamingAPIDefinition {
+    typealias Output = String
+
+    let method = HTTPMethod.get
+    let path = "events"
+    let sessionAuthentication = SessionAuthentication.anonymous
+    let timeoutPolicy: StreamingTimeoutPolicy
+    let resumePolicy = StreamingResumePolicy.serverSentEvents(
+        maxAttempts: 1,
+        retryDelay: 0,
+        reconnectOnEOF: false
+    )
+
+    func decode(line: String) throws -> String? { line.isEmpty ? nil : line }
+}
+
+private final class SilentThenSuccessfulStreamURLProtocol: URLProtocol {
+    private static let calls = OSAllocatedUnfairLock(initialState: 0)
+
+    static var callCount: Int { calls.withLock { $0 } }
+
+    static func reset() {
+        calls.withLock { $0 = 0 }
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let count = Self.calls.withLock { calls in
+            calls += 1
+            return calls
+        }
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "text/event-stream"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        if count > 1 {
+            client?.urlProtocol(self, didLoad: Data("resumed\n".utf8))
+            client?.urlProtocolDidFinishLoading(self)
+        }
+    }
+
+    override func stopLoading() {}
+}
+
+private actor StreamingResponseSignal: NetworkEventObserving {
+    private var received = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func handle(_ event: NetworkEvent) async {
+        guard case .responseReceived = event else { return }
+        received = true
+        let pending = waiters
+        waiters.removeAll(keepingCapacity: false)
+        for waiter in pending { waiter.resume() }
+    }
+
+    func waitUntilReceived() async {
+        if received { return }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
 }
 
 private final class FailingStreamingTimeoutSession: URLSessionProtocol, Sendable {

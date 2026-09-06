@@ -732,7 +732,14 @@ package struct StreamingExecutor: Sendable {
                     fallbackResponse: httpResponse
                 )
             } catch {
-                if let timeout = watchdog.timeoutError { throw timeout }
+                if let timeoutPhase = watchdog.timeoutPhase {
+                    switch timeoutPhase {
+                    case .firstEvent, .idle:
+                        return .transportFailure(timeoutPhase.error, attemptStartedAt)
+                    case .firstResponse, .total:
+                        throw timeoutPhase.error
+                    }
+                }
                 return .transportFailure(error, attemptStartedAt)
             }
 

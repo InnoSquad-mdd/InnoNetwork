@@ -103,6 +103,10 @@ package final class StreamingTimeoutWatchdog: Sendable {
         state.withLock { $0.timeout?.error }
     }
 
+    package var timeoutPhase: StreamingTimeoutPhase? {
+        state.withLock { $0.timeout }
+    }
+
     package func finish() {
         let task = state.withLock { state -> Task<Void, Never>? in
             state.isFinished = true
