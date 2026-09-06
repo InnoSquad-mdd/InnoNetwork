@@ -55,27 +55,37 @@ package enum NetworkOperationDeadlineContext {
     }
 }
 
-package actor NetworkOperationResultGate<Value: Sendable> {
-    private var result: Result<Value, NetworkFailure>?
-    private var waiters: [CheckedContinuation<Result<Value, NetworkFailure>, Never>] = []
+package final class NetworkOperationResultGate<Value: Sendable>: Sendable {
+    private struct State {
+        var result: Result<Value, NetworkFailure>?
+        var waiters: [CheckedContinuation<Result<Value, NetworkFailure>, Never>] = []
+    }
+
+    private let state = OSAllocatedUnfairLock(initialState: State())
 
     package func wait() async -> Result<Value, NetworkFailure> {
-        if let result { return result }
         return await withCheckedContinuation { continuation in
+            let result = state.withLock { state -> Result<Value, NetworkFailure>? in
+                if let result = state.result { return result }
+                state.waiters.append(continuation)
+                return nil
+            }
             if let result {
                 continuation.resume(returning: result)
-            } else {
-                waiters.append(continuation)
             }
         }
     }
 
     @discardableResult
     package func resolve(_ result: Result<Value, NetworkFailure>) -> Bool {
-        guard self.result == nil else { return false }
-        self.result = result
-        let pending = waiters
-        waiters.removeAll(keepingCapacity: false)
+        let pending = state.withLock { state -> [CheckedContinuation<Result<Value, NetworkFailure>, Never>]? in
+            guard state.result == nil else { return nil }
+            state.result = result
+            let pending = state.waiters
+            state.waiters.removeAll(keepingCapacity: false)
+            return pending
+        }
+        guard let pending else { return false }
         for waiter in pending {
             waiter.resume(returning: result)
         }

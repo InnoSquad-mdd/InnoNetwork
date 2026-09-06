@@ -232,6 +232,44 @@ struct OperationNetworkClientTests {
         #expect(failure.recovery == .doNotRetry)
     }
 
+    @Test("A zero deadline never dispatches the base client")
+    func zeroDeadlineDoesNotDispatch() async {
+        let base = DeadlineHeldNetworkClient()
+        let clock = TestClock()
+        let operation = OperationNetworkClient(client: base, deadlineClock: clock).start(
+            PreviewEndpoint(),
+            deadline: NetworkOperationDeadline(after: .zero)
+        )
+
+        let result = await failure(from: operation)
+
+        #expect(result.kind == .timeout)
+        #expect(await base.requestCount == 0)
+        #expect(clock.waiterCount == 0)
+    }
+
+    @Test("An elapsed deadline cannot lose to a late successful response")
+    func elapsedDeadlineWinsLateSuccess() async throws {
+        let base = DeadlineHeldNetworkClient()
+        let clock = TestClock()
+        let operation = OperationNetworkClient(client: base, deadlineClock: clock).start(
+            PreviewEndpoint(),
+            deadline: NetworkOperationDeadline(after: .seconds(1))
+        )
+
+        await base.waitUntilStarted()
+        #expect(await clock.waitForWaiters(count: 1))
+        clock.advanceWithoutResuming(by: .seconds(2))
+        await base.release()
+        let result = await failure(from: operation)
+
+        #expect(result.kind == .timeout)
+        #expect(result.deadlineStage == .requestPreparation)
+        #expect(await base.requestCount == 1)
+        clock.advance(by: .zero)
+        #expect(clock.waiterCount == 0)
+    }
+
     @Test("A successful operation cancels its pending deadline wait")
     func successCancelsDeadlineWait() async throws {
         let endpoint = PreviewEndpoint()
@@ -434,6 +472,45 @@ private actor DeadlineBlockingURLSession: URLSessionProtocol {
         for continuation in pending {
             continuation.resume(returning: (data, urlResponse))
         }
+    }
+}
+
+private actor DeadlineHeldNetworkClient: NetworkClient {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private(set) var requestCount = 0
+
+    func request<Request: APIDefinition>(
+        _: Request,
+        tag _: CancellationTag?
+    ) async throws(NetworkError) -> Request.APIResponse {
+        requestCount += 1
+        let pendingStarts = startWaiters
+        startWaiters.removeAll(keepingCapacity: false)
+        for waiter in pendingStarts { waiter.resume() }
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+        do {
+            return try JSONDecoder().decode(
+                Request.APIResponse.self,
+                from: JSONEncoder().encode(PreviewResponse(id: "late"))
+            )
+        } catch {
+            throw .configuration(reason: .invalidRequest("Unable to create the deadline test response."))
+        }
+    }
+
+    func waitUntilStarted() async {
+        guard requestCount == 0 else { return }
+        await withCheckedContinuation { continuation in
+            startWaiters.append(continuation)
+        }
+    }
+
+    func release() {
+        continuation?.resume()
+        continuation = nil
     }
 }
 

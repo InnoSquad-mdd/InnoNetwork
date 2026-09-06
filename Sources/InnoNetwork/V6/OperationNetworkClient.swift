@@ -70,15 +70,36 @@ public struct OperationNetworkClient<Base: NetworkClient>: Sendable {
             bufferingPolicy: .bufferingNewest(8)
         )
         let deadlineClock = self.deadlineClock
+        let deadlineInstant = deadline.map { deadlineClock.monotonicNow() + $0.duration }
         let task = Task { [base] in
             continuation.yield(.started(id: id))
             let tracker = NetworkOperationDeadlineTracker()
-            // Establish the initial stage before the request and deadline
-            // tasks race. A zero-duration deadline may otherwise resolve the
-            // gate before the request task reaches its first instruction.
             tracker.mark(.requestPreparation)
+            let cancellationFailure = NetworkFailure(
+                migratingV5: .cancelled,
+                requestMethod: requestMethod,
+                sessionAuthentication: sessionAuthentication,
+                replaySafety: replaySafety
+            )
+            if Task.isCancelled {
+                continuation.yield(.failed(id: id, failure: cancellationFailure))
+                continuation.finish()
+                return Result<Request.APIResponse, NetworkFailure>.failure(cancellationFailure)
+            }
+            if let deadlineInstant, deadlineClock.monotonicNow() >= deadlineInstant {
+                let failure = Self.deadlineFailure(
+                    tracker: tracker,
+                    requestMethod: requestMethod,
+                    replaySafety: replaySafety
+                )
+                continuation.yield(.failed(id: id, failure: failure))
+                continuation.finish()
+                return Result<Request.APIResponse, NetworkFailure>.failure(failure)
+            }
+
+            let gate = NetworkOperationResultGate<Request.APIResponse>()
             let requestTask = Task<Result<Request.APIResponse, NetworkFailure>, Never> {
-                await NetworkOperationDeadlineContext.$tracker.withValue(tracker) {
+                let result: Result<Request.APIResponse, NetworkFailure> = await NetworkOperationDeadlineContext.$tracker.withValue(tracker) {
                     do {
                         let value = try await base.request(request, tag: tag)
                         return .success(value)
@@ -103,46 +124,50 @@ public struct OperationNetworkClient<Base: NetworkClient>: Sendable {
                         )
                     }
                 }
+                if let deadlineInstant, deadlineClock.monotonicNow() >= deadlineInstant {
+                    _ = gate.resolve(
+                        .failure(
+                            Self.deadlineFailure(
+                                tracker: tracker,
+                                requestMethod: requestMethod,
+                                replaySafety: replaySafety
+                            )
+                        )
+                    )
+                } else {
+                    _ = gate.resolve(result)
+                }
+                return result
             }
 
             let result: Result<Request.APIResponse, NetworkFailure>
-            if let deadline {
-                let gate = NetworkOperationResultGate<Request.APIResponse>()
-                let requestCompletion = Task {
-                    _ = await gate.resolve(await requestTask.value)
-                }
+            if let deadlineInstant {
                 let deadlineTask = Task {
                     do {
-                        try await deadlineClock.sleep(for: deadline.duration)
+                        let remaining = max(.zero, deadlineInstant - deadlineClock.monotonicNow())
+                        try await deadlineClock.sleep(for: remaining)
                     } catch {
                         return
                     }
-                    let failure = NetworkFailure.operationDeadlineExceeded(
-                        stage: tracker.currentStage,
-                        requestMethod: requestMethod,
-                        replaySafety: replaySafety
-                    )
-                    if await gate.resolve(.failure(failure)) {
+                    if gate.resolve(
+                        .failure(
+                            Self.deadlineFailure(
+                                tracker: tracker,
+                                requestMethod: requestMethod,
+                                replaySafety: replaySafety
+                            )
+                        )
+                    ) {
                         requestTask.cancel()
                     }
                 }
-                let cancellationFailure = NetworkFailure(
-                    migratingV5: .cancelled,
-                    requestMethod: requestMethod,
-                    sessionAuthentication: sessionAuthentication,
-                    replaySafety: replaySafety
-                )
                 result = await withTaskCancellationHandler {
                     await gate.wait()
                 } onCancel: {
                     requestTask.cancel()
-                    requestCompletion.cancel()
                     deadlineTask.cancel()
-                    Task {
-                        _ = await gate.resolve(.failure(cancellationFailure))
-                    }
+                    _ = gate.resolve(.failure(cancellationFailure))
                 }
-                requestCompletion.cancel()
                 deadlineTask.cancel()
                 requestTask.cancel()
             } else {
@@ -165,6 +190,18 @@ public struct OperationNetworkClient<Base: NetworkClient>: Sendable {
             }
         }
         return NetworkOperation(id: id, events: events, task: task)
+    }
+
+    private static func deadlineFailure(
+        tracker: NetworkOperationDeadlineTracker,
+        requestMethod: HTTPMethod,
+        replaySafety: NetworkOperationReplaySafety
+    ) -> NetworkFailure {
+        NetworkFailure.operationDeadlineExceeded(
+            stage: tracker.currentStage,
+            requestMethod: requestMethod,
+            replaySafety: replaySafety
+        )
     }
 }
 
