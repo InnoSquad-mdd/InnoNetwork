@@ -70,6 +70,8 @@ that cut and are not part of the 6.0 contract.
 
 ### Fixed for 6.1.0
 
+- IETF draft-11 rate-limit feedback now gives a valid `Retry-After` header
+  precedence over a shorter `RateLimit` effective window.
 - In-memory cache LRU links no longer retain the cache graph after the cache is
   released. RFC 9111 freshness now includes valid upstream `Age`, apparent age
   from `Date`, and request/response delay; malformed or overflowing `Age`

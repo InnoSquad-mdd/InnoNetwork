@@ -96,6 +96,43 @@ struct AdvancedRateLimitPolicyTests {
         _ = await limiter.commit(reservation)
     }
 
+    @Test("Retry-After takes precedence over draft-11 feedback")
+    func retryAfterTakesPrecedenceOverDraftFeedback() async throws {
+        let clock = TestClock()
+        let limiter = AdvancedRateLimitCoordinator(
+            policy: AdvancedRateLimitPolicy(
+                algorithm: .tokenBucket(capacity: 10, refillPerSecond: 10),
+                serverFeedback: .ietfDraft11(maximumDelay: 120)
+            ),
+            clock: clock
+        )
+        let request = request(host: "api.example.test")
+        let first = try await limiter.reserve(for: request)
+        #expect(await limiter.commit(first) == nil)
+        let response = try #require(
+            HTTPURLResponse(
+                url: request.url!,
+                statusCode: 429,
+                httpVersion: nil,
+                headerFields: [
+                    "RateLimit": "\"default\";r=0;t=1",
+                    "Retry-After": "60",
+                ]
+            )
+        )
+        await limiter.observe(response: response, for: request, reservation: first)
+
+        let next = Task { try await limiter.reserve(for: request) }
+        #expect(await clock.waitForWaiters(count: 1))
+        clock.advance(by: .seconds(1))
+        #expect(await limiter.snapshot.pending == 1)
+
+        clock.advance(by: .seconds(59))
+        let reservation = try await next.value
+        #expect(reservation.wasDelayed)
+        #expect(await limiter.commit(reservation) == nil)
+    }
+
     @Test("Reservations delayed behind admission are rechecked at dispatch")
     func dispatchBoundaryRechecksQuota() async throws {
         let clock = TestClock()
