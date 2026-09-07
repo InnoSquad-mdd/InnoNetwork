@@ -290,6 +290,95 @@ final class ResilienceSequenceURLSession: URLSessionProtocol, Sendable {
     }
 }
 
+actor ResilienceMutationRaceURLSessionState {
+    private let staleGET: ResilienceQueuedHTTPResponse
+    private let mutation: ResilienceQueuedHTTPResponse
+    private let freshGET: ResilienceQueuedHTTPResponse
+    private var getCount = 0
+    private var requestCount = 0
+    private var firstGETStarted = false
+    private var firstGETStartWaiters: [CheckedContinuation<Void, Never>] = []
+    private var firstGETReleaseWaiters: [CheckedContinuation<Void, Never>] = []
+    private var firstGETReleased = false
+
+    init(
+        staleGET: ResilienceQueuedHTTPResponse,
+        mutation: ResilienceQueuedHTTPResponse,
+        freshGET: ResilienceQueuedHTTPResponse
+    ) {
+        self.staleGET = staleGET
+        self.mutation = mutation
+        self.freshGET = freshGET
+    }
+
+    func response(for request: URLRequest) async -> ResilienceQueuedHTTPResponse {
+        requestCount += 1
+        guard request.httpMethod == HTTPMethod.get.rawValue else { return mutation }
+        getCount += 1
+        guard getCount == 1 else { return freshGET }
+
+        firstGETStarted = true
+        let startWaiters = firstGETStartWaiters
+        firstGETStartWaiters.removeAll(keepingCapacity: false)
+        startWaiters.forEach { $0.resume() }
+        if !firstGETReleased {
+            await withCheckedContinuation { continuation in
+                firstGETReleaseWaiters.append(continuation)
+            }
+        }
+        return staleGET
+    }
+
+    func waitUntilFirstGETStarted() async {
+        guard !firstGETStarted else { return }
+        await withCheckedContinuation { continuation in
+            firstGETStartWaiters.append(continuation)
+        }
+    }
+
+    func releaseFirstGET() {
+        firstGETReleased = true
+        let waiters = firstGETReleaseWaiters
+        firstGETReleaseWaiters.removeAll(keepingCapacity: false)
+        waiters.forEach { $0.resume() }
+    }
+
+    var totalRequestCount: Int { requestCount }
+}
+
+final class ResilienceMutationRaceURLSession: URLSessionProtocol, Sendable {
+    private let state: ResilienceMutationRaceURLSessionState
+
+    init(
+        staleGET: ResilienceQueuedHTTPResponse,
+        mutation: ResilienceQueuedHTTPResponse,
+        freshGET: ResilienceQueuedHTTPResponse
+    ) {
+        self.state = ResilienceMutationRaceURLSessionState(
+            staleGET: staleGET,
+            mutation: mutation,
+            freshGET: freshGET
+        )
+    }
+
+    func waitUntilFirstGETStarted() async {
+        await state.waitUntilFirstGETStarted()
+    }
+
+    func releaseFirstGET() async {
+        await state.releaseFirstGET()
+    }
+
+    var requestCount: Int {
+        get async { await state.totalRequestCount }
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        let response = await state.response(for: request)
+        return (response.data, response.response)
+    }
+}
+
 
 actor ResilienceTokenStore {
     private var token: String

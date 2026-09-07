@@ -67,7 +67,8 @@ extension RequestExecutor {
         bodySource: BodySource,
         requestSigners: [RequestSigner],
         runtime: RequestExecutionRuntime,
-        originalRequestID: UUID
+        originalRequestID: UUID,
+        cacheWriteToken: ResponseCacheMutationCoordinator.WriteToken?
     ) async throws -> Response? {
         switch preparation {
         case .bypass, .revalidate, .revalidateWithStaleIfError:
@@ -170,7 +171,11 @@ extension RequestExecutor {
                                 substitution.preservedResponse,
                                 configuration: configuration
                             )
-                            await configuration.responseCache?.invalidate(cacheKey)
+                            await invalidateCacheEntry(
+                                cacheKey: cacheKey,
+                                configuration: configuration,
+                                runtime: runtime
+                            )
                         } else {
                             try enforceResponseBodyLimit(
                                 substitution.mergedResponse,
@@ -183,7 +188,9 @@ extension RequestExecutor {
                                 configuration: configuration,
                                 ageHeaders: responseHeaderSnapshot(result.response),
                                 requestStartedAt: result.startedAt,
-                                responseReceivedAt: result.completedAt
+                                responseReceivedAt: result.completedAt,
+                                runtime: runtime,
+                                writeToken: cacheWriteToken
                             )
                         }
                         terminalState = .notModified
@@ -197,7 +204,9 @@ extension RequestExecutor {
                             configuration: configuration,
                             ageHeaders: nil,
                             requestStartedAt: result.startedAt,
-                            responseReceivedAt: result.completedAt
+                            responseReceivedAt: result.completedAt,
+                            runtime: runtime,
+                            writeToken: cacheWriteToken
                         )
                         terminalState = .completed(statusCode: result.response.statusCode)
                     }
@@ -498,7 +507,8 @@ extension RequestExecutor {
     func invalidateUnsafeTargetURIIfNeeded(
         _ response: Response,
         request: URLRequest,
-        configuration: NetworkConfiguration
+        configuration: NetworkConfiguration,
+        runtime: RequestExecutionRuntime
     ) async {
         guard
             Self.shouldInvalidateCacheForUnsafeMethod(request.httpMethod, statusCode: response.statusCode),
@@ -509,7 +519,10 @@ extension RequestExecutor {
             return
         }
 
+        await runtime.cacheMutations.acquire(targetURI: targetURI)
+        await runtime.cacheMutations.advanceGeneration(for: targetURI)
         await cache.invalidateTargetURI(targetURI)
+        await runtime.cacheMutations.release(targetURI: targetURI)
     }
 
     /// Stores the response in cache when the policy allows writes.
@@ -527,7 +540,9 @@ extension RequestExecutor {
         configuration: NetworkConfiguration,
         ageHeaders: [String: String]?,
         requestStartedAt: Date,
-        responseReceivedAt: Date
+        responseReceivedAt: Date,
+        runtime: RequestExecutionRuntime,
+        writeToken: ResponseCacheMutationCoordinator.WriteToken?
     ) async {
         guard let cacheKey,
             request.httpMethod == HTTPMethod.get.rawValue,
@@ -542,13 +557,21 @@ extension RequestExecutor {
         }
         let cacheControl = cacheControlDirectives(in: headerSnapshot)
         if cacheControl.contains("no-store") || cacheControl.contains("private") {
-            await cache.invalidate(cacheKey)
+            await invalidateCacheEntry(
+                cacheKey: cacheKey,
+                configuration: configuration,
+                runtime: runtime
+            )
             return
         }
         if ResponseCacheStoragePolicy.containsAuthorizationRequestHeader(request.allHTTPHeaderFields ?? [:]),
             !ResponseCacheStoragePolicy.responsePermitsAuthenticatedStorage(cacheControlDirectives: cacheControl)
         {
-            await cache.invalidate(cacheKey)
+            await invalidateCacheEntry(
+                cacheKey: cacheKey,
+                configuration: configuration,
+                runtime: runtime
+            )
             return
         }
         let varyHeaders: [String: String?]?
@@ -558,11 +581,22 @@ extension RequestExecutor {
             sensitiveHeaderNames: configuration.responseCacheSensitiveHeaderNames
         ) {
         case .wildcardSkipsCache:
+            await invalidateCacheEntry(
+                cacheKey: cacheKey,
+                configuration: configuration,
+                runtime: runtime
+            )
             return
         case .noVary:
             varyHeaders = nil
         case .vary(let snapshot):
             varyHeaders = snapshot
+        }
+        guard let writeToken else { return }
+        await runtime.cacheMutations.acquire(targetURI: writeToken.targetURI)
+        guard await runtime.cacheMutations.isCurrent(writeToken) else {
+            await runtime.cacheMutations.release(targetURI: writeToken.targetURI)
+            return
         }
         await cache.set(
             cacheKey,
@@ -580,6 +614,28 @@ extension RequestExecutor {
                 varyHeaders: varyHeaders
             )
         )
+        await runtime.cacheMutations.release(targetURI: writeToken.targetURI)
+    }
+
+    func cacheWriteToken(
+        cacheKey: ResponseCacheKey?,
+        runtime: RequestExecutionRuntime
+    ) async -> ResponseCacheMutationCoordinator.WriteToken? {
+        guard let targetURI = cacheKey?.url else { return nil }
+        return await runtime.cacheMutations.writeToken(for: targetURI)
+    }
+
+    func invalidateCacheEntry(
+        cacheKey: ResponseCacheKey?,
+        configuration: NetworkConfiguration,
+        runtime: RequestExecutionRuntime
+    ) async {
+        guard let cacheKey, let cache = configuration.responseCache else { return }
+        let targetURI = cacheKey.url
+        await runtime.cacheMutations.acquire(targetURI: targetURI)
+        await runtime.cacheMutations.advanceGeneration(for: targetURI)
+        await cache.invalidate(cacheKey)
+        await runtime.cacheMutations.release(targetURI: targetURI)
     }
 
     func responseHeaderSnapshot(_ response: HTTPURLResponse?) -> [String: String] {

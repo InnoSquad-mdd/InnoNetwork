@@ -74,6 +74,10 @@ extension RequestExecutor {
                     sensitiveHeaderNames: configuration.responseCacheSensitiveHeaderNames
                 )
                 : nil
+            let cacheWriteToken = await cacheWriteToken(
+                cacheKey: cacheKey,
+                runtime: runtime
+            )
             let cachePreparation = await prepareCacheLookup(
                 cacheKey: cacheKey,
                 request: request,
@@ -90,7 +94,8 @@ extension RequestExecutor {
                 bodySource: bodySource,
                 requestSigners: requestSigners,
                 runtime: runtime,
-                originalRequestID: requestID
+                originalRequestID: requestID,
+                cacheWriteToken: cacheWriteToken
             ) {
                 try Task.checkCancellation()
                 return cachedResponse
@@ -152,9 +157,11 @@ extension RequestExecutor {
                     // origin so the new variant can be stored under a fresh
                     // request-header snapshot. This also ensures a revised
                     // `no-store` directive cannot leave the old entry behind.
-                    if let cacheKey, let cache = configuration.responseCache {
-                        await cache.invalidate(cacheKey)
-                    }
+                    await invalidateCacheEntry(
+                        cacheKey: cacheKey,
+                        configuration: configuration,
+                        runtime: runtime
+                    )
                     return substitution.preservedResponse
                 } else {
                     try enforceResponseBodyLimit(substitution.mergedResponse, configuration: configuration)
@@ -165,7 +172,9 @@ extension RequestExecutor {
                         configuration: configuration,
                         ageHeaders: responseHeaderSnapshot(networkResponse.response),
                         requestStartedAt: timedNetworkResponse.requestStartedAt,
-                        responseReceivedAt: timedNetworkResponse.responseReceivedAt
+                        responseReceivedAt: timedNetworkResponse.responseReceivedAt,
+                        runtime: runtime,
+                        writeToken: cacheWriteToken
                     )
                     return substitution.mergedResponse
                 }
@@ -203,7 +212,8 @@ extension RequestExecutor {
             await invalidateUnsafeTargetURIIfNeeded(
                 networkResponse,
                 request: request,
-                configuration: configuration
+                configuration: configuration,
+                runtime: runtime
             )
 
             // Enforced before the response cache is written so an oversize
@@ -219,7 +229,9 @@ extension RequestExecutor {
                 configuration: configuration,
                 ageHeaders: nil,
                 requestStartedAt: timedNetworkResponse.requestStartedAt,
-                responseReceivedAt: timedNetworkResponse.responseReceivedAt
+                responseReceivedAt: timedNetworkResponse.responseReceivedAt,
+                runtime: runtime,
+                writeToken: cacheWriteToken
             )
             return networkResponse
         }

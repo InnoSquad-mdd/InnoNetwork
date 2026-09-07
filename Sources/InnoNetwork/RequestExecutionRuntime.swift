@@ -7,6 +7,7 @@ package final class RequestExecutionRuntime: Sendable {
     let requestAdmission: RequestAdmissionCoordinator?
     let streamAdmission: RequestAdmissionCoordinator?
     let rateLimit: AdvancedRateLimitCoordinator?
+    let cacheMutations: ResponseCacheMutationCoordinator
     let inFlight: InFlightRegistry
     let clock: any InnoNetworkClock
 
@@ -30,6 +31,7 @@ package final class RequestExecutionRuntime: Sendable {
         self.rateLimit = configuration.advancedRateLimitPolicy.map {
             AdvancedRateLimitCoordinator(policy: $0, clock: clock)
         }
+        self.cacheMutations = ResponseCacheMutationCoordinator()
         self.inFlight = inFlight
         self.clock = clock
     }

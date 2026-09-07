@@ -324,6 +324,66 @@ extension ResiliencePolicyTests {
         #expect(await refreshedSession.requestCount == 1)
     }
 
+    @Test("Unsafe success prevents an older in-flight GET from repopulating the cache")
+    func unsafeSuccessInvalidatesInFlightGETWrite() async throws {
+        let cache = InMemoryResponseCache()
+        let stale = ResilienceUser(id: 1, name: "pre-mutation")
+        let mutated = ResilienceUser(id: 1, name: "mutation-result")
+        let fresh = ResilienceUser(id: 1, name: "post-mutation")
+        let session = try ResilienceMutationRaceURLSession(
+            staleGET: resilienceQueuedResponse(statusCode: 200, body: stale),
+            mutation: resilienceQueuedResponse(statusCode: 200, body: mutated),
+            freshGET: resilienceQueuedResponse(statusCode: 200, body: fresh)
+        )
+        let client = DefaultNetworkClient(
+            configuration: resilienceMakeLocalizedCacheConfiguration(
+                responseCachePolicy: .cacheFirst(maxAge: .seconds(60)),
+                responseCache: cache
+            ),
+            session: session
+        )
+
+        let oldGET = Task { try await client.request(ResilienceGetRequest()) }
+        await session.waitUntilFirstGETStarted()
+        _ = try await client.request(ResilienceMutationRequest(method: .put))
+        await session.releaseFirstGET()
+
+        #expect(try await oldGET.value == stale)
+        #expect(try await client.request(ResilienceGetRequest()) == fresh)
+        #expect(await session.requestCount == 3)
+    }
+
+    @Test("Vary wildcard invalidates a previously stored representation")
+    func varyWildcardInvalidatesExistingEntry() async throws {
+        let cache = InMemoryResponseCache()
+        let key = resilienceUserCacheKey()
+        await cache.set(
+            key,
+            CachedResponse(
+                data: try JSONEncoder().encode(ResilienceUser(id: 1, name: "stale")),
+                storedAt: Date(timeIntervalSinceNow: -60)
+            )
+        )
+        let fresh = ResilienceUser(id: 1, name: "uncacheable")
+        let session = try ResilienceSequenceURLSession(queue: [
+            resilienceQueuedResponse(
+                statusCode: 200,
+                body: fresh,
+                headers: ["Vary": "*"]
+            )
+        ])
+        let client = DefaultNetworkClient(
+            configuration: resilienceMakeLocalizedCacheConfiguration(
+                responseCachePolicy: .cacheFirst(maxAge: .seconds(1)),
+                responseCache: cache
+            ),
+            session: session
+        )
+
+        #expect(try await client.request(ResilienceGetRequest()) == fresh)
+        #expect(await cache.get(key) == nil)
+    }
+
     @Test("PUT PATCH DELETE and 3xx successes invalidate cached target URI")
     func unsafeMethodsAndRedirectSuccessInvalidateTargetURI() async throws {
         let cases: [(HTTPMethod, Int)] = [
