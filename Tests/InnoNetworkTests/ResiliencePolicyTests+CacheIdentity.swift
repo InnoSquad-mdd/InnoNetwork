@@ -311,8 +311,8 @@ extension ResiliencePolicyTests {
         }
     }
 
-    @Test("304 carrying a different Vary header preserves the stored vary snapshot")
-    func etagNotModifiedWithChangedVaryPreservesSnapshot() async throws {
+    @Test("304 carrying a different Vary header invalidates the stored vary snapshot")
+    func etagNotModifiedWithChangedVaryInvalidatesSnapshot() async throws {
         let cache = InMemoryResponseCache()
         let recorder = ResilienceResponseRecorder()
         let key = resilienceUserCacheKey()
@@ -349,14 +349,7 @@ extension ResiliencePolicyTests {
         #expect(observedResponse.statusCode == 200)
         #expect(resilienceResponseHeader(observedResponse, named: "Vary") == "Accept-Language")
         #expect(resilienceResponseHeader(observedResponse, named: "ETag") == "v1")
-        let refreshed = try #require(await cache.get(key))
-        #expect(refreshed.varyHeaders == ["accept-language": cacheFixtureAcceptLanguage])
-        #expect(
-            refreshed.headers.first { $0.key.caseInsensitiveCompare("Vary") == .orderedSame }?.value
-                == "Accept-Language"
-        )
-        #expect(refreshed.etag == "v1")
-        #expect(refreshed.storedAt > storedAt)
+        #expect(await cache.get(key) == nil)
     }
 
     @Test("SWR returns stale data and revalidates in the background")

@@ -38,8 +38,8 @@ extension ResiliencePolicyTests {
         #expect(stored.rfc9111InitialAge == 8)
     }
 
-    @Test("304 with a revised Vary dimension resets RFC age from the validation response")
-    func revisedVaryNotModifiedResetsRFCResponseAge() async throws {
+    @Test("304 with a revised Vary dimension invalidates the stored representation")
+    func revisedVaryNotModifiedInvalidatesStoredRepresentation() async throws {
         let clock = TestClock(epoch: Date(timeIntervalSince1970: 20_000))
         let cache = InMemoryResponseCache()
         let key = resilienceUserCacheKey()
@@ -82,10 +82,42 @@ extension ResiliencePolicyTests {
         let value = try await client.request(ResilienceGetRequest())
 
         #expect(value == ResilienceUser(id: 1, name: "cached"))
-        let refreshed = try #require(await cache.get(key))
-        #expect(refreshed.headers["Vary"] == "Accept-Language")
-        #expect(refreshed.storedAt == Date(timeIntervalSince1970: 20_005))
-        #expect(refreshed.rfc9111InitialAge == 15)
+        #expect(await cache.get(key) == nil)
+    }
+
+    @Test("304 no-store with a revised Vary dimension removes the stored representation")
+    func revisedVaryNotModifiedNoStoreInvalidatesStoredRepresentation() async throws {
+        let cache = InMemoryResponseCache()
+        let key = resilienceUserCacheKey()
+        await cache.set(
+            key,
+            CachedResponse(
+                data: try JSONEncoder().encode(ResilienceUser(id: 1, name: "cached")),
+                headers: ["ETag": "v1", "Vary": "Accept-Language", "Cache-Control": "max-age=60"],
+                storedAt: Date(timeIntervalSinceNow: -120),
+                varyHeaders: ["accept-language": cacheFixtureAcceptLanguage]
+            )
+        )
+        let session = try ResilienceSequenceURLSession(queue: [
+            resilienceQueuedResponse(
+                statusCode: 304,
+                headers: ["ETag": "v1", "Vary": "Accept", "Cache-Control": "no-store"]
+            )
+        ])
+        let client = DefaultNetworkClient(
+            configuration: resilienceMakeLocalizedCacheConfiguration(
+                responseCachePolicy: .rfc9111Compliant(
+                    wrapping: .cacheFirst(maxAge: .seconds(60))
+                ),
+                responseCache: cache
+            ),
+            session: session
+        )
+
+        let value = try await client.request(ResilienceGetRequest())
+
+        #expect(value == ResilienceUser(id: 1, name: "cached"))
+        #expect(await cache.get(key) == nil)
     }
 
     @Test("304 merged metadata resets RFC age from the validation response")

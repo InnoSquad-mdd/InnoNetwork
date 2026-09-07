@@ -148,21 +148,16 @@ extension RequestExecutor {
                     notModifiedHeaders: networkResponse.response?.allHeaderFields
                 ) {
                     try enforceResponseBodyLimit(substitution.preservedResponse, configuration: configuration)
-                    // The 304 advertises a different Vary dimension than the
-                    // stored entry was keyed on. Rewriting with the new
-                    // snapshot would silently move the entry to a different
-                    // dimension; refresh `storedAt` instead so the freshness
-                    // window reflects the successful revalidation while the
-                    // stored representation remains addressable through its
-                    // original Vary signature.
-                    await refreshCachedFreshness(
-                        cached: substitution.cached,
-                        cacheKey: cacheKey,
-                        configuration: configuration,
-                        revalidationHeaders: responseHeaderSnapshot(networkResponse.response),
-                        requestStartedAt: timedNetworkResponse.requestStartedAt,
-                        responseReceivedAt: timedNetworkResponse.responseReceivedAt
-                    )
+                    // A changed Vary dimension invalidates the selection
+                    // contract under which the representation was stored.
+                    // Return the successfully validated representation to
+                    // this caller, but force the next request through the
+                    // origin so the new variant can be stored under a fresh
+                    // request-header snapshot. This also ensures a revised
+                    // `no-store` directive cannot leave the old entry behind.
+                    if let cacheKey, let cache = configuration.responseCache {
+                        await cache.invalidate(cacheKey)
+                    }
                     return substitution.preservedResponse
                 } else {
                     try enforceResponseBodyLimit(substitution.mergedResponse, configuration: configuration)

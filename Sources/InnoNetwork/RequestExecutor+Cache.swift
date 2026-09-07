@@ -170,14 +170,7 @@ extension RequestExecutor {
                                 substitution.preservedResponse,
                                 configuration: configuration
                             )
-                            await refreshCachedFreshness(
-                                cached: substitution.cached,
-                                cacheKey: cacheKey,
-                                configuration: configuration,
-                                revalidationHeaders: responseHeaderSnapshot(result.response),
-                                requestStartedAt: result.startedAt,
-                                responseReceivedAt: result.completedAt
-                            )
+                            await configuration.responseCache?.invalidate(cacheKey)
                         } else {
                             try enforceResponseBodyLimit(
                                 substitution.mergedResponse,
@@ -458,46 +451,6 @@ extension RequestExecutor {
                 data: cached.data,
                 request: request,
                 response: httpResponse
-            )
-        )
-    }
-
-    /// Re-stores `cached` under `cacheKey` with a refreshed `storedAt`.
-    ///
-    /// Used on the 304 substitution path when the not-modified response
-    /// advertises a different `Vary` dimension than the stored entry was
-    /// keyed on. The stored representation, headers, and Vary snapshot are
-    /// preserved verbatim; the freshness timestamp and corrected initial age
-    /// are replaced from the validation response so the entry honours the
-    /// successful conditional revalidation without being silently rekeyed.
-    func refreshCachedFreshness(
-        cached: CachedResponse,
-        cacheKey: ResponseCacheKey?,
-        configuration: NetworkConfiguration,
-        revalidationHeaders: [String: String],
-        requestStartedAt: Date,
-        responseReceivedAt: Date
-    ) async {
-        guard let cacheKey,
-            let cache = configuration.responseCache,
-            configuration.responseCachePolicy.allowsCacheWrite
-        else {
-            return
-        }
-        await cache.set(
-            cacheKey,
-            CachedResponse(
-                data: cached.data,
-                statusCode: cached.statusCode,
-                headers: cached.headers,
-                storedAt: responseReceivedAt,
-                rfc9111InitialAge: RFC9111ResponseAge.initialAge(
-                    headers: revalidationHeaders,
-                    requestTime: requestStartedAt,
-                    responseTime: responseReceivedAt
-                ),
-                requiresRevalidation: cached.requiresRevalidation,
-                varyHeaders: cached.varyHeaders
             )
         )
     }
