@@ -261,7 +261,8 @@ public struct CachedResponse: Sendable, Equatable {
         self.statusCode = statusCode
         self.headers = headers
         self.storedAt = storedAt
-        self.rfc9111InitialAge = rfc9111InitialAge.map(RFC9111ResponseAge.clamp)
+        self.rfc9111InitialAge =
+            rfc9111InitialAge.map(RFC9111ResponseAge.clamp)
             ?? RFC9111ResponseAge.initialAge(
                 headers: headers,
                 requestTime: storedAt,
