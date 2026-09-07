@@ -70,6 +70,16 @@ that cut and are not part of the 6.0 contract.
 
 ### Fixed for 6.1.0
 
+- RFC 9111 cache handling clamps oversized `max-age` and
+  `stale-if-error` delta-seconds before `Duration` conversion, invalidates a
+  stored representation when a `304` revises `Vary`, and cannot retain that
+  representation when the validation response adds `no-store`.
+- `stale-if-error` no longer bypasses mandatory `no-cache` validation and
+  rechecks the origin-authorized stale window after retries and transport
+  delay before returning a fallback.
+- Request and stream admission queues compare an absolute monotonic deadline
+  immediately before granting capacity, so a delayed timeout task cannot
+  admit expired work.
 - IETF draft-11 rate-limit feedback now gives a valid `Retry-After` header
   precedence over a shorter `RateLimit` effective window.
 - In-memory cache LRU links no longer retain the cache graph after the cache is

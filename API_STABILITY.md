@@ -409,13 +409,18 @@ general handshake retry policy would retry an ordinary transport timeout.
   the `Last-Modified` heuristic; invalid or duplicate freshness directives
   are treated as stale rather than extending cache reuse. Current age includes
   valid upstream `Age`, apparent age from `Date`, and transport response delay;
-  malformed or overflowing `Age` fails closed. The corrected initial age is
-  preserved through `304` revalidation and current persistent records, while
-  legacy persistent records remain readable and reconstruct it conservatively.
+  malformed or overflowing `Age` fails closed, and oversized freshness
+  delta-seconds clamp before conversion. The corrected initial age is
+  preserved through same-dimension `304` revalidation and current persistent
+  records, while a revised `Vary` invalidates the old selection contract.
+  Custom caches can persist the public age metadata; legacy persistent records
+  remain readable and reconstruct it conservatively.
 - `ResponseCachePolicy.staleIfError(wrapping:)` — recovery remains limited to
   origin-authorized stale windows after retry exhaustion. Eligible HTTP
   statuses may grow only additively; cancellation, trust, configuration,
-  decoding, and body-limit failures remain excluded.
+  decoding, body-limit failures, and responses requiring `no-cache`
+  validation remain excluded. The window is checked again immediately before
+  final recovery.
 - `ResponseCachePolicy.requestOnlyIfCached(wrapping:)` — the request directive
   is consumed only under this wrapper. A miss or forced revalidation remains
   a local typed failure and never starts transport or background refresh.
