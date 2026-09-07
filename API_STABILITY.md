@@ -406,7 +406,11 @@ general handshake retry policy would retry an ordinary transport timeout.
   read-side freshness handling as RFC 9111 coverage expands. `max-age`
   remains higher priority than `Expires`, which remains higher priority than
   the `Last-Modified` heuristic; invalid or duplicate freshness directives
-  are treated as stale rather than extending cache reuse.
+  are treated as stale rather than extending cache reuse. Current age includes
+  valid upstream `Age`, apparent age from `Date`, and transport response delay;
+  malformed or overflowing `Age` fails closed. The corrected initial age is
+  preserved through `304` revalidation and current persistent records, while
+  legacy persistent records remain readable and reconstruct it conservatively.
 - `ResponseCachePolicy.staleIfError(wrapping:)` — recovery remains limited to
   origin-authorized stale windows after retry exhaustion. Eligible HTTP
   statuses may grow only additively; cancellation, trust, configuration,
@@ -438,7 +442,10 @@ general handshake retry policy would retry an ordinary transport timeout.
   clear a seeded request header. Server-side replay and deduplication remain
   application contracts, not an exactly-once library guarantee. First-event
   and idle-byte watchdog expirations are recoverable under this policy;
-  first-response and total deadlines are terminal.
+  first-response and total deadlines are terminal. A decoded frame is admitted
+  against the watchdog deadline before its event or control metadata becomes
+  observable; an expired frame cannot update the reconnect cursor or retry
+  hint.
 - `ServerSentEventDecoder` — empty `data` lines dispatch, multiline data keeps
   significant newlines, metadata-only blocks do not dispatch, and IDs persist
   within one response. BOM handling is response-scoped, not event-scoped.
@@ -452,6 +459,11 @@ general handshake retry policy would retry an ordinary transport timeout.
   executor-owned late transports and admission reservations are reclaimed.
   Request interception, token application, and signing chains stop between
   callbacks once cancellation is observed.
+- `NetworkOperation` — cancelling the handle or the task awaiting `value()`
+  resolves the public result promptly as `.cancelled`, even when the wrapped
+  application work does not cooperate with cancellation. The executor cancels
+  owned work but does not claim that arbitrary application callbacks have
+  physically stopped before the cancellation result is returned.
 - `TraceContextInterceptor` and `W3CTraceContext` — W3C header propagation
   remains additive; future minors may add richer correlation helpers without
   changing `NetworkEvent` case shape.

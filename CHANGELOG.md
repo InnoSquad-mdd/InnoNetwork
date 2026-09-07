@@ -67,6 +67,19 @@ that cut and are not part of the 6.0 contract.
 
 ### Fixed for 6.1.0
 
+- In-memory cache LRU links no longer retain the cache graph after the cache is
+  released. RFC 9111 freshness now includes valid upstream `Age`, apparent age
+  from `Date`, and request/response delay; malformed or overflowing `Age`
+  values fail closed, and an entry is stale at the exact freshness boundary.
+  Corrected initial age survives `304` revalidation and current persistent
+  records, while legacy records remain decodable with conservative age
+  reconstruction.
+- Decoded streaming frames are admitted atomically against the active watchdog
+  deadline before cursor/retry state or output is updated. Frames decoded at
+  or after expiry are discarded and cannot provide a reconnect cursor.
+- Cancelling a `NetworkOperation` or the task awaiting `value()` now resolves
+  promptly as `.cancelled`, including operations without a deadline, without
+  waiting for cancellation-noncooperative application work to return.
 - Buffered request, authentication, signing, response, and pre-decode callback
   chains stop before invoking another callback after caller cancellation is
   observed. Session-level and endpoint-level ordering remains unchanged.
