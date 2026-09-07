@@ -633,6 +633,8 @@ package extension ResponseCachePolicy {
         guard containsStaleIfErrorOptIn, allowsCacheRead else { return nil }
         let directives = RFC9111CacheControlDirectives(headers: cached.headers)
         guard !directives.noStore,
+            !directives.noCache,
+            !cached.requiresRevalidation,
             !directives.mustRevalidate,
             !directives.hasInvalidStaleIfError,
             let staleWindow = directives.staleIfErrorSeconds,

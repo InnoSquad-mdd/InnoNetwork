@@ -2,7 +2,7 @@ import Foundation
 
 struct StaleIfErrorRecovery: Error {
     let failure: NetworkError
-    let fallback: Response
+    let fallback: CachedResponse
 }
 
 // MARK: - Pipeline stage
@@ -80,10 +80,7 @@ extension RequestExecutor {
                 configuration: configuration,
                 runtime: runtime
             )
-            let staleIfErrorFallback = staleIfErrorResponse(
-                preparation: cachePreparation,
-                request: request
-            )
+            let staleIfErrorFallback = staleIfErrorCandidate(preparation: cachePreparation)
             if let cachedResponse = try await cachedResponseIfAvailable(
                 preparation: cachePreparation,
                 cacheKey: cacheKey,

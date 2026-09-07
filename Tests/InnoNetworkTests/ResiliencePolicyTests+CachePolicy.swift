@@ -624,7 +624,7 @@ extension ResiliencePolicyTests {
 
 }
 
-private final class ClockAdvancingResilienceURLSession: URLSessionProtocol, Sendable {
+final class ClockAdvancingResilienceURLSession: URLSessionProtocol, Sendable {
     private let queued: ResilienceQueuedHTTPResponse
     private let clock: TestClock
     private let delay: Duration

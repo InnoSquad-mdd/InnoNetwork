@@ -238,14 +238,23 @@ extension RequestExecutor {
         }
     }
 
-    func staleIfErrorResponse(
-        preparation: CachePreparation,
-        request: URLRequest
-    ) -> Response? {
+    func staleIfErrorCandidate(preparation: CachePreparation) -> CachedResponse? {
         guard case .revalidateWithStaleIfError(let cached) = preparation else {
             return nil
         }
-        return response(from: cached, for: request)
+        return cached
+    }
+
+    func staleIfErrorResponse(
+        candidate: CachedResponse,
+        request: URLRequest,
+        policy: ResponseCachePolicy,
+        now: Date
+    ) -> Response? {
+        guard policy.staleIfErrorFallback(cached: candidate, now: now) != nil else {
+            return nil
+        }
+        return response(from: candidate, for: request)
     }
 
     private func response(from cached: CachedResponse, for request: URLRequest) -> Response? {

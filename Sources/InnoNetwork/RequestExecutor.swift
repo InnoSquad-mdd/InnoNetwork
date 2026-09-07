@@ -120,9 +120,20 @@ package struct RequestExecutor {
                 request: retryRequest ?? surfaced.underlyingRequest
             ) {
                 do {
+                    try Task.checkCancellation()
+                    guard
+                        let fallback = executor.staleIfErrorResponse(
+                            candidate: recovery.fallback,
+                            request: prepared.request,
+                            policy: configuration.responseCachePolicy,
+                            now: runtime.clock.now()
+                        )
+                    else {
+                        throw surfaced
+                    }
                     let recoveredResponse = try await executor.finalizeResponseStage(
                         executable,
-                        networkResponse: recovery.fallback,
+                        networkResponse: fallback,
                         prepared: prepared,
                         configuration: configuration
                     )

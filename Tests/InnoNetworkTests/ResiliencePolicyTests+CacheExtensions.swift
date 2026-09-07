@@ -1,4 +1,5 @@
 import Foundation
+import InnoNetworkTestSupport
 import Testing
 
 @testable import InnoNetwork
@@ -225,6 +226,84 @@ extension ResiliencePolicyTests {
 
         #expect(response == ResilienceUser(id: 1, name: "offline"))
         #expect(await session.requestCount == 1)
+    }
+
+    @Test("stale-if-error never reuses a no-cache response after failed validation")
+    func staleIfErrorDoesNotRecoverNoCache() async throws {
+        let cache = InMemoryResponseCache()
+        await cache.set(
+            resilienceUserCacheKey(),
+            CachedResponse(
+                data: try JSONEncoder().encode(ResilienceUser(id: 1, name: "must-validate")),
+                headers: ["Cache-Control": "no-cache, max-age=10, stale-if-error=60"],
+                storedAt: Date(timeIntervalSinceNow: -11),
+                requiresRevalidation: true
+            )
+        )
+        let session = try ResilienceSequenceURLSession(queue: [
+            resilienceQueuedResponse(statusCode: 503)
+        ])
+        let client = DefaultNetworkClient(
+            configuration: resilienceMakeLocalizedCacheConfiguration(
+                responseCachePolicy: .staleIfError(
+                    wrapping: .rfc9111Compliant(
+                        wrapping: .cacheFirst(maxAge: .seconds(10))
+                    )
+                ),
+                responseCache: cache
+            ),
+            session: session
+        )
+
+        do {
+            _ = try await client.request(ResilienceGetRequest())
+            Issue.record("Expected the failed mandatory validation to surface")
+        } catch NetworkError.statusCode(let response) {
+            #expect(response.statusCode == 503)
+        } catch {
+            Issue.record("Expected the original 503 failure, got \(error)")
+        }
+        #expect(await session.requestCount == 1)
+    }
+
+    @Test("stale-if-error rechecks its window after the network attempt")
+    func staleIfErrorRechecksWindowAfterNetworkAttempt() async throws {
+        let clock = TestClock(epoch: Date(timeIntervalSince1970: 10_000))
+        let cache = InMemoryResponseCache()
+        await cache.set(
+            resilienceUserCacheKey(),
+            CachedResponse(
+                data: try JSONEncoder().encode(ResilienceUser(id: 1, name: "expired")),
+                headers: ["Cache-Control": "max-age=10, stale-if-error=5"],
+                storedAt: Date(timeIntervalSince1970: 9_989)
+            )
+        )
+        let session = ClockAdvancingResilienceURLSession(
+            queued: try resilienceQueuedResponse(statusCode: 503),
+            clock: clock,
+            delay: .seconds(10)
+        )
+        let client = DefaultNetworkClient(
+            configuration: resilienceMakeLocalizedCacheConfiguration(
+                responseCachePolicy: .staleIfError(
+                    wrapping: .rfc9111Compliant(
+                        wrapping: .cacheFirst(maxAge: .seconds(10))
+                    )
+                ),
+                responseCache: cache
+            ),
+            session: session,
+            clock: clock
+        )
+
+        do {
+            _ = try await client.request(ResilienceGetRequest())
+            Issue.record("Expected stale-if-error to expire during transport")
+        } catch NetworkError.statusCode(let response) {
+            #expect(response.statusCode == 503)
+        } catch {
+            Issue.record("Expected the original 503 failure, got \(error)")
+        }
     }
 
     @Test("stale-if-error never converts cancellation into success")

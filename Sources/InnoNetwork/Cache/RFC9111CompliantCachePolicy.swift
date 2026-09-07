@@ -182,6 +182,7 @@ struct RFC9111CacheControlDirectives: Sendable, Equatable {
     }
 
     let noStore: Bool
+    let noCache: Bool
     let mustRevalidate: Bool
     let maxAgeSeconds: TimeInterval?
     let hasInvalidMaxAge: Bool
@@ -196,6 +197,7 @@ struct RFC9111CacheControlDirectives: Sendable, Equatable {
             .joined(separator: ",")
         guard !combined.isEmpty else {
             self.noStore = false
+            self.noCache = false
             self.mustRevalidate = false
             self.maxAgeSeconds = nil
             self.hasInvalidMaxAge = false
@@ -205,6 +207,7 @@ struct RFC9111CacheControlDirectives: Sendable, Equatable {
         }
 
         var noStore = false
+        var noCache = false
         var mustRevalidate = false
         var maxAge: TimeInterval?
         var maxAgeCount = 0
@@ -217,6 +220,8 @@ struct RFC9111CacheControlDirectives: Sendable, Equatable {
             switch name {
             case "no-store":
                 noStore = true
+            case "no-cache":
+                noCache = true
             case "must-revalidate":
                 mustRevalidate = true
             case "max-age":
@@ -248,6 +253,7 @@ struct RFC9111CacheControlDirectives: Sendable, Equatable {
             }
         }
         self.noStore = noStore
+        self.noCache = noCache
         self.mustRevalidate = mustRevalidate
         self.maxAgeSeconds = hasInvalidMaxAge ? nil : maxAge
         self.hasInvalidMaxAge = hasInvalidMaxAge
