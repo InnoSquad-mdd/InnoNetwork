@@ -342,6 +342,26 @@ struct RFC9111ComplianceTests {
         }
     }
 
+    @Test("Unrepresentable server max-age is clamped before Duration conversion")
+    func unrepresentableServerMaxAgeIsClamped() {
+        let storedAt = Date()
+        let cached = CachedResponse(
+            data: Data("payload".utf8),
+            headers: ["Cache-Control": "max-age=999999999999999999999999999999"],
+            storedAt: storedAt
+        )
+        let adapter = ResponseCachePolicy.rfc9111Compliant(
+            wrapping: .cacheFirst(maxAge: .seconds(60))
+        )
+
+        switch adapter.prepare(cached: cached, now: storedAt.addingTimeInterval(30)) {
+        case .returnCached:
+            break
+        default:
+            Issue.record("an oversized server max-age must clamp without overriding the caller ceiling")
+        }
+    }
+
     // MARK: - Expires fallback
 
     @Test("Expires fallback uses Date header for freshness")

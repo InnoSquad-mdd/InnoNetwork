@@ -318,7 +318,9 @@ struct RFC9111CacheControlDirectives: Sendable, Equatable {
         guard !trimmed.isEmpty, trimmed.allSatisfy({ $0.isASCII && $0.isNumber }) else {
             return nil
         }
-        guard let seconds = TimeInterval(trimmed), seconds.isFinite else { return nil }
-        return seconds
+        guard let seconds = TimeInterval(trimmed) else {
+            return RFC9111ResponseAge.maximumDeltaSeconds
+        }
+        return RFC9111ResponseAge.clamp(seconds)
     }
 }
