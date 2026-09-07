@@ -19,6 +19,9 @@ that cut and are not part of the 6.0 contract.
 - `AdvancedRateLimitPolicy` adds monotonic token-bucket and exact sliding-window
   algorithms, reservations/refunds, bounded scopes/queues, `Retry-After`, and
   an explicitly versioned IETF RateLimit draft-11 adapter.
+- `CachedResponse.rfc9111InitialAge` and its initializer input are public so
+  custom persistent caches can preserve upstream age and transport delay
+  across serialization without relying on package-only state.
 - Streaming adds independent first-response, first-event, idle-byte, and total
   budgets. `StreamingDecodedFrame` preserves output-free SSE `id:` resets and
   `retry:` hints, while `StreamingResumePolicy.serverSentEvents` can reconnect

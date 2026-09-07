@@ -23,11 +23,11 @@ Stable compatibility promise.
 
 The 5.0.0 release baseline remains the compatibility reference for the
 currently tagged 5.x line; this table tracks the 6.1 candidate layered after
-the planned 6.0 boundary with 1,612 public declarations in the root package.
+the planned 6.0 boundary with 1,613 public declarations in the root package.
 
 | Product | Public declarations |
 |---|---:|
-| `InnoNetwork` (core) | 1047 |
+| `InnoNetwork` (core) | 1048 |
 | `InnoNetworkWebSocket` | 164 |
 | `InnoNetworkDownload` | 94 |
 | `InnoNetworkUpload` | 109 |
@@ -36,14 +36,14 @@ the planned 6.0 boundary with 1,612 public declarations in the root package.
 | `InnoNetworkOpenAPI` | 36 |
 | `InnoNetworkTrust` | 17 |
 | `InnoNetworkAuthAWS` | 10 |
-| **Total** | **1,612** |
+| **Total** | **1,613** |
 
 | Compatibility tier | Public declarations |
 |---|---:|
 | Stable consumer API | 306 |
-| Provisionally Stable consumer API | 1,273 |
+| Provisionally Stable consumer API | 1,274 |
 | `@_spi(GeneratedClientSupport)` | 33 |
-| **Total** | **1,612** |
+| **Total** | **1,613** |
 
 ## Why this matters
 
@@ -52,7 +52,7 @@ The 6.0 split reduced this repository's machine-checked surface from 3,254 to
 the temporary `InnoNetworkNext` module into the root product. The additive 6.1
 deadline, upload-control, cache-control, bounded streaming/cursor, admission,
 advanced quota, tracing, and resumable-upload candidates raise the development
-snapshot to 1,612 declarations. The 178 new declarations remain Provisionally
+snapshot to 1,613 declarations. The 179 new declarations remain Provisionally
 Stable until real server and consumer evidence supports promotion.
 
 At release, every public symbol becomes:

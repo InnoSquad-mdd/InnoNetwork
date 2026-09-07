@@ -229,9 +229,13 @@ public struct CachedResponse: Sendable, Equatable {
     public let statusCode: Int
     public let headers: [String: String]
     public let storedAt: Date
-    /// Corrected response age at ``storedAt``. Kept package-scoped because it
-    /// is transport/cache bookkeeping rather than application metadata.
-    package let rfc9111InitialAge: TimeInterval
+    /// Corrected RFC 9111 response age at ``storedAt``.
+    ///
+    /// Custom persistent caches must store and restore this value unchanged
+    /// so transport delay and upstream `Age` metadata survive a process
+    /// restart. The initializer clamps invalid, negative, and overflowing
+    /// values to the RFC delta-seconds range.
+    public let rfc9111InitialAge: TimeInterval
     /// Whether a cached entry must be revalidated before reuse even while it
     /// is still inside the caller-provided freshness window.
     public let requiresRevalidation: Bool
@@ -249,6 +253,7 @@ public struct CachedResponse: Sendable, Equatable {
         statusCode: Int = 200,
         headers: [String: String] = [:],
         storedAt: Date = Date(),
+        rfc9111InitialAge: TimeInterval? = nil,
         requiresRevalidation: Bool = false,
         varyHeaders: [String: String?]? = nil
     ) {
@@ -256,29 +261,12 @@ public struct CachedResponse: Sendable, Equatable {
         self.statusCode = statusCode
         self.headers = headers
         self.storedAt = storedAt
-        self.rfc9111InitialAge = RFC9111ResponseAge.initialAge(
-            headers: headers,
-            requestTime: storedAt,
-            responseTime: storedAt
-        )
-        self.requiresRevalidation = requiresRevalidation
-        self.varyHeaders = varyHeaders
-    }
-
-    package init(
-        data: Data,
-        statusCode: Int = 200,
-        headers: [String: String] = [:],
-        storedAt: Date,
-        rfc9111InitialAge: TimeInterval,
-        requiresRevalidation: Bool = false,
-        varyHeaders: [String: String?]? = nil
-    ) {
-        self.data = data
-        self.statusCode = statusCode
-        self.headers = headers
-        self.storedAt = storedAt
-        self.rfc9111InitialAge = RFC9111ResponseAge.clamp(rfc9111InitialAge)
+        self.rfc9111InitialAge = rfc9111InitialAge.map(RFC9111ResponseAge.clamp)
+            ?? RFC9111ResponseAge.initialAge(
+                headers: headers,
+                requestTime: storedAt,
+                responseTime: storedAt
+            )
         self.requiresRevalidation = requiresRevalidation
         self.varyHeaders = varyHeaders
     }

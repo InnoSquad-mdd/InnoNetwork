@@ -262,7 +262,7 @@ InnoNetwork	swift.init	AuthPack.init(refreshToken:additionalRequestInterceptors:
 InnoNetwork	swift.init	AuthenticationRealm.init(rawValue:)
 InnoNetwork	swift.init	AuthenticationRealm.init(stringLiteral:)
 InnoNetwork	swift.init	CachePack.init(responseCachePolicy:responseCache:sensitiveHeaderNames:captureFailurePayload:)
-InnoNetwork	swift.init	CachedResponse.init(data:statusCode:headers:storedAt:requiresRevalidation:varyHeaders:)
+InnoNetwork	swift.init	CachedResponse.init(data:statusCode:headers:storedAt:rfc9111InitialAge:requiresRevalidation:varyHeaders:)
 InnoNetwork	swift.init	CancellationTag.init(_:)
 InnoNetwork	swift.init	CancellationTag.init(stringLiteral:)
 InnoNetwork	swift.init	CircuitBreakerPolicy.init(failureThreshold:windowSize:resetAfter:maxResetAfter:numberOfProbesRequiredToClose:countsTransportSecurityFailures:)
@@ -618,6 +618,7 @@ InnoNetwork	swift.property	CachedResponse.etag
 InnoNetwork	swift.property	CachedResponse.headers
 InnoNetwork	swift.property	CachedResponse.lastModified
 InnoNetwork	swift.property	CachedResponse.requiresRevalidation
+InnoNetwork	swift.property	CachedResponse.rfc9111InitialAge
 InnoNetwork	swift.property	CachedResponse.statusCode
 InnoNetwork	swift.property	CachedResponse.storedAt
 InnoNetwork	swift.property	CachedResponse.varyHeaders
