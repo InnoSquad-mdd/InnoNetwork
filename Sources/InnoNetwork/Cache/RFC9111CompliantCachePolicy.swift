@@ -30,6 +30,13 @@ package extension ResponseCachePolicy {
         if directives.noStore {
             return .revalidate(nil)
         }
+        if directives.noCache {
+            return inner.revalidatingInsteadOfServing(
+                cached: cached,
+                now: now,
+                rfc9111InitialAge: initialAge
+            )
+        }
 
         switch directives.freshnessLifetime(headers: cached.headers, storedAt: cached.storedAt) {
         case .invalidOrExpired:

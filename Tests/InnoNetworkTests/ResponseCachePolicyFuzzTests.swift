@@ -189,6 +189,27 @@ struct ResponseCachePolicyFuzzTests {
         }
     }
 
+    @Test("RFC no-cache header forces revalidation for externally restored entries")
+    func rfcNoCacheHeaderForcesRevalidation() {
+        let now = Date(timeIntervalSinceReferenceDate: 1_000_000)
+        let cached = CachedResponse(
+            data: Data([0x01]),
+            headers: ["Cache-Control": "no-cache, max-age=60"],
+            storedAt: now,
+            requiresRevalidation: false
+        )
+
+        let result = ResponseCachePolicy.rfc9111Compliant(
+            wrapping: .cacheFirst(maxAge: .seconds(60))
+        ).prepare(cached: cached, now: now)
+
+        guard case .revalidate(let candidate) = result else {
+            Issue.record("Expected no-cache metadata to force revalidation, got \(result)")
+            return
+        }
+        #expect(candidate == cached)
+    }
+
     private func randomCached(rng: inout SplitMix64) -> CachedResponse? {
         if rng.next() & 1 == 0 { return nil }
         let storedAt = Date(timeIntervalSinceReferenceDate: Double(rng.next() % 1_000_000))

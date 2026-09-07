@@ -399,6 +399,17 @@ extension RequestExecutor {
                 request: request
             )
         }
+        if let cachedETag = preparedCached.etag,
+            let notModifiedETag = response.response?.value(forHTTPHeaderField: "ETag"),
+            cachedETag.trimmingCharacters(in: .whitespacesAndNewlines)
+                != notModifiedETag.trimmingCharacters(in: .whitespacesAndNewlines)
+        {
+            throw cacheRevalidationFailed(
+                "The 304 ETag did not identify the conditionally validated stored response.",
+                cached: preparedCached,
+                request: request
+            )
+        }
         guard let url = request.url else {
             throw cacheRevalidationFailed(
                 "Request URL was unavailable during 304 Not Modified substitution.",

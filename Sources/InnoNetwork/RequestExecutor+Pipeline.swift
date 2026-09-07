@@ -162,7 +162,7 @@ extension RequestExecutor {
                         configuration: configuration,
                         runtime: runtime
                     )
-                    return substitution.preservedResponse
+                    return substitution.mergedResponse
                 } else {
                     try enforceResponseBodyLimit(substitution.mergedResponse, configuration: configuration)
                     await storeCacheIfNeeded(

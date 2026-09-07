@@ -104,7 +104,7 @@ extension ResiliencePolicyTests {
             )
         )
         let session = try ResilienceSequenceURLSession(queue: [
-            resilienceQueuedResponse(statusCode: 304, headers: ["ETag": "v2", "Cache-Control": "max-age=60"])
+            resilienceQueuedResponse(statusCode: 304, headers: ["ETag": "v1", "Cache-Control": "max-age=60"])
         ])
         let client = DefaultNetworkClient(
             configuration: resilienceMakeLocalizedCacheConfiguration(
@@ -121,14 +121,48 @@ extension ResiliencePolicyTests {
         #expect(await session.capturedRequests.first?.value(forHTTPHeaderField: "If-None-Match") == "v1")
         let observedResponse = try #require(await recorder.response())
         #expect(observedResponse.statusCode == 200)
-        #expect(resilienceResponseHeader(observedResponse, named: "ETag") == "v2")
+        #expect(resilienceResponseHeader(observedResponse, named: "ETag") == "v1")
         #expect(resilienceResponseHeader(observedResponse, named: "Cache-Control") == "max-age=60")
         let refreshed = try #require(await cache.get(key))
-        #expect(refreshed.etag == "v2")
+        #expect(refreshed.etag == "v1")
         #expect(
             refreshed.headers.first { $0.key.caseInsensitiveCompare("Cache-Control") == .orderedSame }?.value
                 == "max-age=60")
         #expect(refreshed.storedAt > storedAt)
+    }
+
+    @Test("304 with a different ETag fails closed instead of relabeling the cached body")
+    func mismatchedETagNotModifiedFailsClosed() async throws {
+        let cache = InMemoryResponseCache()
+        let body = try JSONEncoder().encode(ResilienceUser(id: 1, name: "cached"))
+        await cache.set(
+            resilienceUserCacheKey(),
+            CachedResponse(
+                data: body,
+                headers: ["ETag": "v1"],
+                storedAt: Date(timeIntervalSinceNow: -60)
+            )
+        )
+        let session = try ResilienceSequenceURLSession(queue: [
+            resilienceQueuedResponse(statusCode: 304, headers: ["ETag": "v2"])
+        ])
+        let client = DefaultNetworkClient(
+            configuration: resilienceMakeLocalizedCacheConfiguration(
+                responseCachePolicy: .cacheFirst(maxAge: .seconds(1)),
+                responseCache: cache
+            ),
+            session: session
+        )
+
+        do {
+            _ = try await client.request(ResilienceGetRequest())
+            Issue.record("Expected mismatched 304 validator to fail")
+        } catch NetworkError.underlying(let error, let response) {
+            #expect(error.domain == "InnoNetwork.ResponseCache")
+            #expect(response?.statusCode == 200)
+        } catch {
+            Issue.record("Expected cache revalidation failure, got \(error)")
+        }
     }
 
     @Test("Last-Modified 304 response uses cached body")
@@ -330,7 +364,7 @@ extension ResiliencePolicyTests {
         let session = try ResilienceSequenceURLSession(queue: [
             resilienceQueuedResponse(
                 statusCode: 304,
-                headers: ["ETag": "v2", "Vary": "Accept"]
+                headers: ["ETag": "v1", "Vary": "Accept"]
             )
         ])
         let client = DefaultNetworkClient(
@@ -347,7 +381,7 @@ extension ResiliencePolicyTests {
         #expect(user == ResilienceUser(id: 1, name: "cached"))
         let observedResponse = try #require(await recorder.response())
         #expect(observedResponse.statusCode == 200)
-        #expect(resilienceResponseHeader(observedResponse, named: "Vary") == "Accept-Language")
+        #expect(resilienceResponseHeader(observedResponse, named: "Vary") == "Accept")
         #expect(resilienceResponseHeader(observedResponse, named: "ETag") == "v1")
         #expect(await cache.get(key) == nil)
     }
