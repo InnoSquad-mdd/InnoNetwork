@@ -75,6 +75,7 @@ package actor RequestAdmissionCoordinator {
     private struct Waiter {
         let id: UUID
         let scope: String
+        let deadline: Duration?
         let continuation: CheckedContinuation<Void, Error>
         let timeoutTask: Task<Void, Never>?
     }
@@ -108,6 +109,7 @@ package actor RequestAdmissionCoordinator {
         let id = UUID()
         let maximumQueueWait = policy.maximumQueueWait
         let timeoutClock = clock
+        let deadline = maximumQueueWait.map { timeoutClock.monotonicNow() + $0 }
         var acquired = false
         do {
             try await withTaskCancellationHandler(
@@ -119,10 +121,14 @@ package actor RequestAdmissionCoordinator {
                             return
                         }
                         let timeoutTask: Task<Void, Never>?
-                        if let maximumQueueWait {
+                        if let deadline {
                             timeoutTask = Task { [weak self] in
                                 do {
-                                    try await timeoutClock.sleep(for: maximumQueueWait)
+                                    let remaining = max(
+                                        .zero,
+                                        deadline - timeoutClock.monotonicNow()
+                                    )
+                                    try await timeoutClock.sleep(for: remaining)
                                 } catch {
                                     return
                                 }
@@ -135,6 +141,7 @@ package actor RequestAdmissionCoordinator {
                             Waiter(
                                 id: id,
                                 scope: scope,
+                                deadline: deadline,
                                 continuation: continuation,
                                 timeoutTask: timeoutTask
                             )
@@ -187,6 +194,12 @@ package actor RequestAdmissionCoordinator {
             waiter.timeoutTask?.cancel()
             if consumeCancellationMark(waiter.id) {
                 waiter.continuation.resume(throwing: CancellationError())
+                continue
+            }
+            if let deadline = waiter.deadline, clock.monotonicNow() >= deadline {
+                waiter.continuation.resume(
+                    throwing: RequestAdmissionFailure.queueWaitExpired
+                )
                 continue
             }
             grant(scope: waiter.scope)

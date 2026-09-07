@@ -109,6 +109,34 @@ struct RequestAdmissionPolicyTests {
         #expect(snapshot.pending == 0)
     }
 
+    @Test("A delayed timeout task cannot grant a waiter past its absolute deadline")
+    func delayedTimeoutCannotGrantExpiredWaiter() async throws {
+        let clock = TestClock()
+        let coordinator = RequestAdmissionCoordinator(
+            policy: RequestAdmissionPolicy(
+                maximumConcurrentRequests: 1,
+                maximumPendingRequests: 1,
+                maximumQueueWait: .seconds(1)
+            ),
+            clock: clock
+        )
+        let request = URLRequest(url: URL(string: "https://api.example.test/a")!)
+        let firstScope = try await coordinator.acquire(for: request).scope
+        let second = Task { try await coordinator.acquire(for: request) }
+        await waitForPending(1, coordinator: coordinator)
+        #expect(await clock.waitForWaiters(count: 1))
+
+        clock.advanceWithoutResuming(by: .seconds(2))
+        await coordinator.release(scope: firstScope)
+
+        await #expect(throws: RequestAdmissionFailure.queueWaitExpired) {
+            _ = try await second.value
+        }
+        let snapshot = await coordinator.snapshot
+        #expect(snapshot.active == 0)
+        #expect(snapshot.pending == 0)
+    }
+
     @Test("An origin at its cap does not block another origin")
     func scopeFairness() async throws {
         let coordinator = RequestAdmissionCoordinator(
