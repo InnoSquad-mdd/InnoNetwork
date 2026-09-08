@@ -6,7 +6,6 @@ package protocol UploadURLTask: AnyObject, Sendable {
     var taskDescription: String? { get set }
     var originalRequest: URLRequest? { get }
     var currentRequest: URLRequest? { get }
-    var response: URLResponse? { get }
     var state: URLSessionTask.State { get }
     var countOfBytesSent: Int64 { get }
     var countOfBytesExpectedToSend: Int64 { get }

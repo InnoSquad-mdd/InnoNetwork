@@ -215,15 +215,6 @@ package actor CircuitBreakerRegistry {
         }
     }
 
-    package func recordSuccess(
-        request: URLRequest,
-        policy: CircuitBreakerPolicy?,
-        probe: CircuitBreakerProbe? = nil
-    ) {
-        guard let policy, let key = Self.hostKey(for: request) else { return }
-        recordOutcome(key: key, isFailure: false, policy: policy, probe: probe)
-    }
-
     package func recordFailure(
         request: URLRequest,
         policy: CircuitBreakerPolicy?,
