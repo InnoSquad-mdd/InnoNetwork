@@ -96,6 +96,48 @@ struct AdvancedRateLimitPolicyTests {
         _ = await limiter.commit(reservation)
     }
 
+    @Test("Draft-11 uses the first policy in a multi-policy field")
+    func draftFeedbackUsesFirstPolicy() throws {
+        let response = try #require(
+            HTTPURLResponse(
+                url: URL(string: "https://api.example.test")!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["RateLimit": "\"primary\";r=0;t=60, \"secondary\";r=0;t=1"]
+            )
+        )
+
+        #expect(RateLimitHeaderAdapterV11.cooldown(response: response, maximumDelay: 120) == 60)
+    }
+
+    @Test("Draft-11 does not parse parameters embedded in the policy name")
+    func draftFeedbackIgnoresQuotedParameterLookalikes() throws {
+        let response = try #require(
+            HTTPURLResponse(
+                url: URL(string: "https://api.example.test")!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["RateLimit": "\"primary;r=0;t=60;garbage\""]
+            )
+        )
+
+        #expect(RateLimitHeaderAdapterV11.cooldown(response: response, maximumDelay: 120) == nil)
+    }
+
+    @Test("Draft-11 ignores a field containing a malformed list member")
+    func draftFeedbackRejectsMalformedList() throws {
+        let response = try #require(
+            HTTPURLResponse(
+                url: URL(string: "https://api.example.test")!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["RateLimit": "\"primary\";r=0;t=60, malformed"]
+            )
+        )
+
+        #expect(RateLimitHeaderAdapterV11.cooldown(response: response, maximumDelay: 120) == nil)
+    }
+
     @Test("Retry-After takes precedence over draft-11 feedback")
     func retryAfterTakesPrecedenceOverDraftFeedback() async throws {
         let clock = TestClock()

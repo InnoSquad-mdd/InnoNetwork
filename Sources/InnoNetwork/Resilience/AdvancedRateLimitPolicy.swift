@@ -409,23 +409,162 @@ package actor AdvancedRateLimitCoordinator {
 }
 
 package enum RateLimitHeaderAdapterV11 {
-    /// Accepts only the constrained draft-11 form `RateLimit:
-    /// "name";r=0;t=seconds`. Unknown or malformed parameters are ignored;
-    /// server feedback can delay local traffic but never increase capacity.
+    /// Accepts the constrained draft-11 Structured Field form `RateLimit:
+    /// "name";r=0;t=seconds`. The first list member is the policy closest to
+    /// exhaustion. A malformed member invalidates the complete field, while
+    /// unknown syntactically valid parameters are ignored. Server feedback can
+    /// delay local traffic but never increase capacity.
     static func cooldown(response: HTTPURLResponse, maximumDelay: TimeInterval) -> TimeInterval? {
         guard let raw = response.value(forHTTPHeaderField: "RateLimit") else { return nil }
+        guard let members = splitTopLevel(raw, separator: ","), !members.isEmpty else { return nil }
+
+        var parsed: [(remaining: Int?, reset: Int?)] = []
+        parsed.reserveCapacity(members.count)
+        for member in members {
+            guard let policy = parsePolicy(member) else { return nil }
+            parsed.append(policy)
+        }
+        guard let first = parsed.first,
+            first.remaining == 0,
+            let reset = first.reset
+        else { return nil }
+        return min(TimeInterval(reset), max(0, maximumDelay))
+    }
+
+    private static func parsePolicy(_ raw: String) -> (remaining: Int?, reset: Int?)? {
+        guard let components = splitTopLevel(raw, separator: ";"),
+            let policyName = components.first,
+            isValidString(policyName)
+        else { return nil }
+
         var remaining: Int?
         var reset: Int?
-        for component in raw.split(separator: ";").dropFirst() {
-            let pair = component.split(separator: "=", maxSplits: 1).map {
-                $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        for component in components.dropFirst() {
+            let pair = component.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            let name = pair[0].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard isValidKey(name), pair.count <= 2 else { return nil }
+            let value =
+                pair.count == 2
+                ? String(pair[1]).trimmingCharacters(in: .whitespacesAndNewlines)
+                : nil
+            guard value.map(isValidBareItem) ?? true else { return nil }
+
+            switch name {
+            case "r":
+                guard remaining == nil, let value, let parsed = parseInteger(value) else { return nil }
+                remaining = parsed
+            case "t":
+                guard reset == nil, let value, let parsed = parseInteger(value) else { return nil }
+                reset = parsed
+            default:
+                continue
             }
-            guard pair.count == 2, let value = Int(pair[1]), value >= 0 else { continue }
-            if pair[0] == "r" { remaining = value }
-            if pair[0] == "t" { reset = value }
         }
-        guard remaining == 0, let reset else { return nil }
-        return min(TimeInterval(reset), max(0, maximumDelay))
+        return (remaining, reset)
+    }
+
+    private static func splitTopLevel(_ raw: String, separator: Character) -> [String]? {
+        var parts: [String] = []
+        var current = ""
+        var inQuotes = false
+        var escaped = false
+
+        for character in raw {
+            if escaped {
+                current.append(character)
+                escaped = false
+                continue
+            }
+            if inQuotes, character == "\\" {
+                current.append(character)
+                escaped = true
+                continue
+            }
+            if character == "\"" {
+                current.append(character)
+                inQuotes.toggle()
+                continue
+            }
+            if character == separator, !inQuotes {
+                let part = current.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !part.isEmpty else { return nil }
+                parts.append(part)
+                current = ""
+                continue
+            }
+            current.append(character)
+        }
+
+        guard !inQuotes, !escaped else { return nil }
+        let part = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !part.isEmpty else { return nil }
+        parts.append(part)
+        return parts
+    }
+
+    private static func isValidString(_ value: String) -> Bool {
+        guard value.first == "\"", value.last == "\"", value.count >= 2 else { return false }
+        let inner = value.dropFirst().dropLast()
+        var escaped = false
+        for character in inner {
+            if escaped {
+                guard character == "\"" || character == "\\" else { return false }
+                escaped = false
+            } else if character == "\\" {
+                escaped = true
+            } else if character == "\"" || character.isNewline {
+                return false
+            }
+        }
+        return !escaped
+    }
+
+    private static func isValidKey(_ value: String) -> Bool {
+        guard let first = value.first,
+            first == "*" || (first >= "a" && first <= "z")
+        else { return false }
+        return value.dropFirst().allSatisfy {
+            ($0 >= "a" && $0 <= "z") || ($0.isASCII && $0.isNumber) || "_-.*".contains($0)
+        }
+    }
+
+    private static func isValidBareItem(_ value: String) -> Bool {
+        guard !value.isEmpty else { return false }
+        if value.first == "\"" { return isValidString(value) }
+        if value == "?0" || value == "?1" { return true }
+        if value.first == ":", value.last == ":", value.count >= 2 {
+            return value.dropFirst().dropLast().allSatisfy {
+                $0.isLetter || $0.isNumber || $0 == "+" || $0 == "/" || $0 == "="
+            }
+        }
+        if parseStructuredNumber(value) { return true }
+        guard let first = value.first,
+            first.isLetter || first == "*"
+        else { return false }
+        return value.dropFirst().allSatisfy {
+            $0.isLetter || $0.isNumber || "_-.*/:!#$%&'+^`|~".contains($0)
+        }
+    }
+
+    private static func parseInteger(_ value: String) -> Int? {
+        guard value.allSatisfy({ $0.isASCII && $0.isNumber }),
+            let parsed = Int(value),
+            parsed >= 0
+        else { return nil }
+        return parsed
+    }
+
+    private static func parseStructuredNumber(_ value: String) -> Bool {
+        var body = value[...]
+        if body.first == "-" { body = body.dropFirst() }
+        guard !body.isEmpty else { return false }
+        let components = body.split(separator: ".", omittingEmptySubsequences: false)
+        guard components.count <= 2,
+            components.allSatisfy({
+                !$0.isEmpty && $0.allSatisfy { $0.isASCII && $0.isNumber }
+            })
+        else { return false }
+        return components.count == 1 || components[1].count <= 3
     }
 }
 
