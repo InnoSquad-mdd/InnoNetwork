@@ -138,6 +138,59 @@ struct AdvancedRateLimitPolicyTests {
         #expect(RateLimitHeaderAdapterV11.cooldown(response: response, maximumDelay: 120) == nil)
     }
 
+    @Test("Draft-11 rejects invalid Structured Field boundaries")
+    func draftFeedbackRejectsInvalidStructuredFields() throws {
+        let invalidFields = [
+            "\"primary\";r =0;t=60",
+            "\"primary\" ;r=0;t=60",
+            "\"primary\";r=0;t=60;vendor=1000000000000000",
+            "\"primary\";r=0;t=60;vendor-date=@1000000000000000",
+            "\"primary\";r=0;t=60;vendor=é",
+            "\"primary\";r=0;t=60;pk=:a:",
+            "\"primary\";r=0;t=60,\"secondary\";t=1",
+        ]
+
+        for field in invalidFields {
+            let response = try #require(
+                HTTPURLResponse(
+                    url: URL(string: "https://api.example.test")!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: ["RateLimit": field]
+                )
+            )
+            #expect(
+                RateLimitHeaderAdapterV11.cooldown(response: response, maximumDelay: 120) == nil,
+                "Expected the complete field to be ignored: \(field)"
+            )
+        }
+    }
+
+    @Test("Draft-11 accepts valid extension item types and last duplicate values")
+    func draftFeedbackAcceptsStructuredFieldExtensions() throws {
+        let fields = [
+            "\"primary\";r=0;t=60;vendor-date=@999999999999999;vendor-past=@-999999999999999;vendor-label=%\"ready%20soon\"",
+            "\"primary\";r=0;t=60;vendor-label=%\"path\\\\\"",
+            "\"primary\";r=5;r=0;t=60;pk=:dHJpYWw=:",
+            "\"primary\";  r=0; t=60",
+        ]
+
+        for field in fields {
+            let response = try #require(
+                HTTPURLResponse(
+                    url: URL(string: "https://api.example.test")!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: ["RateLimit": field]
+                )
+            )
+            #expect(
+                RateLimitHeaderAdapterV11.cooldown(response: response, maximumDelay: 120) == 60,
+                "Expected valid extension parameters to be ignored: \(field)"
+            )
+        }
+    }
+
     @Test("Retry-After takes precedence over draft-11 feedback")
     func retryAfterTakesPrecedenceOverDraftFeedback() async throws {
         let clock = TestClock()

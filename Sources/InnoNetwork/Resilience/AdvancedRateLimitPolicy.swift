@@ -416,6 +416,7 @@ package enum RateLimitHeaderAdapterV11 {
     /// delay local traffic but never increase capacity.
     static func cooldown(response: HTTPURLResponse, maximumDelay: TimeInterval) -> TimeInterval? {
         guard let raw = response.value(forHTTPHeaderField: "RateLimit") else { return nil }
+        guard raw.unicodeScalars.allSatisfy(\.isASCII) else { return nil }
         guard let members = splitTopLevel(raw, separator: ","), !members.isEmpty else { return nil }
 
         var parsed: [(remaining: Int?, reset: Int?)] = []
@@ -431,42 +432,65 @@ package enum RateLimitHeaderAdapterV11 {
         return min(TimeInterval(reset), max(0, maximumDelay))
     }
 
+    private enum ParsedParameter {
+        case implicitTrue
+        case bareItem(String)
+    }
+
     private static func parsePolicy(_ raw: String) -> (remaining: Int?, reset: Int?)? {
-        guard let components = splitTopLevel(raw, separator: ";"),
+        guard !raw.contains("\t"), !raw.contains("\r"), !raw.contains("\n") else { return nil }
+        guard let components = splitTopLevel(raw, separator: ";", trimmingParts: false),
             let policyName = components.first,
             isValidString(policyName)
         else { return nil }
 
-        var remaining: Int?
-        var reset: Int?
+        var parameters: [String: ParsedParameter] = [:]
         for component in components.dropFirst() {
-            let pair = component.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
-            let name = pair[0].trimmingCharacters(in: .whitespacesAndNewlines)
-            guard isValidKey(name), pair.count <= 2 else { return nil }
+            let parameter = component.drop(while: { $0 == " " })
+            let pair = parameter.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            let name = String(pair[0])
+            guard isValidKey(name) else { return nil }
             let value =
                 pair.count == 2
-                ? String(pair[1]).trimmingCharacters(in: .whitespacesAndNewlines)
+                ? String(pair[1])
                 : nil
             guard value.map(isValidBareItem) ?? true else { return nil }
+            parameters[name] = value.map(ParsedParameter.bareItem) ?? .implicitTrue
+        }
 
-            switch name {
-            case "r":
-                guard remaining == nil, let value, let parsed = parseInteger(value) else { return nil }
-                remaining = parsed
-            case "t":
-                guard reset == nil, let value, let parsed = parseInteger(value) else { return nil }
-                reset = parsed
-            default:
-                continue
-            }
+        guard case .bareItem(let remainingValue)? = parameters["r"],
+            let remaining = parseInteger(remainingValue)
+        else { return nil }
+        let reset: Int?
+        if let resetParameter = parameters["t"] {
+            guard case .bareItem(let resetValue) = resetParameter,
+                let parsedReset = parseInteger(resetValue)
+            else { return nil }
+            reset = parsedReset
+        } else {
+            reset = nil
+        }
+        if let partitionKey = parameters["pk"] {
+            guard case .bareItem(let value) = partitionKey,
+                isValidByteSequence(value)
+            else { return nil }
         }
         return (remaining, reset)
     }
 
-    private static func splitTopLevel(_ raw: String, separator: Character) -> [String]? {
+    private static func splitTopLevel(
+        _ raw: String,
+        separator: Character,
+        trimmingParts: Bool = true
+    ) -> [String]? {
+        enum QuoteMode {
+            case string
+            case displayString
+        }
+
         var parts: [String] = []
         var current = ""
-        var inQuotes = false
+        var quoteMode: QuoteMode?
         var escaped = false
 
         for character in raw {
@@ -475,18 +499,22 @@ package enum RateLimitHeaderAdapterV11 {
                 escaped = false
                 continue
             }
-            if inQuotes, character == "\\" {
+            if quoteMode == .string, character == "\\" {
                 current.append(character)
                 escaped = true
                 continue
             }
             if character == "\"" {
                 current.append(character)
-                inQuotes.toggle()
+                if quoteMode != nil {
+                    quoteMode = nil
+                } else {
+                    quoteMode = current.dropLast().last == "%" ? .displayString : .string
+                }
                 continue
             }
-            if character == separator, !inQuotes {
-                let part = current.trimmingCharacters(in: .whitespacesAndNewlines)
+            if character == separator, quoteMode == nil {
+                let part = trimmingParts ? current.trimmingCharacters(in: .whitespacesAndNewlines) : current
                 guard !part.isEmpty else { return nil }
                 parts.append(part)
                 current = ""
@@ -495,8 +523,8 @@ package enum RateLimitHeaderAdapterV11 {
             current.append(character)
         }
 
-        guard !inQuotes, !escaped else { return nil }
-        let part = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard quoteMode == nil, !escaped else { return nil }
+        let part = trimmingParts ? current.trimmingCharacters(in: .whitespacesAndNewlines) : current
         guard !part.isEmpty else { return nil }
         parts.append(part)
         return parts
@@ -504,15 +532,15 @@ package enum RateLimitHeaderAdapterV11 {
 
     private static func isValidString(_ value: String) -> Bool {
         guard value.first == "\"", value.last == "\"", value.count >= 2 else { return false }
-        let inner = value.dropFirst().dropLast()
+        let bytes = Array(value.dropFirst().dropLast().utf8)
         var escaped = false
-        for character in inner {
+        for byte in bytes {
             if escaped {
-                guard character == "\"" || character == "\\" else { return false }
+                guard byte == 0x22 || byte == 0x5C else { return false }
                 escaped = false
-            } else if character == "\\" {
+            } else if byte == 0x5C {
                 escaped = true
-            } else if character == "\"" || character.isNewline {
+            } else if byte == 0x22 || !(0x20...0x7E).contains(byte) {
                 return false
             }
         }
@@ -531,27 +559,25 @@ package enum RateLimitHeaderAdapterV11 {
     private static func isValidBareItem(_ value: String) -> Bool {
         guard !value.isEmpty else { return false }
         if value.first == "\"" { return isValidString(value) }
+        if value.hasPrefix("%\"") { return isValidDisplayString(value) }
         if value == "?0" || value == "?1" { return true }
-        if value.first == ":", value.last == ":", value.count >= 2 {
-            return value.dropFirst().dropLast().allSatisfy {
-                $0.isLetter || $0.isNumber || $0 == "+" || $0 == "/" || $0 == "="
-            }
-        }
+        if value.first == ":" { return isValidByteSequence(value) }
+        if value.first == "@" { return isValidDate(String(value.dropFirst())) }
         if parseStructuredNumber(value) { return true }
         guard let first = value.first,
-            first.isLetter || first == "*"
+            first.isASCII && (first.isLetter || first == "*")
         else { return false }
         return value.dropFirst().allSatisfy {
-            $0.isLetter || $0.isNumber || "_-.*/:!#$%&'+^`|~".contains($0)
+            $0.isASCII && ($0.isLetter || $0.isNumber || "_-.*/:!#$%&'*+^`|~".contains($0))
         }
     }
 
     private static func parseInteger(_ value: String) -> Int? {
-        guard value.allSatisfy({ $0.isASCII && $0.isNumber }),
-            let parsed = Int(value),
-            parsed >= 0
+        guard !value.isEmpty,
+            value.count <= 15,
+            value.allSatisfy({ $0.isASCII && $0.isNumber })
         else { return nil }
-        return parsed
+        return Int(value)
     }
 
     private static func parseStructuredNumber(_ value: String) -> Bool {
@@ -564,7 +590,65 @@ package enum RateLimitHeaderAdapterV11 {
                 !$0.isEmpty && $0.allSatisfy { $0.isASCII && $0.isNumber }
             })
         else { return false }
-        return components.count == 1 || components[1].count <= 3
+        if components.count == 1 {
+            return components[0].count <= 15
+        }
+        return components[0].count <= 12 && (1...3).contains(components[1].count)
+    }
+
+    private static func isValidDate(_ value: String) -> Bool {
+        var digits = value[...]
+        if digits.first == "-" { digits = digits.dropFirst() }
+        return !digits.isEmpty
+            && digits.count <= 15
+            && digits.allSatisfy({ $0.isASCII && $0.isNumber })
+    }
+
+    private static func isValidByteSequence(_ value: String) -> Bool {
+        guard value.first == ":", value.last == ":", value.count >= 2 else { return false }
+        let encoded = String(value.dropFirst().dropLast())
+        guard
+            encoded.utf8.allSatisfy({
+                (0x41...0x5A).contains($0) || (0x61...0x7A).contains($0)
+                    || (0x30...0x39).contains($0) || $0 == 0x2B || $0 == 0x2F || $0 == 0x3D
+            })
+        else { return false }
+        return Data(base64Encoded: encoded) != nil
+    }
+
+    private static func isValidDisplayString(_ value: String) -> Bool {
+        guard value.hasPrefix("%\""), value.last == "\"", value.count >= 3 else { return false }
+        let bytes = Array(value.dropFirst(2).dropLast().utf8)
+        var decoded: [UInt8] = []
+        var index = 0
+        while index < bytes.count {
+            let byte = bytes[index]
+            if byte == 0x25 {
+                guard index + 2 < bytes.count,
+                    let high = hexadecimalValue(bytes[index + 1]),
+                    let low = hexadecimalValue(bytes[index + 2])
+                else { return false }
+                decoded.append(high << 4 | low)
+                index += 3
+                continue
+            }
+            guard
+                byte == 0x20 || byte == 0x21 || byte == 0x23 || byte == 0x24
+                    || (0x26...0x7E).contains(byte)
+            else { return false }
+            decoded.append(byte)
+            index += 1
+        }
+        return String(bytes: decoded, encoding: .utf8) != nil
+    }
+
+    private static func hexadecimalValue(_ byte: UInt8) -> UInt8? {
+        switch byte {
+        case 0x30...0x39: return byte - 0x30
+        case 0x41...0x46: return byte - 0x41 + 10
+        case 0x61...0x66: return byte - 0x61 + 10
+        default: return nil
+        }
     }
 }
 
