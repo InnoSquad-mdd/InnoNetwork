@@ -70,18 +70,22 @@ that cut and are not part of the 6.0 contract.
 
 ### Fixed for 6.1.0
 
-- Cache mutations are serialized per target URI, so an older in-flight GET
-  cannot repopulate a representation after a successful unsafe request or a
+- Cache mutations are serialized per target URI and shared by clients built
+  from the same configuration value, so an older in-flight GET cannot
+  repopulate a representation after a successful unsafe request or a
   storage-prohibiting response invalidates it. A new `Vary: *` response also
-  removes any previously stored representation for the request key.
-- Conditional cache validation now rejects a `304` carrying an `ETag` that
-  does not identify the stored response. A changed `Vary` still invalidates
-  the old selection snapshot, while the current caller observes the merged
-  validation metadata. RFC `no-cache` is enforced from restored headers even
-  when a custom cache did not persist `requiresRevalidation`.
+  removes any previously stored representation for the request key and cannot
+  leave a stale-if-error fallback behind.
+- Conditional cache validation now applies strong and weak ETag matching when
+  deciding whether a `304` identifies the stored response. A changed `Vary`
+  still invalidates the old selection snapshot, while the current caller
+  observes the merged validation metadata. RFC `no-cache` is enforced from
+  restored headers even when a custom cache did not persist
+  `requiresRevalidation`.
 - RFC response age uses the physical transport dispatch and completion times,
   excluding local custom-policy, admission, and quota waits while preserving
-  actual origin response delay.
+  actual origin response delay. Multi-dispatch custom policies retain timing
+  for the exact transport response they return.
 - RFC 9111 cache handling clamps oversized `max-age` and
   `stale-if-error` delta-seconds before `Duration` conversion, invalidates a
   stored representation when a `304` revises `Vary`, and cannot retain that
@@ -94,8 +98,10 @@ that cut and are not part of the 6.0 contract.
   admit expired work.
 - IETF draft-11 rate-limit feedback now gives a valid `Retry-After` header
   precedence over a shorter `RateLimit` effective window. Structured policy
-  lists use the first member, quoted policy names cannot inject parameters,
-  and a malformed list member causes the complete field to be ignored.
+  lists use the first member and RFC 9651 parsing boundaries for ASCII,
+  integers, byte sequences, extension item types, whitespace, and duplicate
+  parameters; a malformed or semantically incomplete member causes the
+  complete field to be ignored.
 - In-memory cache LRU links no longer retain the cache graph after the cache is
   released. RFC 9111 freshness now includes valid upstream `Age`, apparent age
   from `Date`, and request/response delay; malformed or overflowing `Age`

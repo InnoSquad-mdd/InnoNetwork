@@ -223,14 +223,17 @@ await client.cancelAll(matching: feed)  // feed 태그만 취소
 - `Cache-Control: no-store` 와 `Cache-Control: private` 는 현재 키를 무효화하고
   저장하지 않습니다. `Cache-Control: no-cache` 는 저장하되 매 lookup 마다
   재검증을 강제합니다.
-- `304 Not Modified` 가 저장된 응답과 다른 `ETag` 를 보내면 기존 body 에 새
-  validator 를 붙이지 않고 재검증 실패로 처리합니다.
+- `304 Not Modified` 의 `ETag` 는 strong/weak validator 규칙으로 저장 응답을
+  식별해야 합니다. 식별하지 못하면 기존 body 에 새 validator 를 붙이지 않고
+  재검증 실패로 처리합니다.
 - `Authorization` 요청의 응답은 origin 이 `Cache-Control: public`,
   `must-revalidate`, `s-maxage` 중 하나로 명시적으로 허용할 때만 저장됩니다.
 - `POST`, `PUT`, `PATCH`, `DELETE` 같은 unsafe method 가 `2xx`/`3xx` 응답을
   받으면 RFC 9111 §4.4 에 따라 같은 target URI 의 캐시 변형을 모두
-  무효화합니다. `.disabled` 와 `.networkOnly` 정책은 캐시 메타데이터를
-  건드리지 않습니다.
+  무효화합니다. 같은 `NetworkConfiguration` 의 복사본으로 만든 client 들은
+  캐시 mutation fence 를 공유하므로 한 client 의 오래된 GET 이 다른 client 의
+  mutation 이후 캐시를 되살릴 수 없습니다. `.disabled` 와 `.networkOnly`
+  정책은 캐시 메타데이터를 건드리지 않습니다.
 
 ---
 

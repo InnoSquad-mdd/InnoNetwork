@@ -1075,7 +1075,8 @@ automatically (RFC 9111 §4.1):
 - Stale entries with a valid `Last-Modified` emit `If-Modified-Since`; entries
   carrying both `ETag` and `Last-Modified` emit both validators. A `304`
   response restores the bounded cached representation only when its supplied
-  `ETag` still identifies that stored body; a mismatched validator fails closed.
+  `ETag` still identifies that stored body using RFC strong/weak validator
+  rules; a mismatched validator fails closed.
   Malformed dates are never copied into a conditional request header.
 - Responses to requests carrying `Authorization` are stored only when the
   origin explicitly permits it with `Cache-Control: public`, `must-revalidate`,
@@ -1083,7 +1084,9 @@ automatically (RFC 9111 §4.1):
 - Successful unsafe methods (`POST`, `PUT`, `PATCH`, `DELETE`, and unknown
   methods) invalidate every cached variant for the normalized target URI per
   RFC 9111 §4.4. `.disabled` and `.networkOnly` still leave cache metadata
-  untouched.
+  untouched. Clients constructed from copies of one `NetworkConfiguration`
+  share the cache-mutation fence, so an earlier GET on one client cannot
+  repopulate the cache after another client completes an unsafe mutation.
 
 `InnoNetworkPersistentCache` is **not** a full RFC 9111 cache by
 default — storage directives are enforced by the executor, while
