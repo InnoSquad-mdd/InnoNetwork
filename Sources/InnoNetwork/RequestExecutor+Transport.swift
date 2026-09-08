@@ -41,7 +41,7 @@ extension RequestExecutor {
         runtime: RequestExecutionRuntime,
         requestID: UUID,
         allowsRequestCoalescing: Bool
-    ) async throws -> Response {
+    ) async throws -> TimedNetworkResponse {
         try await executeCustomPolicies(
             request: request,
             identityRequest: identityRequest,

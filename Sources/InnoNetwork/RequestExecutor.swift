@@ -26,6 +26,25 @@ struct TimedNetworkResponse {
     let responseReceivedAt: Date
 }
 
+actor TransportTimingRecorder {
+    private struct Entry {
+        let response: Response
+        let startedAt: Date
+        let completedAt: Date
+    }
+
+    private var entries: [Entry] = []
+
+    func record(_ response: Response, startedAt: Date, completedAt: Date) {
+        entries.append(Entry(response: response, startedAt: startedAt, completedAt: completedAt))
+    }
+
+    func timestamps(for response: Response) -> (startedAt: Date, completedAt: Date)? {
+        let entry = entries.last(where: { $0.response == response }) ?? entries.last
+        return entry.map { ($0.startedAt, $0.completedAt) }
+    }
+}
+
 private struct PreparedExecutionRequest {
     var request: URLRequest
     let refreshGeneration: UInt64?

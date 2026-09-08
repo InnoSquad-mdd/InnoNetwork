@@ -259,8 +259,31 @@ extension RequestExecutor {
         runtime: RequestExecutionRuntime,
         requestID: UUID,
         allowsRequestCoalescing: Bool
-    ) async throws -> Response {
-        let eventHub = self.eventHub
+    ) async throws -> TimedNetworkResponse {
+        if configuration.customExecutionPolicies.isEmpty {
+            let result = try await performTransportResult(
+                request: request,
+                identityRequest: identityRequest,
+                bodySource: bodySource,
+                configuration: configuration,
+                context: context,
+                runtime: runtime,
+                allowsRequestCoalescing: allowsRequestCoalescing
+            )
+            let response = await response(
+                from: result,
+                request: request,
+                requestID: requestID,
+                configuration: configuration
+            )
+            return TimedNetworkResponse(
+                response: response,
+                requestStartedAt: result.startedAt,
+                responseReceivedAt: result.completedAt
+            )
+        }
+
+        let timingRecorder = TransportTimingRecorder()
         let baseNext = RequestExecutionNext {
             let result = try await performTransportResult(
                 request: request,
@@ -271,25 +294,18 @@ extension RequestExecutor {
                 runtime: runtime,
                 allowsRequestCoalescing: allowsRequestCoalescing
             )
-            if !configuration.eventObservers.isEmpty {
-                await eventHub.publish(
-                    .responseReceived(
-                        requestID: requestID,
-                        statusCode: result.response.statusCode,
-                        byteCount: result.data.count
-                    ),
-                    requestID: requestID,
-                    observers: configuration.eventObservers,
-                    occurredAt: result.completedAt,
-                    completesPhysicalTransport: true
-                )
-            }
-            return Response(
-                statusCode: result.response.statusCode,
-                data: result.data,
+            let response = await response(
+                from: result,
                 request: request,
-                response: result.response
+                requestID: requestID,
+                configuration: configuration
             )
+            await timingRecorder.record(
+                response,
+                startedAt: result.startedAt,
+                completedAt: result.completedAt
+            )
+            return response
         }
 
         let policyContext = RequestExecutionContext(
@@ -315,7 +331,47 @@ extension RequestExecutor {
             }
         }
 
-        return try await chain.execute()
+        let response = try await chain.execute()
+        if let timestamps = await timingRecorder.timestamps(for: response) {
+            return TimedNetworkResponse(
+                response: response,
+                requestStartedAt: timestamps.startedAt,
+                responseReceivedAt: timestamps.completedAt
+            )
+        }
+        let syntheticResponseTime = runtime.clock.now()
+        return TimedNetworkResponse(
+            response: response,
+            requestStartedAt: syntheticResponseTime,
+            responseReceivedAt: syntheticResponseTime
+        )
+    }
+
+    private func response(
+        from result: TransportResult,
+        request: URLRequest,
+        requestID: UUID,
+        configuration: NetworkConfiguration
+    ) async -> Response {
+        if !configuration.eventObservers.isEmpty {
+            await eventHub.publish(
+                .responseReceived(
+                    requestID: requestID,
+                    statusCode: result.response.statusCode,
+                    byteCount: result.data.count
+                ),
+                requestID: requestID,
+                observers: configuration.eventObservers,
+                occurredAt: result.completedAt,
+                completesPhysicalTransport: true
+            )
+        }
+        return Response(
+            statusCode: result.response.statusCode,
+            data: result.data,
+            request: request,
+            response: result.response
+        )
     }
 
     func refreshLaneIfInProgress(
@@ -371,8 +427,7 @@ extension RequestExecutor {
         )
         let transportContext =
             requestSigners.isEmpty ? context : context.restrictingSignedRequestSharing()
-        let requestStartedAt = runtime.clock.now()
-        let response = try await performTransport(
+        return try await performTransport(
             request: signedRequest,
             identityRequest: request,
             bodySource: preparedBody.bodySource,
@@ -381,11 +436,6 @@ extension RequestExecutor {
             runtime: runtime,
             requestID: requestID,
             allowsRequestCoalescing: allowsRequestCoalescing
-        )
-        return TimedNetworkResponse(
-            response: response,
-            requestStartedAt: requestStartedAt,
-            responseReceivedAt: runtime.clock.now()
         )
     }
 
