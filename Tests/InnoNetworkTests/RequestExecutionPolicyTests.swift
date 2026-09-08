@@ -1,6 +1,5 @@
 import Foundation
 import Testing
-import os
 
 @testable import InnoNetwork
 
@@ -127,18 +126,32 @@ struct RequestExecutionPolicyTests {
         #expect(String(data: data, encoding: .utf8) == "rewritten")
     }
 
-    private final class CountingObserver: NetworkEventObserving, @unchecked Sendable {
-        private let lock = OSAllocatedUnfairLock<[NetworkEvent]>(initialState: [])
-
-        func handle(_ event: NetworkEvent) async {
-            lock.withLock { $0.append(event) }
+    private actor CountingObserver: NetworkEventObserving {
+        private struct Waiter {
+            let minimumCount: Int
+            let continuation: CheckedContinuation<Int, Never>
         }
 
-        var responseReceivedCount: Int {
-            lock.withLock { events in
-                events.reduce(into: 0) { count, event in
-                    if case .responseReceived = event { count += 1 }
-                }
+        private var responseReceivedCount = 0
+        private var waiters: [Waiter] = []
+
+        func handle(_ event: NetworkEvent) async {
+            guard case .responseReceived = event else { return }
+            responseReceivedCount += 1
+
+            let ready = waiters.filter { responseReceivedCount >= $0.minimumCount }
+            waiters.removeAll { responseReceivedCount >= $0.minimumCount }
+            for waiter in ready {
+                waiter.continuation.resume(returning: responseReceivedCount)
+            }
+        }
+
+        func waitForResponseReceivedCount(_ minimumCount: Int) async -> Int {
+            if responseReceivedCount >= minimumCount { return responseReceivedCount }
+            return await withCheckedContinuation { continuation in
+                waiters.append(
+                    Waiter(minimumCount: minimumCount, continuation: continuation)
+                )
             }
         }
     }
@@ -171,7 +184,7 @@ struct RequestExecutionPolicyTests {
 
         _ = try await client.request(DataEcho())
 
-        #expect(observer.responseReceivedCount == 2)
+        #expect(await observer.waitForResponseReceivedCount(2) == 2)
         #expect(mockSession.capturedRequestsInOrder.count == 2)
     }
 
