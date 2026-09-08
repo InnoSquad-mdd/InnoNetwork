@@ -31,7 +31,7 @@ package final class RequestExecutionRuntime: Sendable {
         self.rateLimit = configuration.advancedRateLimitPolicy.map {
             AdvancedRateLimitCoordinator(policy: $0, clock: clock)
         }
-        self.cacheMutations = ResponseCacheMutationCoordinator()
+        self.cacheMutations = configuration.responseCacheMutations
         self.inFlight = inFlight
         self.clock = clock
     }

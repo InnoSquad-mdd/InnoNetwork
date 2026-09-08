@@ -237,7 +237,7 @@ extension ResiliencePolicyTests {
                 data: try JSONEncoder().encode(ResilienceUser(id: 1, name: "must-validate")),
                 headers: ["Cache-Control": "no-cache, max-age=10, stale-if-error=60"],
                 storedAt: Date(timeIntervalSinceNow: -11),
-                requiresRevalidation: true
+                requiresRevalidation: false
             )
         )
         let session = try ResilienceSequenceURLSession(queue: [

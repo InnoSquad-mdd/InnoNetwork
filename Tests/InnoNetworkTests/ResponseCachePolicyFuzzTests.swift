@@ -199,15 +199,24 @@ struct ResponseCachePolicyFuzzTests {
             requiresRevalidation: false
         )
 
-        let result = ResponseCachePolicy.rfc9111Compliant(
-            wrapping: .cacheFirst(maxAge: .seconds(60))
-        ).prepare(cached: cached, now: now)
+        let policies: [ResponseCachePolicy] = [
+            .rfc9111Compliant(wrapping: .cacheFirst(maxAge: .seconds(60))),
+            .rfc9111Compliant(
+                wrapping: .staleWhileRevalidate(maxAge: .seconds(60), staleWindow: .seconds(60))
+            ),
+            .staleIfError(
+                wrapping: .rfc9111Compliant(wrapping: .cacheFirst(maxAge: .seconds(60)))
+            ),
+        ]
 
-        guard case .revalidate(let candidate) = result else {
-            Issue.record("Expected no-cache metadata to force revalidation, got \(result)")
-            return
+        for policy in policies {
+            let result = policy.prepare(cached: cached, now: now)
+            guard case .revalidate(let candidate) = result else {
+                Issue.record("Expected no-cache metadata to force revalidation, got \(result)")
+                continue
+            }
+            #expect(candidate == cached)
         }
-        #expect(candidate == cached)
     }
 
     private func randomCached(rng: inout SplitMix64) -> CachedResponse? {

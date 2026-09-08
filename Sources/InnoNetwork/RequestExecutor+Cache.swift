@@ -401,8 +401,10 @@ extension RequestExecutor {
         }
         if let cachedETag = preparedCached.etag,
             let notModifiedETag = response.response?.value(forHTTPHeaderField: "ETag"),
-            cachedETag.trimmingCharacters(in: .whitespacesAndNewlines)
-                != notModifiedETag.trimmingCharacters(in: .whitespacesAndNewlines)
+            !notModifiedETagIdentifiesCachedResponse(
+                cachedETag: cachedETag,
+                notModifiedETag: notModifiedETag
+            )
         {
             throw cacheRevalidationFailed(
                 "The 304 ETag did not identify the conditionally validated stored response.",
@@ -440,6 +442,28 @@ extension RequestExecutor {
             ),
             cached: preparedCached
         )
+    }
+
+    /// Applies RFC 9111 section 4.3.4's validator selection rule to the one
+    /// representation carried by `ResponseCache`. A strong validator in the
+    /// 304 must strongly match the stored validator; a weak validator may
+    /// identify a stored validator with the same opaque tag.
+    private func notModifiedETagIdentifiesCachedResponse(
+        cachedETag: String,
+        notModifiedETag: String
+    ) -> Bool {
+        let cached = normalizedEntityTag(cachedETag)
+        let notModified = normalizedEntityTag(notModifiedETag)
+        guard cached.opaqueTag == notModified.opaqueTag else { return false }
+        return notModified.isWeak || !cached.isWeak
+    }
+
+    private func normalizedEntityTag(_ raw: String) -> (isWeak: Bool, opaqueTag: String) {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("W/") else {
+            return (isWeak: false, opaqueTag: trimmed)
+        }
+        return (isWeak: true, opaqueTag: String(trimmed.dropFirst(2)))
     }
 
     private func cacheRevalidationFailed(

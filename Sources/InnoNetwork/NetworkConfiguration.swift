@@ -149,6 +149,11 @@ public struct NetworkConfiguration: Sendable {
     package let responseCachePolicy: ResponseCachePolicy
     /// Cache storage used when ``responseCachePolicy`` is enabled.
     package let responseCache: (any ResponseCache)?
+    /// Serializes cache mutations for every client constructed from this
+    /// configuration value. `NetworkConfiguration` copies retain the same
+    /// coordinator so a shared cache cannot be repopulated by an older request
+    /// running through another client.
+    package let responseCacheMutations = ResponseCacheMutationCoordinator()
     /// Additional client-scoped request header names whose values are
     /// fingerprinted before they become part of a response-cache identity.
     package let responseCacheSensitiveHeaderNames: Set<String>

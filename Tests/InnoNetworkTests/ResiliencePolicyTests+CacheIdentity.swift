@@ -165,6 +165,59 @@ extension ResiliencePolicyTests {
         }
     }
 
+    @Test("A weak 304 ETag can identify a stored response with the same opaque tag")
+    func weakETagNotModifiedMatchesStoredStrongETag() async throws {
+        let cache = InMemoryResponseCache()
+        await cache.set(
+            resilienceUserCacheKey(),
+            CachedResponse(
+                data: try JSONEncoder().encode(ResilienceUser(id: 1, name: "cached")),
+                headers: ["ETag": "\"v1\""],
+                storedAt: Date(timeIntervalSinceNow: -60)
+            )
+        )
+        let session = try ResilienceSequenceURLSession(queue: [
+            resilienceQueuedResponse(statusCode: 304, headers: ["ETag": "W/\"v1\""])
+        ])
+        let client = DefaultNetworkClient(
+            configuration: resilienceMakeLocalizedCacheConfiguration(
+                responseCachePolicy: .cacheFirst(maxAge: .seconds(1)),
+                responseCache: cache
+            ),
+            session: session
+        )
+
+        #expect(try await client.request(ResilienceGetRequest()) == ResilienceUser(id: 1, name: "cached"))
+        #expect(await cache.get(resilienceUserCacheKey())?.etag == "W/\"v1\"")
+    }
+
+    @Test("A strong 304 ETag does not identify a weak stored validator")
+    func strongETagNotModifiedRejectsStoredWeakETag() async throws {
+        let cache = InMemoryResponseCache()
+        await cache.set(
+            resilienceUserCacheKey(),
+            CachedResponse(
+                data: try JSONEncoder().encode(ResilienceUser(id: 1, name: "cached")),
+                headers: ["ETag": "W/\"v1\""],
+                storedAt: Date(timeIntervalSinceNow: -60)
+            )
+        )
+        let session = try ResilienceSequenceURLSession(queue: [
+            resilienceQueuedResponse(statusCode: 304, headers: ["ETag": "\"v1\""])
+        ])
+        let client = DefaultNetworkClient(
+            configuration: resilienceMakeLocalizedCacheConfiguration(
+                responseCachePolicy: .cacheFirst(maxAge: .seconds(1)),
+                responseCache: cache
+            ),
+            session: session
+        )
+
+        await #expect(throws: NetworkError.self) {
+            _ = try await client.request(ResilienceGetRequest())
+        }
+    }
+
     @Test("Last-Modified 304 response uses cached body")
     func lastModifiedNotModifiedUsesCachedBody() async throws {
         let cache = InMemoryResponseCache()
