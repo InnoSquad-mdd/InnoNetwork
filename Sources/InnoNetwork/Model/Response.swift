@@ -45,6 +45,11 @@ public struct Response: CustomDebugStringConvertible, Equatable, Sendable {
     /// semantics interceptors should follow.
     public let kind: Kind
 
+    /// Correlates an executor-produced response with its physical transport
+    /// timing while it passes through custom execution policies. Publicly
+    /// constructed or transformed responses intentionally have no identity.
+    package let transportTimingID: UUID?
+
     public init(
         statusCode: Int,
         data: Data,
@@ -52,11 +57,30 @@ public struct Response: CustomDebugStringConvertible, Equatable, Sendable {
         response: HTTPURLResponse,
         kind: Kind = .body
     ) {
+        self.init(
+            statusCode: statusCode,
+            data: data,
+            request: request,
+            response: response,
+            kind: kind,
+            transportTimingID: nil
+        )
+    }
+
+    package init(
+        statusCode: Int,
+        data: Data,
+        request: URLRequest? = nil,
+        response: HTTPURLResponse,
+        kind: Kind = .body,
+        transportTimingID: UUID?
+    ) {
         self.statusCode = statusCode
         self.data = data
         self.request = request
         self.response = response
         self.kind = kind
+        self.transportTimingID = transportTimingID
     }
 
     /// A text description of the `Response`.

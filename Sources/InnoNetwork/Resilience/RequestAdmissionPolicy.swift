@@ -86,6 +86,7 @@ package actor RequestAdmissionCoordinator {
     private var active = 0
     private var activeByScope: [String: Int] = [:]
     private var waiters: [Waiter] = []
+    private var pendingCountWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
 
     package init(policy: RequestAdmissionPolicy, clock: any InnoNetworkClock) {
         self.policy = policy
@@ -146,6 +147,7 @@ package actor RequestAdmissionCoordinator {
                                 timeoutTask: timeoutTask
                             )
                         )
+                        resumePendingCountWaiters()
                     }
                 },
                 onCancel: { [weak self] in
@@ -172,6 +174,15 @@ package actor RequestAdmissionCoordinator {
         (active, waiters.count, knownScopes.count)
     }
 
+    /// Suspends package tests until the requested number of callers is
+    /// actually queued, avoiding scheduler-dependent sleeps or yield loops.
+    package func waitForPendingCount(atLeast count: Int) async {
+        guard waiters.count < count else { return }
+        await withCheckedContinuation { continuation in
+            pendingCountWaiters.append((count: count, continuation: continuation))
+        }
+    }
+
     private var knownScopes: Set<String> {
         Set(activeByScope.keys).union(waiters.map(\.scope))
     }
@@ -184,6 +195,18 @@ package actor RequestAdmissionCoordinator {
     private func grant(scope: String) {
         active += 1
         activeByScope[scope, default: 0] += 1
+    }
+
+    private func resumePendingCountWaiters() {
+        var remaining: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+        for waiter in pendingCountWaiters {
+            if waiters.count >= waiter.count {
+                waiter.continuation.resume()
+            } else {
+                remaining.append(waiter)
+            }
+        }
+        pendingCountWaiters = remaining
     }
 
     private func pump() {

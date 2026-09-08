@@ -25,21 +25,21 @@ struct TimedNetworkResponse {
 }
 
 actor TransportTimingRecorder {
-    private struct Entry {
-        let response: Response
+    private struct Timing {
         let startedAt: Date
         let completedAt: Date
     }
 
-    private var entries: [Entry] = []
+    private var entries: [UUID: Timing] = [:]
 
     func record(_ response: Response, startedAt: Date, completedAt: Date) {
-        entries.append(Entry(response: response, startedAt: startedAt, completedAt: completedAt))
+        guard let id = response.transportTimingID else { return }
+        entries[id] = Timing(startedAt: startedAt, completedAt: completedAt)
     }
 
     func timestamps(for response: Response) -> (startedAt: Date, completedAt: Date)? {
-        let entry = entries.last(where: { $0.response == response }) ?? entries.last
-        return entry.map { ($0.startedAt, $0.completedAt) }
+        guard let id = response.transportTimingID, let entry = entries[id] else { return nil }
+        return (entry.startedAt, entry.completedAt)
     }
 }
 

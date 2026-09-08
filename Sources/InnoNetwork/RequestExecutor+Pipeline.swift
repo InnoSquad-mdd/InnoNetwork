@@ -370,7 +370,8 @@ extension RequestExecutor {
             statusCode: result.response.statusCode,
             data: result.data,
             request: request,
-            response: result.response
+            response: result.response,
+            transportTimingID: UUID()
         )
     }
 

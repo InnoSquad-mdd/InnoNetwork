@@ -21,6 +21,19 @@ extension ResiliencePolicyTests {
         }
     }
 
+    private struct ReturnFirstOfTwoExecutionPolicy: RequestExecutionPolicy {
+        func execute(
+            input: RequestExecutionInput,
+            context: RequestExecutionContext,
+            next: RequestExecutionNext
+        ) async throws -> Response {
+            _ = (input, context)
+            let first = try await next.execute()
+            _ = try await next.execute()
+            return first
+        }
+    }
+
     @Test("Cache storage preserves transport delay in RFC response age")
     func cacheStoragePreservesTransportDelay() async throws {
         let clock = TestClock(epoch: Date(timeIntervalSince1970: 10_000))
@@ -88,6 +101,112 @@ extension ResiliencePolicyTests {
         #expect(first == second)
         #expect(await session.requestCount == 1)
         #expect(await cache.get(resilienceUserCacheKey())?.rfc9111InitialAge == 0)
+    }
+
+    @Test("Custom policies preserve timing for the exact transport response they return")
+    func customPolicyReturnedResponseKeepsItsOwnTransportTiming() async throws {
+        let epoch = Date(timeIntervalSince1970: 17_000)
+        let clock = TestClock(epoch: epoch)
+        let cache = InMemoryResponseCache()
+        let queued = try resilienceQueuedResponse(
+            statusCode: 200,
+            body: ResilienceUser(id: 1, name: "timed"),
+            headers: ["Cache-Control": "max-age=60"]
+        )
+        let session = ClockAdvancingResilienceURLSession(
+            queued: queued,
+            clock: clock,
+            delay: .seconds(5)
+        )
+        let client = DefaultNetworkClient(
+            configuration: makeTestNetworkConfiguration(
+                baseURL: "https://api.example.com",
+                requestInterceptors: [
+                    ResilienceHeaderSettingInterceptor(
+                        field: "Accept-Language",
+                        value: cacheFixtureAcceptLanguage
+                    )
+                ],
+                responseCachePolicy: .rfc9111Compliant(
+                    wrapping: .cacheFirst(maxAge: .seconds(60))
+                ),
+                responseCache: cache,
+                customExecutionPolicies: [ReturnFirstOfTwoExecutionPolicy()]
+            ),
+            session: session,
+            clock: clock
+        )
+
+        _ = try await client.request(ResilienceGetRequest())
+
+        let stored = try #require(await cache.get(resilienceUserCacheKey()))
+        #expect(stored.storedAt == epoch.addingTimeInterval(5))
+        #expect(stored.rfc9111InitialAge == 5)
+    }
+
+    @Test("Cache response age excludes built-in admission queue time")
+    func cacheResponseAgeExcludesAdmissionQueueDelay() async throws {
+        let clock = TestClock(epoch: Date(timeIntervalSince1970: 18_000))
+        let cache = InMemoryResponseCache()
+        let session = try ResilienceSequenceURLSession(queue: [
+            resilienceQueuedResponse(
+                statusCode: 200,
+                body: ResilienceUser(id: 1, name: "timed"),
+                headers: ["Cache-Control": "max-age=10"]
+            )
+        ])
+        let configuration = NetworkConfiguration(
+            baseURL: URL(string: "https://api.example.com")!,
+            networkMonitor: nil,
+            requestInterceptors: [
+                ResilienceHeaderSettingInterceptor(
+                    field: "Accept-Language",
+                    value: cacheFixtureAcceptLanguage
+                )
+            ],
+            responseCachePolicy: .rfc9111Compliant(
+                wrapping: .cacheFirst(maxAge: .seconds(60))
+            ),
+            responseCache: cache,
+            requestAdmissionPolicy: RequestAdmissionPolicy(
+                maximumConcurrentRequests: 1,
+                maximumPendingRequests: 1
+            ),
+            responseBodyBufferingPolicy: .buffered(maxBytes: nil)
+        )
+        let runtime = RequestExecutionRuntime(
+            configuration: configuration,
+            inFlight: InFlightRegistry(),
+            clock: clock
+        )
+        let blocker = try #require(
+            try await runtime.requestAdmission?.acquire(
+                for: URLRequest(url: configuration.baseURL)
+            )
+        )
+        let eventHub = NetworkEventHub()
+        let executor = RequestExecutor(session: session, eventHub: eventHub)
+        let requestTask = Task {
+            try await executor.execute(
+                APISingleRequestExecutable(base: ResilienceGetRequest()),
+                configuration: configuration,
+                requestBuilder: RequestBuilder(),
+                runtime: runtime,
+                retryIndex: 0,
+                requestID: UUID()
+            )
+        }
+
+        await runtime.requestAdmission?.waitForPendingCount(atLeast: 1)
+        clock.advanceWithoutResuming(by: .seconds(20))
+        await runtime.requestAdmission?.release(scope: blocker.scope)
+        _ = try await requestTask.value
+
+        let stored = try #require(await cache.get(resilienceUserCacheKey()))
+        #expect(stored.rfc9111InitialAge == 0)
+        #expect(stored.storedAt == Date(timeIntervalSince1970: 18_020))
+        await eventHub.shutdown()
+        await runtime.shutdown()
     }
 
     @Test("304 with a revised Vary dimension invalidates the stored representation")
