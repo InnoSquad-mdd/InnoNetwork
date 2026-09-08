@@ -1057,7 +1057,8 @@ The opt-in `ResponseCachePolicy` honours the response `Vary` header
 automatically (RFC 9111 §4.1):
 
 - `Vary: *` responses are not stored — the cache cannot prove a future
-  request would match.
+  request would match — and replace any previous entry for the current key
+  with an origin-required miss.
 - A concrete `Vary` header (for example `Vary: Accept-Language`) captures the
   named request headers when the response is stored. The next lookup matches
   only when those same header values are present, so two clients with
@@ -1073,8 +1074,9 @@ automatically (RFC 9111 §4.1):
   response but forces revalidation before every reuse.
 - Stale entries with a valid `Last-Modified` emit `If-Modified-Since`; entries
   carrying both `ETag` and `Last-Modified` emit both validators. A `304`
-  response restores the bounded cached representation, while malformed dates
-  are never copied into a conditional request header.
+  response restores the bounded cached representation only when its supplied
+  `ETag` still identifies that stored body; a mismatched validator fails closed.
+  Malformed dates are never copied into a conditional request header.
 - Responses to requests carrying `Authorization` are stored only when the
   origin explicitly permits it with `Cache-Control: public`, `must-revalidate`,
   or `s-maxage`.

@@ -16,7 +16,7 @@ them.
 | RFC 9111 directive / header | Status | Behavior in 6.x |
 | --- | --- | --- |
 | `Cache-Control: no-store` (request and response) | ✅ Honored | Skips writes, invalidates an existing key. Applied in `RequestExecutor.storeCacheIfNeeded`. When the policy is wrapped via `ResponseCachePolicy.rfc9111Compliant(wrapping:)`, the directive additionally suppresses cache reads against an entry that was somehow persisted before the wrap (defence in depth). |
-| `Cache-Control: no-cache` | ✅ Honored | Stored but flagged as `requiresRevalidation`; the next read forces conditional revalidation. |
+| `Cache-Control: no-cache` | ✅ Honored | Stored but flagged as `requiresRevalidation`; the next read forces conditional revalidation. The RFC adapter also derives this requirement from restored headers, so custom caches cannot accidentally make a `no-cache` entry reusable by omitting the convenience flag. |
 | `Cache-Control: private` | ✅ Honored | Skips writes, invalidates an existing key. Quoted-form (`private="X-Foo"`) is parsed by `HTTPListParser` and treated identically. |
 | `Cache-Control: public` | ✅ Honored for auth storage | Cache is private-by-default for ordinary responses; for requests carrying `Authorization`, `public` is one of the RFC 9111 §3.5 directives that permits storage. |
 | `Cache-Control: max-age=N` | ⚠️ Partial | Default policies preserve the directive on disk but drive freshness windows from `ResponseCachePolicy` (`cacheFirst(maxAge:)` etc.). The directive is consumed when the policy is wrapped via `ResponseCachePolicy.rfc9111Compliant(wrapping:)`, which clamps freshness to `min(server max-age, caller window)`. Default consumption remains a post-5.0 candidate. |
@@ -27,12 +27,12 @@ them.
 | `Cache-Control: only-if-cached` | ❌ Not consumed | Request directive; the executor always falls through to transport on cache miss. |
 | `Cache-Control: immutable` | ❌ Not consumed | Tracked as a post-5.0 candidate; safe to ignore because the freshness window is policy-driven. |
 | `Expires` | ⚠️ Adapter-only | Consumed by `ResponseCachePolicy.rfc9111Compliant(wrapping:)` when no valid `max-age` exists. The adapter uses `Expires - Date`, falling back to `Expires - storedAt`; invalid values are stale. Default policies remain caller-window driven. |
-| `Vary` | ✅ Honored | Captured at write time as `varyHeaders` and consulted on every lookup. `Vary: *` skips the write entirely. |
+| `Vary` | ✅ Honored | Captured at write time as `varyHeaders` and consulted on every lookup. `Vary: *` skips the write and invalidates a previous entry for the current key. A changed `Vary` on `304` invalidates the old selection snapshot while the validating caller receives merged response metadata. |
 | `Set-Cookie` | ✅ Honored | Refused by default (`storesSetCookieResponses = false`); operators can opt in. |
 | `Authorization` (request key) | ✅ Honored | Refused by default (`storesAuthenticatedResponses = false`). Even after opt-in, storage requires `Cache-Control: public`, `must-revalidate`, or `s-maxage` per RFC 9111 §3.5. |
-| `ETag` | ✅ Honored | Captured for conditional revalidation via `If-None-Match`. |
+| `ETag` | ✅ Honored | Captured for conditional revalidation via `If-None-Match`. A `304` that supplies a different ETag is rejected rather than relabeling the cached body. |
 | `Last-Modified` | ✅ Honored | When `max-age` and `Expires` are absent, `ResponseCachePolicy.rfc9111Compliant(wrapping:)` applies the RFC 9111 §4.2.2 10% heuristic freshness calculation capped at 24 hours. Stale entries carrying a valid HTTP-date emit `If-Modified-Since`; when `ETag` is also present the request sends both validators. Malformed values are preserved as response metadata but never emitted as conditional request headers. |
-| `Age` | ❌ Not emitted | The cache does not synthesize an `Age` header on cached responses. |
+| `Age` | ❌ Not emitted | The cache does not synthesize an `Age` header on cached responses. Stored initial age includes origin transport response delay, measured from physical dispatch, but excludes local policy, admission, and quota waits. |
 
 ## Unsafe Method Invalidation
 

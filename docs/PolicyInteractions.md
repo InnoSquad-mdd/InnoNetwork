@@ -57,13 +57,13 @@ sequenceDiagram
 | Duplicate request coalescing | Coalescing wraps raw transport attempts; auth-refresh replay and outer retry remain outside the shared result. |
 | Cache hit | Fresh hits return before transport. Stale hits can revalidate and publish cache revalidation lifecycle events. |
 | Authorization response cache write | Stored only when cache writes are enabled and the origin permits authenticated storage with `Cache-Control: public`, `must-revalidate`, or `s-maxage`. |
-| 304 with changed `Vary` | The old body and vary snapshot are preserved; only freshness metadata is refreshed. |
+| 304 with changed `Vary` | The validated body is returned with merged 304 metadata, while the old vary snapshot is invalidated so the next request reaches the origin. |
 | Unsafe cache invalidation | Successful unsafe methods invalidate cached variants for the target URI after refresh replay is decided and before response interceptors/status validation run. |
 | Unsafe retry | POST/PUT/PATCH/DELETE retry only when an idempotency key is present, unless the retry policy explicitly opts into method-agnostic behavior. `OPTIONS` and `TRACE` are safe-method defaults alongside GET/HEAD. |
 | `IdempotencyKeyPolicy` enabled | The key is generated from the logical request id and reused across every retry attempt. |
 | Redirect across origin | `DefaultRedirectPolicy` rejects HTTPS downgrades and any proposal retaining an unsafe method; other cross-origin hops strip every caller-prepared original header plus built-in and configured sensitive session headers. |
 | Signed request | Signers observe the finalized data or stable file body after interceptors and current-token application. Signed requests bypass response cache, request coalescing, and URLSession caching, and reject every automatic redirect. |
-| Custom execution policy | Runs after cache lookup/conditional-header preparation and before circuit breaker, coalescing, and URLSession. A policy observes or wraps one executor-owned request; returning a synthetic response bypasses circuit/coalescing/transport for that attempt. Request mutation belongs in a request interceptor. |
+| Custom execution policy | Runs after cache lookup/conditional-header preparation and before circuit breaker, coalescing, and URLSession. A policy observes or wraps one executor-owned request; returning a synthetic response bypasses circuit/coalescing/transport for that attempt. Request mutation belongs in a request interceptor. Local policy delay is excluded from RFC response-age transport delay. |
 | Streaming request | Core `RetryPolicy`, cache, circuit breaker, coalescing, and custom execution policies are bypassed. The current token can be attached before the handshake, but 401 handshakes are not refresh-replayed; `StreamingResumePolicy.lastEventID` is the only built-in resume path. |
 
 ## Detailed Six-Policy Compatibility Matrix

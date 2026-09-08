@@ -212,7 +212,8 @@ await client.cancelAll(matching: feed)  // feed 태그만 취소
 
 `ResponseCachePolicy` 는 응답의 `Vary` 헤더를 자동으로 처리합니다 (RFC 9111 §4.1).
 
-- `Vary: *` 응답은 캐시되지 않습니다.
+- `Vary: *` 응답은 캐시되지 않으며 현재 키에 남아 있던 기존 엔트리도
+  무효화합니다.
 - `Vary: Accept-Language` 같은 명시 헤더는 저장 시점의 요청 헤더 값을 함께 캡처해
   이후 lookup 에서 동일 값일 때만 hit 으로 인정합니다.
 - `Vary` 헤더가 없는 응답은 저장 조건을 통과한 경우 기존 키 정책
@@ -222,6 +223,8 @@ await client.cancelAll(matching: feed)  // feed 태그만 취소
 - `Cache-Control: no-store` 와 `Cache-Control: private` 는 현재 키를 무효화하고
   저장하지 않습니다. `Cache-Control: no-cache` 는 저장하되 매 lookup 마다
   재검증을 강제합니다.
+- `304 Not Modified` 가 저장된 응답과 다른 `ETag` 를 보내면 기존 body 에 새
+  validator 를 붙이지 않고 재검증 실패로 처리합니다.
 - `Authorization` 요청의 응답은 origin 이 `Cache-Control: public`,
   `must-revalidate`, `s-maxage` 중 하나로 명시적으로 허용할 때만 저장됩니다.
 - `POST`, `PUT`, `PATCH`, `DELETE` 같은 unsafe method 가 `2xx`/`3xx` 응답을
