@@ -613,7 +613,7 @@ extension ResiliencePolicyTests {
         #expect(stored.requiresRevalidation)
 
         let revalidationSession = try ResilienceSequenceURLSession(queue: [
-            resilienceQueuedResponse(statusCode: 304, headers: ["ETag": "v2"])
+            resilienceQueuedResponse(statusCode: 304, headers: ["ETag": "v1"])
         ])
         let revalidationClient = DefaultNetworkClient(configuration: configuration, session: revalidationSession)
         let user = try await revalidationClient.request(ResilienceGetRequest())

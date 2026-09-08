@@ -168,7 +168,7 @@ extension RequestExecutor {
                             notModifiedHeaders: result.response.allHeaderFields
                         ) {
                             try enforceResponseBodyLimit(
-                                substitution.preservedResponse,
+                                substitution.mergedResponse,
                                 configuration: configuration
                             )
                             await invalidateCacheEntry(
@@ -417,13 +417,6 @@ extension RequestExecutor {
                 request: request
             )
         }
-        guard let preservedHTTPResponse = preparedCached.response(for: request) else {
-            throw cacheRevalidationFailed(
-                "Cached response headers could not be reconstructed during 304 Not Modified substitution.",
-                cached: preparedCached,
-                request: request
-            )
-        }
         guard
             let httpResponse = HTTPURLResponse(
                 url: url,
@@ -444,12 +437,6 @@ extension RequestExecutor {
                 data: preparedCached.data,
                 request: request,
                 response: httpResponse
-            ),
-            preservedResponse: Response(
-                statusCode: preparedCached.statusCode,
-                data: preparedCached.data,
-                request: request,
-                response: preservedHTTPResponse
             ),
             cached: preparedCached
         )

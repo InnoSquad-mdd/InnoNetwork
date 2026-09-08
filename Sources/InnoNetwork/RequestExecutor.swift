@@ -2,12 +2,10 @@ import Foundation
 import OSLog
 
 /// Conditional revalidation product used by the cache stage when a 304 is
-/// received. Carries both a merged-headers `Response` (for storage when the
-/// `Vary` dimension matches) and a preserved-headers `Response` (for return
-/// when the `Vary` dimension changes), plus the original cached entry.
+/// received. Carries the cached body with merged validation headers plus the
+/// original cached entry used to validate representation identity.
 struct NotModifiedSubstitution {
     let mergedResponse: Response
-    let preservedResponse: Response
     let cached: CachedResponse
 }
 

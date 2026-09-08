@@ -149,7 +149,7 @@ extension RequestExecutor {
                     cached: substitution.cached,
                     notModifiedHeaders: networkResponse.response?.allHeaderFields
                 ) {
-                    try enforceResponseBodyLimit(substitution.preservedResponse, configuration: configuration)
+                    try enforceResponseBodyLimit(substitution.mergedResponse, configuration: configuration)
                     // A changed Vary dimension invalidates the selection
                     // contract under which the representation was stored.
                     // Return the successfully validated representation to
