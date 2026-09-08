@@ -285,27 +285,17 @@ extension RequestExecutor {
 
         let timingRecorder = TransportTimingRecorder()
         let baseNext = RequestExecutionNext {
-            let result = try await performTransportResult(
+            try await performPolicyTransport(
                 request: request,
                 identityRequest: identityRequest,
                 bodySource: bodySource,
                 configuration: configuration,
                 context: context,
                 runtime: runtime,
-                allowsRequestCoalescing: allowsRequestCoalescing
-            )
-            let response = await response(
-                from: result,
-                request: request,
                 requestID: requestID,
-                configuration: configuration
+                allowsRequestCoalescing: allowsRequestCoalescing,
+                timingRecorder: timingRecorder
             )
-            await timingRecorder.record(
-                response,
-                startedAt: result.startedAt,
-                completedAt: result.completedAt
-            )
-            return response
         }
 
         let policyContext = RequestExecutionContext(
@@ -345,6 +335,40 @@ extension RequestExecutor {
             requestStartedAt: syntheticResponseTime,
             responseReceivedAt: syntheticResponseTime
         )
+    }
+
+    private func performPolicyTransport(
+        request: URLRequest,
+        identityRequest: URLRequest,
+        bodySource: BodySource,
+        configuration: NetworkConfiguration,
+        context: NetworkRequestContext,
+        runtime: RequestExecutionRuntime,
+        requestID: UUID,
+        allowsRequestCoalescing: Bool,
+        timingRecorder: TransportTimingRecorder
+    ) async throws -> Response {
+        let result = try await performTransportResult(
+            request: request,
+            identityRequest: identityRequest,
+            bodySource: bodySource,
+            configuration: configuration,
+            context: context,
+            runtime: runtime,
+            allowsRequestCoalescing: allowsRequestCoalescing
+        )
+        let transportResponse = await response(
+            from: result,
+            request: request,
+            requestID: requestID,
+            configuration: configuration
+        )
+        await timingRecorder.record(
+            transportResponse,
+            startedAt: result.startedAt,
+            completedAt: result.completedAt
+        )
+        return transportResponse
     }
 
     private func response(
